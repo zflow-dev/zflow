@@ -61,7 +61,7 @@ impl<'a> JournalStore<'a> for Graph<'a> {
 /// Use start_transaction and end_transaction on Graph to structure the revisions logical changesets.
 ///
 
-trait Journal<'a>: EventManager<'a> {
+pub trait Journal<'a>: EventManager<'a> {
     fn init_journal(&mut self, metadata: Option<Map<String, Value>>) -> &mut Self;
 
     fn append_command(&mut self, cmd: &str, args: Value, rev: Option<i32>) -> &mut Self;
