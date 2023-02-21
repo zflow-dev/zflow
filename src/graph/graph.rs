@@ -3,70 +3,60 @@
 ///    (c) 2013-2020 Flowhub UG
 ///    (c) 2011-2012 Henri Bergius, Nemein
 ///    FBP Graph may be freely distributed under the MIT license
-
 use crate::internal;
-use crate::internal::event_manager::EventActor;
+use crate::internal::event_manager::{EventActor, EventListener};
 use crate::internal::utils::guid;
 use foreach::ForEach;
-use futures::{executor::block_on, lock::Mutex};
 use internal::event_manager::EventManager;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::sync::Arc;
+use std::iter::FromIterator;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::{any::Any, process::exit};
 // use z_macros::{event_handler_attributes, EventHandler};
 
-use super::journal::TransactionEntry;
+use super::journal::{TransactionEntry};
 use super::types::{
-    GraphEdge, GraphEdgeJson, GraphExportedPort, GraphGroup, GraphIIP, GraphJson, GraphLeaf,
-    GraphLeafJson, GraphNode, GraphNodeJson, GraphStub, GraphTransaction,
+    GraphEdge, GraphEdgeJson, GraphEvents, GraphExportedPort, GraphGroup, GraphIIP, GraphJson,
+    GraphLeaf, GraphLeafJson, GraphNode, GraphNodeJson, GraphStub, GraphTransaction,
 };
+
+// pub static mut GRAPH_PUBLISHER: Publisher<GraphEvents> = Publisher::new(1024);
 
 /// This class represents an abstract FBP graph containing nodes
 /// connected to each other with edges.
 /// These graphs can be used for visualization and sketching, but
 /// also are the way to start an FBP network.
 #[derive(Clone)]
-pub struct Graph<'a> {
+pub struct Graph {
     pub name: String,
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
-    pub initializers: Vec<GraphIIP>, // vec<GraphIIP>
+    pub initializers: Vec<GraphIIP>,
     pub groups: Vec<GraphGroup>,
     pub inports: HashMap<String, GraphExportedPort>,
     pub outports: HashMap<String, GraphExportedPort>,
     pub properties: Map<String, Value>,
     pub transaction: GraphTransaction,
-    pub last_revision: usize,
-    pub current_revision: i32,
-    pub transactions: Vec<Vec<TransactionEntry>>,
     pub case_sensitive: bool,
-    pub entries: Vec<TransactionEntry>,
-    pub history: Vec<Vec<TransactionEntry>>,
+    listeners: HashMap<&'static str, Vec<EventActor<Self>>>,
+    pub last_revision: i32,
+    pub transactions: Vec<Vec<TransactionEntry>>,
     pub subscribed: bool,
-    listeners: HashMap<&'a str, Vec<EventActor<'a, Self>>>,
+    pub current_revision: i32,
+    pub(crate) entries: Vec<TransactionEntry>,
 }
 
-impl<'a> EventManager<'a> for Graph<'a> {
-    /// Send event
-    fn emit(&mut self, name: &'a str, data: &dyn Any) {
-        if let Some(v) = self.listeners.clone().get_mut(&name) {
-            for i in 0..v.len() {
-                block_on(v[i].callback.lock())(self, data);
-                if (&v[i]).once {
-                    v.remove(i);
-                }
-            }
-            self.listeners.insert(name, v.to_vec());
-        }
-    }
+impl EventListener for Graph {
     /// Attach listener to an event
     fn connect(
         &mut self,
-        name: &'a str,
-        rec: impl FnMut(&mut Self, &dyn Any) -> () + 'a,
+        name: &'static str,
+        rec: impl FnMut(&mut Self, Value) -> () + 'static,
         once: bool,
     ) {
         if !self.listeners.contains_key(name) {
@@ -79,17 +69,33 @@ impl<'a> EventManager<'a> for Graph<'a> {
             });
         }
     }
+}
+
+impl EventManager for Graph {
+    /// Send event
+    fn emit(&mut self, name: &'static str, data: Value) {
+        self.listeners.clone().get_mut(name).iter().foreach(|actions, iter|{
+            (*actions).iter().enumerate().foreach(|actor, _|{
+                if actor.1.once {
+                    self.listeners.get_mut(name).unwrap().remove(actor.0);
+                }
+                if let Ok(mut callback) = actor.1.callback.lock() {
+                    callback(self, data.clone());
+                }
+            })
+        });
+    }
     /// Remove listeners from event
-    fn disconnect(&mut self, name: &'a str) {
+    fn disconnect(&mut self, name: &str) {
         self.listeners.remove(name);
     }
     /// Check if we have events
-    fn has_event(&self, name: &'a str) -> bool {
+    fn has_event(&self, name: &str) -> bool {
         self.listeners.contains_key(name)
     }
 }
 
-impl<'a> Graph<'a> {
+impl Graph {
     pub fn new(name: &str, case_sensitive: bool) -> Self {
         Self {
             name: name.to_owned(),
@@ -104,11 +110,10 @@ impl<'a> Graph<'a> {
             case_sensitive,
             listeners: HashMap::new(),
             last_revision: 0,
-            current_revision: -1,
             transactions: Vec::new(),
-            entries: Vec::new(),
-            history: Vec::new(),
-            subscribed: false,
+            subscribed: true,
+            current_revision: -1,
+            entries: Vec::new()
         }
     }
 
@@ -134,7 +139,10 @@ impl<'a> Graph<'a> {
 
         self.emit(
             "start_transaction",
-            &(self.transaction.id.clone().unwrap(), metadata),
+            json!({
+                "id": self.transaction.id.clone(),
+                "metadata": json!(metadata)
+            }),
         );
         self
     }
@@ -148,7 +156,13 @@ impl<'a> Graph<'a> {
         self.transaction.id = None;
         self.transaction.depth = 0;
 
-        self.emit("end_transaction", &((id.to_string(), metadata)));
+        self.emit(
+            "end_transaction",
+            json!({
+                "id": id.to_string(),
+                "metadata": json!(metadata)
+            }),
+        );
         self
     }
 
@@ -158,7 +172,6 @@ impl<'a> Graph<'a> {
         } else if self.transaction.id.as_ref().unwrap() == "implicit" {
             self.transaction.depth += 1;
         }
-
         self
     }
     pub fn check_transaction_end(&mut self) -> &mut Self {
@@ -187,7 +200,13 @@ impl<'a> Graph<'a> {
             }
         }
 
-        self.emit("change_properties", &(self.properties.clone(), before));
+        self.emit(
+            "change_properties",
+            json!({
+                "new": self.properties.clone(),
+                "before": before
+            }),
+        );
 
         self.check_transaction_end();
 
@@ -225,7 +244,13 @@ impl<'a> Graph<'a> {
         };
         self.inports.insert(port_name.to_owned(), val.clone());
 
-        self.emit("add_inport", &(port_name, val));
+        self.emit(
+            "add_inport",
+            json!({
+                "name": port_name,
+                "port": val
+            }),
+        );
 
         self.check_transaction_end();
 
@@ -245,15 +270,13 @@ impl<'a> Graph<'a> {
         self.set_inports_metadata(port_name.as_str(), Map::new());
 
         self.inports.remove(&(port_name.clone()));
-
-        if let Some(port) = inp.get(&(port_name.clone())) {
-            self.emit("remove_inport", &(port_name.clone(), Some(port.clone())));
-        } else {
-            self.emit(
-                "remove_inport",
-                &(port_name.clone(), Option::<GraphExportedPort>::None),
-            );
-        }
+        self.emit(
+            "remove_inport",
+            json!({
+                "name": port_name.clone(),
+                "port": inp.get(&(port_name.clone()))
+            }),
+        );
 
         self.check_transaction_end();
 
@@ -278,7 +301,10 @@ impl<'a> Graph<'a> {
             self.inports.remove(&old_port_name);
             self.emit(
                 "rename_inport",
-                &(old_port_name.clone(), new_port_name.clone()),
+                json!({
+                    "old": old_port_name.clone(),
+                    "new": new_port_name.clone()
+                }),
             );
         }
 
@@ -310,7 +336,13 @@ impl<'a> Graph<'a> {
         };
         self.outports.insert(port_name.to_owned(), val.clone());
 
-        self.emit("add_outport", &(port_name, val));
+        self.emit(
+            "add_outport",
+            json!({
+                "name": port_name,
+                "port": val
+            }),
+        );
 
         self.check_transaction_end();
         self
@@ -330,14 +362,13 @@ impl<'a> Graph<'a> {
 
         self.outports.remove(&(port_name.clone()));
 
-        if let Some(port) = oup.get(&(port_name.clone())) {
-            self.emit("remove_outport", &(port_name.clone(), Some(port.clone())));
-        } else {
-            self.emit(
-                "remove_outport",
-                &(port_name.clone(), Option::<GraphExportedPort>::None),
-            );
-        }
+        self.emit(
+            "remove_outport",
+            json!({
+                "name": port_name.clone(),
+                "port": oup.get(&(port_name.clone()))
+            }),
+        );
 
         self.check_transaction_end();
 
@@ -363,7 +394,10 @@ impl<'a> Graph<'a> {
             self.outports.remove(&old_port_name);
             self.emit(
                 "rename_outport",
-                &(old_port_name.clone(), new_port_name.clone()),
+                json!({
+                    "old": old_port_name.clone(),
+                    "new": new_port_name.clone()
+                }),
             );
         }
 
@@ -412,7 +446,12 @@ impl<'a> Graph<'a> {
 
             self.emit(
                 "change_inport",
-                &(port_name.clone(), p.clone(), before, metadata),
+                json!({
+                    "name": port_name.clone(),
+                    "port": p.clone(),
+                    "old_metadata": before,
+                    "new_metadata": metadata
+                })
             );
         }
 
@@ -461,7 +500,12 @@ impl<'a> Graph<'a> {
 
             self.emit(
                 "change_outport",
-                &(port_name.clone(), p.clone(), before, metadata),
+                json!({
+                    "name": port_name.clone(),
+                    "port": p.clone(),
+                    "old_metadata": before,
+                    "new_metadata": metadata
+                }),
             );
         }
 
@@ -484,7 +528,7 @@ impl<'a> Graph<'a> {
             metadata,
         };
         self.groups.push(g.clone());
-        self.emit("add_group", g);
+        self.emit("add_group", json!(g));
         self.check_transaction_end();
         self
     }
@@ -495,7 +539,10 @@ impl<'a> Graph<'a> {
             let mut group = &mut self.groups[i];
             if group.name == old_name {
                 (*group).name = new_name.to_owned();
-                self.emit("rename_group", &(old_name.to_owned(), new_name.to_owned()));
+                self.emit("rename_group", json!({
+                    "old": old_name.clone(),
+                    "new": new_name.clone()
+                }));
             }
         }
         self.check_transaction_end();
@@ -512,7 +559,7 @@ impl<'a> Graph<'a> {
             .filter(|v| {
                 if v.name == group_name.to_owned() {
                     self.set_group_metadata(group_name, Map::new());
-                    self.emit("remove_group", v.clone());
+                    self.emit("remove_group", json!(v.clone()));
                     return false;
                 }
                 return true;
@@ -543,7 +590,11 @@ impl<'a> Graph<'a> {
                 }
             }
             self.groups[i] = group.clone();
-            self.emit("change_group", &(group.clone(), before, metadata.clone()));
+            self.emit("change_group",json!({
+                "group": group.clone(),
+                "old_metadata": before,
+                "new_metadata": metadata
+            }));
         }
 
         self.check_transaction_end();
@@ -567,14 +618,14 @@ impl<'a> Graph<'a> {
         metadata: Option<Map<String, Value>>,
     ) -> &mut Self {
         self.check_transaction_start();
-        let node = &GraphNode {
+        let node = GraphNode {
             id: id.to_owned(),
             uid: guid(),
             component: component.to_owned(),
             metadata,
         };
         self.nodes.push(node.clone());
-        self.emit("add_node", node);
+        self.emit("add_node", json!(node));
         self.check_transaction_end();
         self
     }
@@ -621,34 +672,26 @@ impl<'a> Graph<'a> {
                 }
             });
 
-            self.groups = self
-                .groups
-                .clone()
-                .iter()
-                .filter(|group| {
-                    if group.nodes.is_empty() {
-                        self.check_transaction_start();
-                        self.set_group_metadata(group.name.as_str(), Map::new());
-                        self.emit("remove_group", group.clone());
-                        self.check_transaction_end();
+            for (i, group) in self.groups.clone().iter_mut().enumerate() {
+                if group.nodes.contains(&id.to_string()) {
+                    if let Some(index) = group.nodes.iter().position(|node| node == id) {
+                        self.groups[i].nodes.remove(index);
+                        if self.groups[i].nodes.is_empty() {
+                            self.remove_group(&group.name);
+                        }
                     }
-                    return true;
-                })
-                .filter(|group| !group.nodes.contains(&id.to_owned()))
-                .map(|g| g.clone())
-                .collect();
-
-            self.set_node_metadata(id, Map::new());
-            self.nodes = self
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.id != node.id)
-                .map(|n| n.clone())
-                .collect::<Vec<GraphNode>>();
-            self.emit("remove_node", &node);
-            self.check_transaction_end();
+                }
+            }
+           
         }
+
+        self.set_node_metadata(id, Map::new());
+        if let Some(index) = self.nodes.iter().position(|n| n.id == id) {
+            let node = self.nodes.remove(index);
+            self.emit("remove_node", json!(node));
+        }
+    
+        self.check_transaction_end();
 
         self
     }
@@ -709,8 +752,11 @@ impl<'a> Graph<'a> {
                     group.nodes[index] = new_id.to_owned();
                 }
             });
-
-            self.emit("rename_node", &(old_id.to_owned(), new_id.to_owned()));
+      
+            self.emit("rename_node", json!({
+                "old": old_id.clone(),
+                "new": new_id.clone(),
+            }));
             self.check_transaction_end();
         }
         self
@@ -733,7 +779,7 @@ impl<'a> Graph<'a> {
             let _ = metadata.clone().keys().foreach(|item, _iter| {
                 let meta = metadata.clone();
                 let val = meta.get(item);
-                
+
                 if let Some(existing_meta) = node.metadata.as_mut() {
                     if let Some(val) = val {
                         (*existing_meta).insert(item.clone(), val.clone());
@@ -743,7 +789,11 @@ impl<'a> Graph<'a> {
                 }
             });
 
-            self.emit("change_node", &(node.clone(), before, metadata));
+            self.emit("change_node", json!({
+                "node": node.clone(),
+                "old_metadata": before,
+                "new_metadata": metadata
+            }));
             let node_index = self
                 .nodes
                 .iter()
@@ -780,14 +830,13 @@ impl<'a> Graph<'a> {
         let some = self
             .edges
             .iter()
-            .filter(|edge| {
+            .find(|edge| {
                 (edge.from.node_id == out_node.to_owned())
                     && (edge.from.port == out_port_name.to_owned())
                     && (edge.to.node_id == in_node.to_owned())
                     && (edge.to.port == in_port_name.to_owned())
-            })
-            .collect::<Vec<&GraphEdge>>();
-        if !some.is_empty() {
+            });
+        if some.is_some() {
             return self;
         }
         if self.get_node(out_node).is_none() {
@@ -811,7 +860,7 @@ impl<'a> Graph<'a> {
             metadata,
         };
         self.edges.push(edge.clone());
-        self.emit("add_edge", edge);
+        self.emit("add_edge", json!(edge));
         self.check_transaction_end();
         self
     }
@@ -831,7 +880,7 @@ impl<'a> Graph<'a> {
         }
         let out_port_name = self.get_port_name(out_port);
         let in_port_name = self.get_port_name(in_port);
-        if let Some(_) = self.edges.clone().iter().find(|edge| {
+        if self.edges.clone().iter().find(|edge| {
             // don't add a duplicate edge
             if (edge.from.node_id == out_node.to_owned())
                 && (edge.from.port == out_port_name.to_owned())
@@ -843,7 +892,7 @@ impl<'a> Graph<'a> {
                 }
             }
             return false;
-        }) {
+        }).is_some() {
             return self;
         }
 
@@ -868,7 +917,7 @@ impl<'a> Graph<'a> {
             metadata,
         };
         self.edges.push(edge.clone());
-        self.emit("add_edge", edge);
+        self.emit("add_edge", json!(edge));
 
         self.check_transaction_end();
         self
@@ -926,7 +975,7 @@ impl<'a> Graph<'a> {
                             edge.to.port.as_str(),
                             Map::new(),
                         );
-                        self.emit("remove_edge", edge.clone());
+                        self.emit("remove_edge", json!(edge.clone()));
                         return false;
                     }
                 } else if (edge.from.node_id.as_str() == node && edge.from.port == out_port)
@@ -939,7 +988,8 @@ impl<'a> Graph<'a> {
                         edge.to.port.as_str(),
                         Map::new(),
                     );
-                    self.emit("remove_edge", edge.clone());
+                  
+                    self.emit("remove_edge", json!(edge.clone()));
                     return false;
                 }
                 true
@@ -997,8 +1047,11 @@ impl<'a> Graph<'a> {
                     }
                 }
             }
-
-            self.emit("change_edge", &(edge.clone(), before, metadata));
+            self.emit("change_edge", json!({
+                "edge": edge.clone(),
+                "old_metadata": before,
+                "new_metadata": metadata
+            }));
             let edge_index = self
                 .edges
                 .iter()
@@ -1058,7 +1111,7 @@ impl<'a> Graph<'a> {
                 metadata,
             };
             self.initializers.push(initializer.clone());
-            self.emit("add_initial", &initializer);
+            self.emit("add_initial", json!(initializer));
             self.check_transaction_end();
         }
         self
@@ -1089,7 +1142,7 @@ impl<'a> Graph<'a> {
                 metadata,
             };
             self.initializers.push(initializer.clone());
-            self.emit("add_initial", &initializer);
+            self.emit("add_initial", json!(initializer));
             self.check_transaction_end();
         }
         self
@@ -1147,7 +1200,7 @@ impl<'a> Graph<'a> {
         for iip in inits {
             if let Some(to) = iip.to.clone() {
                 if to.node_id.as_str() == id && to.port == port_name {
-                    self.emit("remove_initial", &iip);
+                    self.emit("remove_initial", json!(iip));
                 }
             } else {
                 _initializers.push(iip);
@@ -1165,7 +1218,7 @@ impl<'a> Graph<'a> {
         self
     }
 
-    pub async fn to_json(&self) -> GraphJson {
+    pub fn to_json(&self) -> GraphJson {
         let mut json = GraphJson {
             case_sensitive: self.case_sensitive,
             properties: Map::new(),
@@ -1197,7 +1250,11 @@ impl<'a> Graph<'a> {
                 node.id.clone(),
                 GraphNodeJson {
                     component: node.component.clone(),
-                    metadata: if node.metadata.is_none() {Some(Map::new())} else {node.metadata.clone()},
+                    metadata: if node.metadata.is_none() {
+                        Some(Map::new())
+                    } else {
+                        node.metadata.clone()
+                    },
                 },
             );
         });
@@ -1257,10 +1314,10 @@ impl<'a> Graph<'a> {
     }
 
     pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(&block_on(self.to_json()))
+        serde_json::to_string(&self.to_json())
     }
 
-    pub async fn from_json(json: GraphJson, metadata: Option<Map<String, Value>>) -> Graph<'a> {
+    pub fn from_json(json: GraphJson, metadata: Option<Map<String, Value>>) -> Graph {
         let mut graph = Graph::new(
             json.properties
                 .get("name")
@@ -1366,35 +1423,23 @@ impl<'a> Graph<'a> {
         graph
     }
 
-    pub async fn from_json_string(
+    pub fn from_json_string(
         source: &str,
         metadata: Option<Map<String, Value>>,
-    ) -> Result<Graph<'a>, io::Error> {
-        let json = serde_json::from_str::<GraphJson>(source);
-        if json.is_err() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                json.err().unwrap().to_string(),
-            ));
-        }
-        if let Ok(json) = json {
-            let graph = Self::from_json(json, metadata).await;
-            return Ok(graph);
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "JSON to Graph conversion failed",
-        ));
+    ) -> Result<Graph, io::Error> {
+        let json = serde_json::from_str::<GraphJson>(source)?;
+        let graph = Self::from_json(json, metadata);
+        Ok(graph)
     }
 
     /// Save Graph to file
-    pub async fn save(&self, path: &str) -> Result<(), io::Error> {
+    pub fn save(&self, path: &str) -> Result<(), io::Error> {
         let mut file_res = File::create(path);
         if file_res.is_err() {
             return Err(file_res.err().unwrap());
         }
         if let Ok(file) = file_res.as_mut() {
-            let json = self.to_json().await;
+            let json = self.to_json();
             let data = serde_json::to_string(&json)?;
             file.write_all(data.as_bytes())?;
             return Ok(());
@@ -1406,14 +1451,11 @@ impl<'a> Graph<'a> {
         ))
     }
 
-    pub async fn load_file(
-        path: &str,
-        metadata: Option<Map<String, Value>>,
-    ) -> Result<Graph<'a>, io::Error> {
+    pub fn load_file(path: &str, metadata: Option<Map<String, Value>>) -> Result<Graph, io::Error> {
         if let Ok(file) = File::open(path).as_mut() {
             let mut json_str = String::from("");
             file.read_to_string(&mut json_str)?;
-            return Graph::from_json_string(json_str.as_str(), metadata).await;
+            return Graph::from_json_string(json_str.as_str(), metadata);
         }
 
         Err(io::Error::new(

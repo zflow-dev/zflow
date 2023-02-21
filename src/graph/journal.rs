@@ -5,49 +5,129 @@
 ///    (c) 2013 Flowhub UG
 ///    (c) 2011-2012 Henri Bergius, Nemein
 ///    FBP Graph may be freely distributed under the MIT license
-
-use crate::internal::event_manager::EventManager;
+use crate::internal::event_manager::EventListener;
 use foreach::ForEach;
+
 use log::error;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::{
     graph::Graph,
-    types::{GraphEdge, GraphExportedPort, GraphGroup, GraphIIP, GraphLeaf},
+    types::{GraphEdge, GraphEvents, GraphExportedPort, GraphGroup, GraphIIP},
 };
 use crate::graph::types::GraphNode;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TransactionEntry {
-    pub cmd: Option<String>,
-    pub args: Option<Value>,
+    pub cmd: Option<GraphEvents>,
     pub rev: Option<i32>,
     pub old: Option<Map<String, Value>>,
     pub new: Option<Map<String, Value>>,
 }
 
-pub trait JournalStore<'a>: EventManager<'a> {
+pub trait JournalStore {
     fn count_transactions(&self) -> usize;
-    fn put_transaction(&mut self, rev_id: usize, entry: Vec<TransactionEntry>);
-    fn fetch_transaction(&mut self, rev_id: usize) -> Option<&mut Vec<TransactionEntry>>;
+    fn put_transaction(&mut self, rev_id: i32, entry: Vec<TransactionEntry>);
+    fn fetch_transaction(&mut self, rev_id: i32) -> Vec<TransactionEntry>;
+    fn set_subscribed(&mut self, sub: bool);
+    fn set_current_rev(&mut self, rev: i32);
+    fn get_current_rev(&self) -> i32;
+    fn get_last_rev(&self) -> i32;
+    fn set_last_rev(&mut self, rev: i32);
+    fn append_command(&mut self, cmd: GraphEvents, rev: Option<i32>);
+    fn start_journal_transaction(&mut self, id: &str, meta: Option<Map<String, Value>>);
+    fn end_journal_transaction(&mut self, id: &str, meta: Option<Map<String, Value>>);
 }
 
-impl<'a> JournalStore<'a> for Graph<'a> {
+impl JournalStore for Graph {
     fn count_transactions(&self) -> usize {
         self.transactions.len()
     }
 
-    fn put_transaction(&mut self, rev_id: usize, entries: Vec<TransactionEntry>) {
+    fn put_transaction(&mut self, rev_id: i32, entries: Vec<TransactionEntry>) {
+        println!("rev_id {}, last_rev {}, is > {}",rev_id, self.last_revision, rev_id > self.last_revision);
         if rev_id > self.last_revision {
             self.last_revision = rev_id;
+            println!("{}", self.last_revision);
         }
-        self.emit("transaction", &(rev_id, entries.clone()));
-        self.transactions.insert(rev_id, entries);
+
+        self.transactions.insert(rev_id as usize, entries);
     }
 
-    fn fetch_transaction(&mut self, rev_id: usize) -> Option<&mut Vec<TransactionEntry>> {
-        self.transactions.get_mut(rev_id)
+    fn fetch_transaction(&mut self, rev_id: i32) -> Vec<TransactionEntry> {
+        if let Some(tx) =  self.transactions.iter().find(|entry| entry.iter().find(|tx| tx.rev == Some(rev_id)).is_some()) {
+            return tx.to_vec();
+        }
+        Vec::new()
+    }
+
+    fn set_subscribed(&mut self, sub: bool) {
+        self.subscribed = sub;
+    }
+    fn set_current_rev(&mut self, rev: i32) {
+        self.current_revision = rev;
+    }
+
+    fn append_command(&mut self, cmd: GraphEvents, rev: Option<i32>) {
+        if !self.subscribed {
+            return;
+        }
+
+        let entry = TransactionEntry {
+            cmd: Some(cmd),
+            rev,
+            old: None,
+            new: None,
+        };
+
+        self.entries.push(entry);
+    }
+
+    fn start_journal_transaction(&mut self, id: &str, meta: Option<Map<String, Value>>) {
+        if !self.subscribed {
+            return;
+        }
+        if !self.entries.is_empty() {
+            error!("Inconsistent @entries");
+            return;
+        }
+        self.current_revision += 1;
+        println!("cur {}", self.current_revision);
+        self.append_command(
+            GraphEvents::StartTransaction(json!({
+              "id": id,
+              "metadata": meta,
+            })),
+            Some(self.current_revision),
+        );
+    }
+
+    fn end_journal_transaction(&mut self, id: &str, meta: Option<Map<String, Value>>) {
+        if !self.subscribed {
+            return;
+        }
+        self.append_command(
+            GraphEvents::EndTransaction(json!({
+              "id": id,
+              "metadata": meta,
+            })),
+            Some(self.get_current_rev()),
+        );
+        let cur = self.get_current_rev();
+        self.put_transaction(cur, self.entries.clone());
+        self.entries.clear();
+    }
+
+    fn get_last_rev(&self) -> i32 {
+        self.last_revision
+    }
+    fn set_last_rev(&mut self, rev: i32) {
+        self.last_revision = rev;
+    }
+
+    fn get_current_rev(&self) -> i32 {
+        self.current_revision
     }
 }
 
@@ -60,948 +140,547 @@ impl<'a> JournalStore<'a> for Graph<'a> {
 /// It is not possible to operate on smaller changes than individual transactions.
 /// Use start_transaction and end_transaction on Graph to structure the revisions logical changesets.
 ///
-
-pub trait Journal<'a>: EventManager<'a> {
-    fn init_journal(&mut self, metadata: Option<Map<String, Value>>) -> &mut Self;
-
-    fn append_command(&mut self, cmd: &str, args: Value, rev: Option<i32>) -> &mut Self;
-    fn start_journal(&mut self, id: &str, meta: Option<Map<String, Value>>) -> &mut Self;
-    fn end_journal(&mut self, id: &str, meta: Option<Map<String, Value>>) -> &mut Self;
-    fn execute_entry(&mut self, entry: TransactionEntry) -> &mut Self;
-    fn execute_entry_inversed(&mut self, entry: TransactionEntry) -> &mut Self;
-    fn move_to_revision(&mut self, rev_id: i32) -> &mut Self;
+pub trait Journal {
+    fn execute_entry(&mut self, entry: TransactionEntry);
+    fn execute_entry_inversed(&mut self, entry: TransactionEntry);
+    fn move_to_revision(&mut self, rev_id: i32);
     /// Undo the last graph change
-    fn undo(&mut self) -> &mut Self;
+    fn undo(&mut self);
     /// Redo the last undo
-    fn redo(&mut self) -> &mut Self;
+    fn redo(&mut self);
     /// If there is something to redo
     fn can_redo(&self) -> bool;
     /// If there is something to undo
     fn can_undo(&self) -> bool;
+    fn start_journal(&mut self, metadata: Option<Map<String, Value>>);
 }
 
-impl<'a> Journal<'a> for Graph<'a> {
-    fn init_journal(&mut self, metadata: Option<Map<String, Value>>) -> &mut Self {
-        self.subscribed = true;
-
-        self.entries = Vec::new();
-
-        if self.count_transactions() == 0 {
-            // Sync journal with current graph to start transaction history
-            self.current_revision = -1;
-
-            self.start_journal("initial", metadata.clone());
-            self.nodes.clone().iter().foreach(|node, _| {
-                self.append_command("add_node", json!(node), None);
-            });
-            self.edges.clone().iter().foreach(|edge, _| {
-                self.append_command("add_edge", json!(edge), None);
-            });
-            self.initializers.clone().iter().foreach(|iip, _| {
-                self.append_command("add_initial", json!(iip), None);
-            });
-
-            if self.properties.clone().keys().len() > 0 {
-                self.append_command("change_properties", json!(self.properties), None);
-            }
-
-            self.inports.clone().keys().foreach(|name, _| {
-                self.append_command(
-                    "add_inport",
-                    json!({
-                        "name": name,
-                        "port": self.inports.get(name).unwrap(),
-                    }),
-                    None,
-                );
-            });
-            self.outports.clone().keys().foreach(|name, _| {
-                self.append_command(
-                    "add_outport",
-                    json!({
-                        "name": name,
-                        "port": self.outports.get(name).unwrap(),
-                    }),
-                    None,
-                );
-            });
-
-            self.groups.clone().iter().foreach(|group, _| {
-                self.append_command("add_group", json!(group), None);
-            });
-
-            self.end_journal("initial", metadata.clone());
-        } else {
-            // Persistent store, start with its latest rev
-            self.current_revision = self.last_revision as i32;
-        }
-
-        // Subscribe to graph changes
-        self.connect(
-            "add_node",
-            |this, data| {
-                this.append_command(
-                    "add_node",
-                    json!(data.downcast_ref::<GraphNode>().unwrap()),
-                    None,
-                );
-            },
-            false,
-        );
-        self.connect(
-            "remove_node",
-            |this, data| {
-                this.append_command(
-                    "remove_node",
-                    json!(data.downcast_ref::<GraphNode>().unwrap()),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "rename_node",
-            |this, data| {
-                let (old_name, new_name) = data.downcast_ref::<(String, String)>().unwrap();
-                this.append_command(
-                    "rename_node",
-                    json!({
-                        "old_id": *old_name,
-                        "new_id": *new_name
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "change_node",
-            |this, data| {
-                let (node, old, new) = data
-                    .downcast_ref::<(GraphNode, Option<Map<String, Value>>, Map<String, Value>)>()
-                    .unwrap();
-                this.append_command(
-                    "change_node",
-                    json!({
-                        "id": node.id,
-                        "new": *new,
-                        "old": *old
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "add_edge",
-            |this, data| {
-                this.append_command(
-                    "add_edge",
-                    json!(data.downcast_ref::<GraphEdge>().unwrap()),
-                    None,
-                );
-            },
-            false,
-        );
-        self.connect(
-            "remove_edge",
-            |this, data| {
-                this.append_command(
-                    "remove_edge",
-                    json!(data.downcast_ref::<GraphEdge>().unwrap()),
-                    None,
-                );
-            },
-            false,
-        );
-        self.connect(
-            "change_edge",
-            |this, data| {
-                let (edge, old_meta, _) = data
-                    .downcast_ref::<(GraphEdge, Option<Map<String, Value>>, Map<String, Value>)>()
-                    .unwrap();
-                let old = if old_meta.is_none() {
-                    json!(null)
-                } else {
-                    json!(old_meta.clone().unwrap())
-                };
-                let new = if edge.metadata.is_none() {
-                    json!(null)
-                } else {
-                    json!(edge.metadata.clone().unwrap())
-                };
-                this.append_command(
-                    "change_edge",
-                    json!({
-                        "from": edge.from,
-                        "to": edge.to,
-                        "new": new,
-                        "old": old
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "add_initial",
-            |this, data| {
-                this.append_command(
-                    "add_initial",
-                    json!(data.downcast_ref::<GraphIIP>().unwrap()),
-                    None,
-                );
-            },
-            false,
-        );
-        self.connect(
-            "remove_initial",
-            |this, data| {
-                this.append_command(
-                    "remove_initial",
-                    json!(data.downcast_ref::<GraphIIP>().unwrap()),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "change_properties",
-            |this, data| {
-                let (new_props, old_props) = data
-                    .downcast_ref::<(Map<String, Value>, Map<String, Value>)>()
-                    .unwrap();
-                this.append_command(
-                    "change_properties",
-                    json!({
-                        "old": *old_props,
-                        "new": *new_props
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "add_group",
-            |this, data| {
-                this.append_command(
-                    "add_group",
-                    json!(data.downcast_ref::<GraphGroup>().unwrap()),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "rename_group",
-            |this, data| {
-                let (old_name, new_name) = data.downcast_ref::<(String, String)>().unwrap();
-                this.append_command(
-                    "rename_group",
-                    json!({
-                        "old_name": *old_name,
-                        "new_name": *new_name
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "remove_group",
-            |this, data| {
-                this.append_command(
-                    "remove_group",
-                    json!(data.downcast_ref::<GraphGroup>().unwrap()),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "change_group",
-            |this, data| {
-                let (group, old, _) = data
-                    .downcast_ref::<(GraphGroup, Option<Map<String, Value>>, Map<String, Value>)>()
-                    .unwrap();
-                let old = if old.is_none() {
-                    json!(null)
-                } else {
-                    json!(old.clone().unwrap())
-                };
-                let new = if group.metadata.is_none() {
-                    json!(null)
-                } else {
-                    json!(group.metadata.clone().unwrap())
-                };
-                this.append_command(
-                    "change_group",
-                    json!({
-                        "name": group.name,
-                        "new": new,
-                        "old": old
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "add_inport",
-            |this, data| {
-                let (name, port) = data.downcast_ref::<(String, GraphExportedPort)>().unwrap();
-                this.append_command(
-                    "add_inport",
-                    json!({
-                        "name": name,
-                        "port": *port
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "remove_inport",
-            |this, data| {
-                let (name, port) = data
-                    .downcast_ref::<(String, Option<GraphExportedPort>)>()
-                    .unwrap();
-                this.append_command(
-                    "remove_inport",
-                    json!({
-                        "name": name,
-                        "port": *port
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "rename_inport",
-            |this, data| {
-                let (old_name, new_name) = data.downcast_ref::<(String, String)>().unwrap();
-                this.append_command(
-                    "rename_inport",
-                    json!({
-                        "old_id": *old_name,
-                        "new_id": *new_name
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "change_inport",
-            |this, data| {
-                let (name, port, old, _) = data
-                    .downcast_ref::<(
-                        String,
-                        GraphExportedPort,
-                        Map<String, Value>,
-                        Map<String, Value>,
-                    )>()
-                    .unwrap();
-                this.append_command(
-                    "change_inport",
-                    json!({
-                        "name": name,
-                        "new": port.metadata,
-                        "old": *old
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "add_outport",
-            |this, data| {
-                let (name, port) = data.downcast_ref::<(String, GraphExportedPort)>().unwrap();
-                this.append_command(
-                    "add_outport",
-                    json!({
-                        "name": name,
-                        "port": *port
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "remove_outport",
-            |this, data| {
-                let (name, port) = data
-                    .downcast_ref::<(String, Option<GraphExportedPort>)>()
-                    .unwrap();
-                this.append_command(
-                    "remove_outport",
-                    json!({
-                        "name": name,
-                        "port": *port
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "rename_outport",
-            |this, data| {
-                let (old_name, new_name) = data.downcast_ref::<(String, String)>().unwrap();
-                this.append_command(
-                    "rename_outport",
-                    json!({
-                        "old_id": *old_name,
-                        "new_id": *new_name
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "change_outport",
-            |this, data| {
-                let (name, port, old, _) = data
-                    .downcast_ref::<(
-                        String,
-                        GraphExportedPort,
-                        Map<String, Value>,
-                        Map<String, Value>,
-                    )>()
-                    .unwrap();
-                this.append_command(
-                    "change_outport",
-                    json!({
-                        "name": name,
-                        "new": port.metadata,
-                        "old": *old
-                    }),
-                    None,
-                );
-            },
-            false,
-        );
-
-        self.connect(
-            "start_transaction",
-            |this, data| {
-                let (id, meta) = data
-                    .downcast_ref::<(String, Option<Map<String, Value>>)>()
-                    .unwrap();
-                this.start_journal(id, meta.clone());
-            },
-            false,
-        );
-
-        self.connect(
-            "end_transaction",
-            |this, data| {
-                let (id, meta) = data
-                    .downcast_ref::<(String, Option<Map<String, Value>>)>()
-                    .unwrap();
-                this.end_journal(id, meta.clone());
-            },
-            false,
-        );
-
-        self
-    }
-
-    fn append_command(&mut self, cmd: &str, args: Value, rev: Option<i32>) -> &mut Self {
-        if !self.subscribed {
-            return self;
-        }
-
-        let entry = TransactionEntry {
-            cmd: Some(cmd.to_owned()),
-            args: Some(args),
-            rev,
-            old: None,
-            new: None,
-        };
-
-        self.entries.push(entry);
-
-        self
-    }
-
-    fn start_journal(&mut self, id: &str, meta: Option<Map<String, Value>>) -> &mut Self {
-        if !self.subscribed {
-            return self;
-        }
-        if !self.entries.is_empty() {
-            error!("Inconsistent @entries");
-            return self;
-        }
-        self.current_revision += 1;
-        self.append_command(
-            "start_transaction",
-            json!({
-              "id": id,
-              "metadata": meta,
-            }),
-            Some(self.current_revision),
-        );
-        self
-    }
-
-    fn end_journal(&mut self, id: &str, meta: Option<Map<String, Value>>) -> &mut Self {
-        if !self.subscribed {
-            return self;
-        }
-        self.append_command(
-            "end_transaction",
-            json!({
-              "id": id,
-              "metadata": meta,
-            }),
-            Some(self.current_revision),
-        );
-
-        self.put_transaction(
-            self.current_revision.try_into().unwrap(),
-            self.entries.clone(),
-        );
-        self.entries = Vec::new();
-        self
-    }
-
-    fn execute_entry(&mut self, entry: TransactionEntry) -> &mut Self {
-        let a = entry.args.clone();
-        if let Some(a) = a {
-            if let Some(cmd) = entry.cmd.as_ref() {
-                match cmd.as_str() {
-                    "add_node" => {
-                        let a = a.as_object().unwrap();
-                        self.add_node(
-                            a.get("id").unwrap().as_str().unwrap(),
-                            a.get("component").unwrap().as_str().unwrap(),
+impl Journal for Graph {
+    fn execute_entry(&mut self, entry: TransactionEntry) {
+        if let Some(event) = entry.cmd {
+            match event {
+                GraphEvents::AddNode(data) => {
+                    if let Ok(node) = GraphNode::deserialize(data) {
+                        self.add_node(&node.id, &node.component, None);
+                    }
+                }
+                GraphEvents::RemoveNode(data) => {
+                    if let Ok(node) = GraphNode::deserialize(data) {
+                        self.remove_node(&node.id);
+                    }
+                }
+                GraphEvents::RenameNode(data) => {
+                    if let Some(data) = data.as_object() {
+                        self.rename_node(
+                            data.get("old").unwrap().as_str().unwrap(),
+                            data.get("new").unwrap().as_str().unwrap(),
+                        );
+                    }
+                }
+                GraphEvents::ChangeNode(data) => {
+                    if let Some(data) = data.as_object() {
+                        let node = GraphNode::deserialize(data.get("node").unwrap()).unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        if let Some(old) = data.get("old_metadata").unwrap().as_object() {
+                            self.set_node_metadata(
+                                &node.id,
+                                calculate_meta(old.clone(), new.clone()),
+                            );
+                        } else {
+                            self.set_node_metadata(
+                                &node.id,
+                                calculate_meta(Map::new(), new.clone()),
+                            );
+                        }
+                    }
+                }
+                GraphEvents::AddEdge(data) => {
+                    if let Ok(edge) = GraphEdge::deserialize(data) {
+                        self.add_edge(
+                            &edge.from.node_id,
+                            &edge.from.port,
+                            &edge.to.node_id,
+                            &edge.to.port,
                             None,
                         );
                     }
-                    "remove_node" => {
-                        let a = a.as_object().unwrap();
-                        self.remove_node(a.get("id").unwrap().as_str().unwrap());
-                    }
-                    "rename_node" => {
-                        let a = a.as_object().unwrap();
-                        self.rename_node(
-                            a.get("old_id").unwrap().as_str().unwrap(),
-                            a.get("new_id").unwrap().as_str().unwrap(),
+                }
+                GraphEvents::RemoveEdge(data) => {
+                    if let Ok(edge) = GraphEdge::deserialize(data) {
+                        self.remove_edge(
+                            &edge.from.node_id,
+                            &edge.from.port,
+                            Some(&edge.to.node_id),
+                            Some(&edge.to.port),
                         );
                     }
-                    "change_node" => {
-                        let a = a.as_object().unwrap();
-                        let id = a.get("id").unwrap().as_str().unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap();
-                        if let Some(old) = a.get("old").unwrap().as_object() {
-                            self.set_node_metadata(id, calculate_meta(old.clone(), new.clone()));
-                        } else {
-                            self.set_node_metadata(id, calculate_meta(Map::new(), new.clone()));
-                        }
-                    }
-                    "add_edge" => {
-                        let edge = GraphEdge::deserialize(&a);
-                        if let Ok(edge) = edge {
-                            self.add_edge(
-                                &edge.from.node_id,
-                                &edge.from.port,
-                                &edge.to.node_id,
-                                &edge.to.port,
-                                None,
-                            );
-                        }
-                    }
-                    "remove_edge" => {
-                        let edge = GraphEdge::deserialize(&a);
-                        if let Ok(edge) = edge {
-                            self.remove_edge(
-                                &edge.from.node_id,
-                                &edge.from.port,
-                                Some(&edge.to.node_id),
-                                Some(&edge.to.port),
-                            );
-                        }
-                    }
-                    "change_edge" => {
-                        let from = GraphLeaf::deserialize(a.get("from").unwrap()).unwrap();
-                        let to = GraphLeaf::deserialize(a.get("to").unwrap()).unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap().clone();
-                        let old = a.get("old").unwrap().as_object().unwrap().clone();
+                }
+                GraphEvents::ChangeEdge(data) => {
+                    if let Some(data) = data.as_object() {
+                        let edge = GraphEdge::deserialize(data.get("edge").unwrap()).unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        let old = data
+                            .get("old_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+
                         self.set_edge_metadata(
-                            &from.node_id,
-                            &from.port,
-                            &to.node_id,
-                            &to.port,
-                            calculate_meta(old, new),
+                            &edge.from.node_id,
+                            &edge.from.port,
+                            &edge.to.node_id,
+                            &edge.to.port,
+                            calculate_meta(old.clone(), new.clone()),
                         );
                     }
-                    "add_initial" => {
-                        let iip = GraphIIP::deserialize(&a);
-                        if let Ok(iip) = iip {
-                            if iip.to.is_some() && iip.from.is_some() {
-                                let to = iip.to.unwrap();
-                                if to.index.is_some() {
-                                    self.add_initial_index(
-                                        iip.from.unwrap().data,
-                                        &to.node_id,
-                                        &to.port,
-                                        to.index,
-                                        iip.metadata,
-                                    );
-                                } else {
-                                    self.add_initial(
-                                        iip.from.unwrap().data,
-                                        &to.node_id,
-                                        &to.port,
-                                        iip.metadata,
-                                    );
-                                }
+                }
+                GraphEvents::AddInitial(data) => {
+                    if let Ok(iip) = GraphIIP::deserialize(data) {
+                        if iip.to.is_some() && iip.from.is_some() {
+                            let to = iip.to.unwrap();
+                            if to.index.is_some() {
+                                self.add_initial_index(
+                                    iip.from.unwrap().data,
+                                    &to.node_id,
+                                    &to.port,
+                                    to.index,
+                                    iip.metadata,
+                                );
+                            } else {
+                                self.add_initial(
+                                    iip.from.unwrap().data,
+                                    &to.node_id,
+                                    &to.port,
+                                    iip.metadata,
+                                );
                             }
                         }
                     }
-                    "remove_initial" => {
-                        let iip = GraphIIP::deserialize(&a).unwrap();
+                }
+                GraphEvents::RemoveInitial(data) => {
+                    if let Ok(iip) = GraphIIP::deserialize(data) {
                         let to = iip.to.unwrap();
                         self.remove_initial(&to.node_id, &to.port);
                     }
-                    "start_transaction" => {}
-                    "end_transaction" => {}
-                    "change_properties" => {
-                        let a = a.as_object().unwrap();
-                        self.set_properties(a.get("new").unwrap().as_object().unwrap().clone());
+                }
+                GraphEvents::ChangeProperties(data) => {
+                    let data = data.as_object().unwrap();
+                    self.set_properties(data.get("new").unwrap().as_object().unwrap().clone());
+                }
+                GraphEvents::AddGroup(data) => {
+                    if let Ok(group) = GraphGroup::deserialize(data) {
+                        self.add_group(&group.name, group.nodes, group.metadata);
                     }
-                    "add_group" => {
-                        if let Ok(group) = GraphGroup::deserialize(&a) {
-                            self.add_group(&group.name, group.nodes, group.metadata);
-                        }
+                }
+                GraphEvents::RemoveGroup(data) => {
+                    if let Ok(group) = GraphGroup::deserialize(data) {
+                        self.remove_group(&group.name);
                     }
-                    "rename_group" => {
-                        let a = a.as_object().unwrap();
-                        self.rename_node(
-                            a.get("old_name").unwrap().as_str().unwrap(),
-                            a.get("new_name").unwrap().as_str().unwrap(),
+                }
+                GraphEvents::RenameGroup(data) => {
+                    if let Some(a) = data.as_object() {
+                        self.rename_group(
+                            a.get("old").unwrap().as_str().unwrap(),
+                            a.get("new").unwrap().as_str().unwrap(),
                         );
                     }
-                    "remove_group" => {
-                        if let Ok(group) = GraphGroup::deserialize(&a) {
-                            self.remove_group(&group.name);
-                        }
+                }
+                GraphEvents::ChangeGroup(data) => {
+                    if let Some(data) = data.as_object() {
+                        let group = GraphGroup::deserialize(data.get("group").unwrap()).unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        let old = data
+                            .get("old_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+
+                        self.set_group_metadata(
+                            &group.name,
+                            calculate_meta(old.clone(), new.clone()),
+                        );
                     }
-                    "change_group" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap();
-                        let old = a.get("old").unwrap().as_object().unwrap();
-                        self.set_group_metadata(name, calculate_meta(old.clone(), new.clone()));
-                    }
-                    "add_inport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let port = a.get("port").unwrap();
+                }
+                GraphEvents::AddInport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        let port = data.get("port").unwrap();
                         if let Ok(inport) = GraphExportedPort::deserialize(port) {
                             self.add_inport(name, &inport.process, &inport.port, inport.metadata);
                         }
                     }
-                    "remove_inport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
+                }
+                GraphEvents::RemoveInport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
                         self.remove_inport(name);
                     }
-                    "rename_inport" => {
-                        let a = a.as_object().unwrap();
+                }
+                GraphEvents::RenameInport(data) => {
+                    if let Some(data) = data.as_object() {
                         self.rename_inport(
-                            a.get("old_id").unwrap().as_str().unwrap(),
-                            a.get("new_id").unwrap().as_str().unwrap(),
+                            data.get("old").unwrap().as_str().unwrap(),
+                            data.get("new").unwrap().as_str().unwrap(),
                         );
                     }
-                    "change_inport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap();
-                        let old = a.get("old").unwrap().as_object().unwrap();
+                }
+                GraphEvents::ChangeInport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        let old = data
+                            .get("old_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+
                         self.set_inports_metadata(name, calculate_meta(old.clone(), new.clone()));
                     }
-                    "add_outport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let port = a.get("port").unwrap();
+                }
+                GraphEvents::AddOutport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        let port = data.get("port").unwrap();
                         if let Ok(inport) = GraphExportedPort::deserialize(port) {
                             self.add_outport(name, &inport.process, &inport.port, inport.metadata);
                         }
                     }
-                    "remove_outport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
+                }
+                GraphEvents::RemoveOutport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
                         self.remove_outport(name);
                     }
-                    "rename_outport" => {
-                        let a = a.as_object().unwrap();
+                }
+                GraphEvents::RenameOutport(data) => {
+                    if let Some(data) = data.as_object() {
                         self.rename_outport(
-                            a.get("old_id").unwrap().as_str().unwrap(),
-                            a.get("new_id").unwrap().as_str().unwrap(),
+                            data.get("old").unwrap().as_str().unwrap(),
+                            data.get("new").unwrap().as_str().unwrap(),
                         );
                     }
-                    "change_outport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap();
-                        let old = a.get("old").unwrap().as_object().unwrap();
+                }
+                GraphEvents::ChangeOutport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        let old = data
+                            .get("old_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+
                         self.set_outports_metadata(name, calculate_meta(old.clone(), new.clone()));
                     }
-                    &_ => {
-                        log::error!("`Unknown journal entry: {}", cmd);
-                        panic!();
-                    }
                 }
+                GraphEvents::StartTransaction(_) => {}
+                GraphEvents::EndTransaction(_) => {}
+                _ => {}
             }
         }
-        self
     }
 
-    fn execute_entry_inversed(&mut self, entry: TransactionEntry) -> &mut Self {
-        let a = entry.args.clone();
-        if let Some(a) = a {
-            if let Some(cmd) = entry.cmd.as_ref() {
-                match cmd.as_str() {
-                    "add_node" => {
-                        let a = a.as_object().unwrap();
-                        self.remove_node(a.get("id").unwrap().as_str().unwrap());
+    fn execute_entry_inversed(&mut self, entry: TransactionEntry) {
+        if let Some(event) = entry.cmd {
+            match event {
+                GraphEvents::AddNode(data) => {
+                    if let Ok(node) = GraphNode::deserialize(data) {
+                        self.remove_node(&node.id);
                     }
-                    "remove_node" => {
-                        let a = a.as_object().unwrap();
-                        self.add_node(
-                            a.get("id").unwrap().as_str().unwrap(),
-                            a.get("component").unwrap().as_str().unwrap(),
+                }
+                GraphEvents::RemoveNode(data) => {
+                    if let Ok(node) = GraphNode::deserialize(data) {
+                        self.add_node(&node.id, &node.component, node.metadata);
+                    }
+                }
+                GraphEvents::RenameNode(data) => {
+                    if let Some(data) = data.as_object() {
+                        self.rename_node(
+                            data.get("new").unwrap().as_str().unwrap(),
+                            data.get("old").unwrap().as_str().unwrap(),
+                        );
+                    }
+                }
+                GraphEvents::ChangeNode(data) => {
+                    if let Some(data) = data.as_object() {
+                        let node = GraphNode::deserialize(data.get("node").unwrap()).unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        if let Some(old) = data.get("old_metadata").unwrap().as_object() {
+                            self.set_node_metadata(
+                                &node.id,
+                                calculate_meta(new.clone(), old.clone()),
+                            );
+                        } else {
+                            self.set_node_metadata(
+                                &node.id,
+                                calculate_meta(new.clone(), Map::new()),
+                            );
+                        }
+                    }
+                }
+                GraphEvents::AddEdge(data) => {
+                    if let Ok(edge) = GraphEdge::deserialize(data) {
+                        self.remove_edge(
+                            &edge.from.node_id,
+                            &edge.from.port,
+                            Some(&edge.to.node_id),
+                            Some(&edge.to.port),
+                        );
+                    }
+                }
+                GraphEvents::RemoveEdge(data) => {
+                    if let Ok(edge) = GraphEdge::deserialize(data) {
+                        self.add_edge(
+                            &edge.from.node_id,
+                            &edge.from.port,
+                            &edge.to.node_id,
+                            &edge.to.port,
                             None,
                         );
                     }
-                    "rename_node" => {
-                        let a = a.as_object().unwrap();
-                        self.rename_node(
-                            a.get("new_id").unwrap().as_str().unwrap(),
-                            a.get("old_id").unwrap().as_str().unwrap(),
-                        );
-                    }
-                    "change_node" => {
-                        let a = a.as_object().unwrap();
-                        let id = a.get("id").unwrap().as_str().unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap();
-
-                        if let Some(old) = a.get("old").unwrap().as_object() {
-                            self.set_node_metadata(id, calculate_meta(new.clone(), old.clone()));
-                        } else {
-                            let meta = calculate_meta(new.clone(), Map::new());
-                            self.set_node_metadata(id, meta);
-                        }
-                    }
-                    "add_edge" => {
-                        if let Ok(edge) = GraphEdge::deserialize(&a) {
-                            self.remove_edge(
-                                &edge.from.node_id,
-                                &edge.from.port,
-                                Some(&edge.to.node_id),
-                                Some(&edge.to.port),
-                            );
-                        }
-                    }
-                    "remove_edge" => {
-                        let edge = GraphEdge::deserialize(&a);
-                        if let Ok(edge) = edge {
-                            self.add_edge(
-                                &edge.from.node_id,
-                                &edge.from.port,
-                                &edge.to.node_id,
-                                &edge.to.port,
-                                None,
-                            );
-                        }
-                    }
-                    "change_edge" => {
-                        let from = GraphLeaf::deserialize(a.get("from").unwrap()).unwrap();
-                        let to = GraphLeaf::deserialize(a.get("to").unwrap()).unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap().clone();
-                        let old = a.get("old").unwrap().as_object().unwrap().clone();
+                }
+                GraphEvents::ChangeEdge(data) => {
+                    if let Some(data) = data.as_object() {
+                        let edge = GraphEdge::deserialize(data.get("edge").unwrap()).unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        let old = data
+                            .get("old_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
 
                         self.set_edge_metadata(
-                            &from.node_id,
-                            &from.port,
-                            &to.node_id,
-                            &to.port,
-                            calculate_meta(new, old),
+                            &edge.from.node_id,
+                            &edge.from.port,
+                            &edge.to.node_id,
+                            &edge.to.port,
+                            calculate_meta(new.clone(), old.clone()),
                         );
                     }
-                    "add_initial" => {
-                        let iip = GraphIIP::deserialize(&a).unwrap();
+                }
+                GraphEvents::AddInitial(data) => {
+                    if let Ok(iip) = GraphIIP::deserialize(data) {
                         let to = iip.to.unwrap();
                         self.remove_initial(&to.node_id, &to.port);
                     }
-                    "remove_initial" => {
-                        let iip = GraphIIP::deserialize(&a);
-                        if let Ok(iip) = iip {
-                            if iip.to.is_some() && iip.from.is_some() {
-                                let to = iip.to.unwrap();
-                                if to.index.is_some() {
-                                    self.add_initial_index(
-                                        iip.from.unwrap().data,
-                                        &to.node_id,
-                                        &to.port,
-                                        to.index,
-                                        iip.metadata,
-                                    );
-                                } else {
-                                    self.add_initial(
-                                        iip.from.unwrap().data,
-                                        &to.node_id,
-                                        &to.port,
-                                        iip.metadata,
-                                    );
-                                }
+                }
+                GraphEvents::RemoveInitial(data) => {
+                    if let Ok(iip) = GraphIIP::deserialize(data) {
+                        if iip.to.is_some() && iip.from.is_some() {
+                            let to = iip.to.unwrap();
+                            if to.index.is_some() {
+                                self.add_initial_index(
+                                    iip.from.unwrap().data,
+                                    &to.node_id,
+                                    &to.port,
+                                    to.index,
+                                    iip.metadata,
+                                );
+                            } else {
+                                self.add_initial(
+                                    iip.from.unwrap().data,
+                                    &to.node_id,
+                                    &to.port,
+                                    iip.metadata,
+                                );
                             }
                         }
                     }
-                    "start_transaction" => {}
-                    "end_transaction" => {}
-                    "change_properties" => {
-                        let a = a.as_object().unwrap();
-                        self.set_properties(a.get("old").unwrap().as_object().unwrap().clone());
+                }
+                GraphEvents::ChangeProperties(data) => {
+                    let data = data.as_object().unwrap();
+                    self.set_properties(data.get("old").unwrap().as_object().unwrap().clone());
+                }
+                GraphEvents::AddGroup(data) => {
+                    if let Ok(group) = GraphGroup::deserialize(data) {
+                        self.remove_group(&group.name);
                     }
-                    "add_group" => {
-                        if let Ok(group) = GraphGroup::deserialize(&a) {
-                            self.remove_group(&group.name);
-                        }
+                }
+                GraphEvents::RemoveGroup(data) => {
+                    if let Ok(group) = GraphGroup::deserialize(data) {
+                        self.add_group(&group.name, group.nodes, group.metadata);
                     }
-                    "rename_group" => {
-                        let a = a.as_object().unwrap();
-                        self.rename_node(
-                            a.get("new_name").unwrap().as_str().unwrap(),
-                            a.get("old_name").unwrap().as_str().unwrap(),
+                }
+                GraphEvents::RenameGroup(data) => {
+                    if let Some(a) = data.as_object() {
+                        self.rename_group(
+                            a.get("new").unwrap().as_str().unwrap(),
+                            a.get("old").unwrap().as_str().unwrap(),
                         );
                     }
-                    "remove_group" => {
-                        if let Ok(group) = GraphGroup::deserialize(&a) {
-                            self.add_group(&group.name, group.nodes, group.metadata);
-                        }
+                }
+                GraphEvents::ChangeGroup(data) => {
+                    if let Some(data) = data.as_object() {
+                        let group = GraphGroup::deserialize(data.get("group").unwrap()).unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        let old = data
+                            .get("old_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+
+                        self.set_group_metadata(&group.name, calculate_meta(new, old));
                     }
-                    "change_group" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap();
-                        let old = a.get("old").unwrap().as_object().unwrap();
-                        self.set_group_metadata(name, calculate_meta(new.clone(), old.clone()));
-                    }
-                    "add_inport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
+                }
+                GraphEvents::AddInport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
                         self.remove_inport(name);
                     }
-                    "remove_inport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let port = a.get("port").unwrap();
+                }
+                GraphEvents::RemoveInport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        let port = data.get("port").unwrap();
                         if let Ok(inport) = GraphExportedPort::deserialize(port) {
                             self.add_inport(name, &inport.process, &inport.port, inport.metadata);
                         }
                     }
-                    "rename_inport" => {
-                        let a = a.as_object().unwrap();
+                }
+                GraphEvents::RenameInport(data) => {
+                    if let Some(data) = data.as_object() {
                         self.rename_inport(
-                            a.get("new_id").unwrap().as_str().unwrap(),
-                            a.get("old_id").unwrap().as_str().unwrap(),
+                            data.get("new").unwrap().as_str().unwrap(),
+                            data.get("old").unwrap().as_str().unwrap(),
                         );
-                    }
-                    "change_inport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap();
-                        let old = a.get("old").unwrap().as_object().unwrap();
-                        self.set_inports_metadata(name, calculate_meta(new.clone(), old.clone()));
-                    }
-                    "add_outport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        self.remove_outport(name);
-                    }
-                    "remove_outport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let port = a.get("port").unwrap();
-                        if let Ok(outport) = GraphExportedPort::deserialize(port) {
-                            self.add_outport(
-                                name,
-                                &outport.process,
-                                &outport.port,
-                                outport.metadata,
-                            );
-                        }
-                    }
-                    "rename_outport" => {
-                        let a = a.as_object().unwrap();
-                        self.rename_inport(
-                            a.get("new_id").unwrap().as_str().unwrap(),
-                            a.get("old_id").unwrap().as_str().unwrap(),
-                        );
-                    }
-                    "change_outport" => {
-                        let a = a.as_object().unwrap();
-                        let name = a.get("name").unwrap().as_str().unwrap();
-                        let new = a.get("new").unwrap().as_object().unwrap();
-                        let old = a.get("old").unwrap().as_object().unwrap();
-                        self.set_inports_metadata(name, calculate_meta(new.clone(), old.clone()));
-                    }
-                    &_ => {
-                        log::error!("`Unknown journal entry: {}", cmd);
-                        panic!();
                     }
                 }
+                GraphEvents::ChangeInport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        let old = data
+                            .get("old_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+
+                        self.set_inports_metadata(name, calculate_meta(new, old));
+                    }
+                }
+                GraphEvents::AddOutport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        self.remove_outport(name);
+                    }
+                }
+                GraphEvents::RemoveOutport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        let port = data.get("port").unwrap();
+                        if let Ok(inport) = GraphExportedPort::deserialize(port) {
+                            self.add_outport(name, &inport.process, &inport.port, inport.metadata);
+                        }
+                    }
+                }
+                GraphEvents::RenameOutport(data) => {
+                    if let Some(data) = data.as_object() {
+                        self.rename_outport(
+                            data.get("new").unwrap().as_str().unwrap(),
+                            data.get("old").unwrap().as_str().unwrap(),
+                        );
+                    }
+                }
+                GraphEvents::ChangeOutport(data) => {
+                    if let Some(data) = data.as_object() {
+                        let name = data.get("name").unwrap().as_str().unwrap();
+                        let new = data
+                            .get("new_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+                        let old = data
+                            .get("old_metadata")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .clone();
+
+                        self.set_outports_metadata(name, calculate_meta(new, old));
+                    }
+                }
+                GraphEvents::StartTransaction(_) => {}
+                GraphEvents::EndTransaction(_) => {}
+                _ => {}
             }
         }
-        self
     }
-    fn move_to_revision(&mut self, rev_id: i32) -> &mut Self {
-        if rev_id == self.current_revision {
-            return self;
+    fn move_to_revision(&mut self, rev_id: i32) {
+        let cur = self.get_current_rev();
+        if rev_id == cur {
+            return;
         }
+     
 
-        self.subscribed = false;
-        if rev_id > self.current_revision {
+        self.set_subscribed(false);
+        if rev_id > self.get_current_rev() {
             // Forward replay journal to revId
-            let (mut r, end, asc) = {
-                let start = self.current_revision + 1;
+            let (mut r, mut start, end, asc) = {
+                let start = self.get_current_rev() + 1;
                 let r = start;
                 let end = rev_id;
                 let asc = start <= end;
-                (r, end, asc)
+                (r, start, end, asc)
             };
+
             while if asc { r <= end } else { r >= end } {
-                if let Some(transaction) = self.fetch_transaction(rev_id as usize) {
-                    transaction.clone().iter().foreach(|entry, _| {
-                        self.execute_entry(entry.clone());
-                    });
-                }
+                self.fetch_transaction(r).clone().iter().foreach(|entry, _|{
+                    self.execute_entry(entry.clone());
+                });
+            
                 if asc {
                     r += 1;
                 } else {
@@ -1010,51 +689,310 @@ impl<'a> Journal<'a> for Graph<'a> {
             }
         } else {
             // Move backwards, and apply inverse changes
-            let (mut r, end) = {
-                let r = self.current_revision;
-                let end = rev_id + 1;
-                (r, end)
-            };
+            let mut r = self.get_current_rev();
+            let end = rev_id + 1;
             while r >= end {
                 // Apply entries in reverse order
-                if let Some(_entries) = self.fetch_transaction(r as usize) {
-                    let mut entries = _entries.clone();
-                    entries.reverse();
-                    entries.iter().foreach(|entry, _| {
-                        self.execute_entry_inversed(entry.clone());
-                    });
-                }
-                // end = rev_id + 1;
+                let mut tx = self.fetch_transaction(r).clone();
+                tx.reverse();
+                tx.iter().foreach(|entry, _|{
+                    self.execute_entry_inversed(entry.clone());
+                });
                 r -= 1;
             }
         }
+
         self.current_revision = rev_id;
-        self.subscribed = true;
-        self
+        self.set_subscribed(true);
     }
 
-    fn undo(&mut self) -> &mut Self {
+    fn undo(&mut self) {
         if !self.can_undo() {
-            return self;
+            return;
         }
-        self.move_to_revision(self.current_revision - 1);
-        self
+        // println!("Undo");
+
+        let cur = self.current_revision;
+        self.move_to_revision(cur - 1);
     }
 
-    fn redo(&mut self) -> &mut Self {
-        if !self.can_undo() {
-            return self;
+    fn redo(&mut self) {
+        if !self.can_redo() {
+            return;
         }
-        self.move_to_revision(self.current_revision + 1);
-        self
+        // println!("Redo");
+
+        let cur = self.current_revision;
+        self.move_to_revision(cur + 1);
     }
 
     fn can_redo(&self) -> bool {
-        self.current_revision < self.last_revision as i32
+        let cur = self.current_revision;
+        let last = self.last_revision;
+        
+        return cur < last;
     }
 
     fn can_undo(&self) -> bool {
-        self.current_revision > 0
+        let cur = self.current_revision;
+        cur > 0
+    }
+
+    fn start_journal(&mut self, metadata: Option<Map<String, Value>>) {
+        self.set_subscribed(true);
+        self.entries.clear();
+
+        if self.count_transactions() == 0 {
+            // Sync journal with current graph to start transaction history
+            self.set_current_rev(-1);
+
+            self.start_journal_transaction("initial", metadata.clone());
+
+            self.nodes.clone().iter().foreach(|node, _| {
+                self.append_command(GraphEvents::AddNode(json!(node)), None);
+            });
+            self.edges.clone().iter().foreach(|edge, _| {
+                self.append_command(GraphEvents::AddEdge(json!(edge)), None);
+            });
+            self.initializers.clone().iter().foreach(|iip, _| {
+                self.append_command(GraphEvents::AddInitial(json!(iip)), None);
+            });
+
+            if self.properties.clone().keys().len() > 0 {
+                self.append_command(GraphEvents::ChangeProperties(json!(self.properties)), None);
+            }
+
+            self.inports.clone().keys().foreach(|name, _| {
+                self.append_command(
+                    GraphEvents::AddInport(json!({
+                        "name": name,
+                        "port": self.inports.get(name).unwrap(),
+                    })),
+                    None,
+                );
+            });
+            self.outports.clone().keys().foreach(|name, _| {
+                self.append_command(
+                    GraphEvents::AddOutport(json!({
+                        "name": name,
+                        "port": self.outports.get(name).unwrap(),
+                    })),
+                    None,
+                );
+            });
+
+            self.groups.clone().iter().foreach(|group, _| {
+                self.append_command(GraphEvents::AddGroup(json!(group)), None);
+            });
+
+            self.end_journal_transaction("initial", metadata.clone());
+        } else {
+            // Persistent store, start with its latest rev
+            let last = self.get_last_rev();
+            self.set_current_rev(last);
+        }
+
+        // Capture graph changes in the background and cache them
+
+        self.connect(
+            "add_node",
+            |this, data| {
+                this.append_command(GraphEvents::new("add_node", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "remove_node",
+            |this, data| {
+                this.append_command(GraphEvents::new("remove_node", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "rename_node",
+            |this, data| {
+                this.append_command(GraphEvents::new("rename_node", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "change_node",
+            |this, data| {
+                this.append_command(GraphEvents::new("change_node", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "add_edge",
+            |this, data| {
+                this.append_command(GraphEvents::new("add_edge", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "remove_edge",
+            |this, data| {
+                this.append_command(GraphEvents::new("remove_edge", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "change_edge",
+            |this, data| {
+                this.append_command(GraphEvents::new("change_edge", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "add_initial",
+            |this, data| {
+                this.append_command(GraphEvents::new("add_initial", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "remove_initial",
+            |this, data| {
+                this.append_command(GraphEvents::new("remove_initial", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "change_properties",
+            |this, data| {
+                this.append_command(GraphEvents::new("change_properties", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "add_group",
+            |this, data| {
+                this.append_command(GraphEvents::new("add_group", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "remove_group",
+            |this, data| {
+                this.append_command(GraphEvents::new("remove_group", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "rename_group",
+            |this, data| {
+                this.append_command(GraphEvents::new("rename_group", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "change_group",
+            |this, data| {
+                this.append_command(GraphEvents::new("change_group", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "add_inport",
+            |this, data| {
+                this.append_command(GraphEvents::new("add_inport", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "remove_inport",
+            |this, data| {
+                this.append_command(GraphEvents::new("remove_inport", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "rename_inport",
+            |this, data| {
+                this.append_command(GraphEvents::new("rename_inport", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "change_inport",
+            |this, data| {
+                this.append_command(GraphEvents::new("change_inport", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "add_outport",
+            |this, data| {
+                this.append_command(GraphEvents::new("add_outport", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "remove_outport",
+            |this, data| {
+                this.append_command(GraphEvents::new("remove_outport", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "rename_outport",
+            |this, data| {
+                this.append_command(GraphEvents::new("rename_outport", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "change_outport",
+            |this, data| {
+                this.append_command(GraphEvents::new("change_outport", data), None);
+            },
+            false,
+        );
+
+        self.connect(
+            "start_transaction",
+            |this, data| {
+                let data = data.as_object().expect("Expected an object");
+                this.start_journal_transaction(
+                    data["id"].as_str().unwrap(),
+                    data["metadata"].as_object().map(|m| m.clone()),
+                );
+            },
+            false,
+        );
+
+        self.connect(
+            "end_transaction",
+            |this, data| {
+                let data = data.as_object().expect("Expected an object");
+                this.end_journal_transaction(
+                    data["id"].as_str().unwrap(),
+                    data["metadata"].as_object().map(|m| m.clone()),
+                );
+            },
+            false,
+        );
     }
 }
 
@@ -1084,74 +1022,73 @@ mod tests {
     fn fbp_graph_journal() {
         'given_a_journaled_graph: {
             'when_connected_to_initialized_graph: {
-                let mut g = Graph::new("", false);
-                g.add_node("Foo", "Bar", None)
-                    .add_node("Baz", "Foo", None)
-                    .add_edge("Foo", "out", "Baz", "in", None)
-                    .init_journal(None);
+                let mut graph = Graph::new("", false);
+                graph.add_node("Foo", "Bar", None);
+                graph.add_node("Baz", "Foo", None);
+                graph.add_edge("Foo", "out", "Baz", "in", None);
+                graph.start_journal(None);
                 'then_it_should_have_just_the_initial_transaction: {
-                    assert_eq!(g.last_revision, 0);
+                    assert_eq!(graph.last_revision, 0);
                 }
             }
             'when_following_basic_graph_changes: {
-                let mut g = Graph::new("", false);
-                g.init_journal(None);
+                let mut graph = Graph::new("", false);
+                graph.start_journal(None);
                 'then_it_should_create_one_transaction_per_change: {
-                    g.add_node("Foo", "Bar", None)
-                        .add_node("Baz", "Foo", None)
-                        .add_edge("Foo", "out", "Baz", "in", None);
+                    graph.add_node("Foo", "Bar", None);
+                    graph.add_node("Baz", "Foo", None);
+                    graph.add_edge("Foo", "out", "Baz", "in", None);
 
-                    assert_eq!(g.last_revision, 3);
-                    g.remove_node("Baz");
-                    assert_eq!(g.last_revision, 4);
+                    assert_eq!(graph.last_revision, 3);
+                    graph.remove_node("Baz");
+                    assert_eq!(graph.last_revision, 4);
                 }
             }
-            'when_printing_to_pretty_string: {}
+            // 'when_printing_to_pretty_string: {}
             'when_jumping_to_revision: {
-                let mut g = Graph::new("", false);
-                g.init_journal(None)
-                    .add_node("Foo", "Bar", None)
-                    .add_node("Baz", "Foo", None)
-                    .add_edge("Foo", "out", "Baz", "in", None)
-                    .add_initial(json!(42), "Foo", "in", None)
-                    .remove_node("Foo");
+                let mut graph = Graph::new("", false);
+                graph.start_journal(None);
+                graph.add_node("Foo", "Bar", None);
+                graph.add_node("Baz", "Foo", None);
+                graph.add_edge("Foo", "out", "Baz", "in", None);
+                graph.add_initial(json!(42), "Foo", "in", None);
+                graph.remove_node("Foo");
                 'then_it_should_change_the_graph: {
-                    // g.move_to_revision(0);
-                    // assert_eq!(g.nodes.len(), 0);
-                    g.move_to_revision(2);
-                    assert_eq!(g.nodes.len(), 2);
-                    g.move_to_revision(5);
-                    assert_eq!(g.nodes.len(), 1);
+                    graph.move_to_revision(0);
+                    assert_eq!(graph.nodes.len(), 0);
+                    graph.move_to_revision(2);
+                    assert_eq!(graph.nodes.len(), 2);
+                    graph.move_to_revision(5);
+                    assert_eq!(graph.nodes.len(), 1);
                 }
             }
             'when_linear_undo_or_redo: {
-                let mut g = Graph::new("", false);
-                g.init_journal(None)
+                let mut graph = Graph::new("", false);
+                graph.start_journal(None);
+                graph
                     .add_node("Foo", "Bar", None)
                     .add_node("Baz", "Foo", None)
                     .add_edge("Foo", "out", "Baz", "in", None)
                     .add_initial(json!(42), "Foo", "in", None);
-
-                let graph_before_error = futures::executor::block_on(g.to_json());
+                let graph_before_error = graph.to_json();
+              
                 'then_undo_should_restore_previous_revision: {
-                    assert_eq!(g.nodes.len(), 2);
-                    g.remove_node("Foo");
-                    assert_eq!(g.nodes.len(), 1);
-                    g.undo();
-                    assert_eq!(g.nodes.len(), 2);
-                    assert_json_eq!(futures::executor::block_on(g.to_json()), graph_before_error);
-
-                    'and_then_it_redo_should_apply_the_same_change_again: {
-                        g.redo();
-                        assert_eq!(g.nodes.len(), 1);
-
+                    assert_eq!(graph.nodes.len(), 2);
+                    graph.remove_node("Foo");
+                    assert_eq!(graph.nodes.len(), 1);
+                    graph.undo();
+                    assert_eq!(graph.nodes.len(), 2);
+                    assert_json_eq!(graph.to_json(), graph_before_error);
+                    'and_then_redo_should_apply_the_same_change_again: {
+                        graph.redo();
+                        assert_eq!(graph.nodes.len(), 1);
                         'and_then_undo_should_also_work_multiple_revisions_back: {
-                            g.remove_node("Baz");
-                            g.undo();
-                            g.undo();
-                            assert_eq!(g.nodes.len(), 2);
+                            graph.remove_node("Baz");
+                            graph.undo();
+                            graph.undo();
+                            assert_eq!(graph.nodes.len(), 2);
                             assert_json_eq!(
-                                futures::executor::block_on(g.to_json()),
+                                graph.to_json(),
                                 graph_before_error
                             );
                         }
@@ -1159,53 +1096,58 @@ mod tests {
                 }
             }
             'when_undo_or_redo_of_metadata_changes: {
-                let mut g = Graph::new("", false);
-                g.init_journal(None)
+                let mut graph = Graph::new("", false);
+
+                graph.start_journal(None);
+                graph
                     .add_node("Foo", "Bar", None)
                     .add_node("Baz", "Foo", None)
                     .add_edge("Foo", "out", "Baz", "in", None);
-
+                    
                 'then_when_adding_group: {
-                    g.add_group(
+                    graph.add_group(
                         "all",
                         ["Foo".to_owned(), "Bax".to_owned()].to_vec(),
                         Some(json!({"label": "all nodes"}).as_object().unwrap().clone()),
                     );
-                    assert_eq!(g.groups.len(), 1);
-                    assert_eq!(g.groups[0].name, "all");
+                    
+                    assert_eq!(graph.groups.len(), 1);
+                    assert_eq!(graph.groups[0].name, "all");
 
                     'and_then_when_undoing_group_add: {
-                        g.undo();
-                        assert_eq!(g.groups.len(), 0);
+                        graph.undo();
+                        
+                        assert_eq!(graph.groups.len(), 0);
 
                         'and_then_when_redoing_group_add: {
-                            g.redo();
-                            assert_eq!(g.groups.len(), 1);
+                            graph.redo();
+                            assert_eq!(graph.groups.len(), 1);
 
                             'and_then_when_changing_group_metadata_adds_revision: {
-                                let r = g.last_revision.clone();
-                                g.set_group_metadata(
+                                let r = graph.last_revision;
+                                graph.set_group_metadata(
                                     "all",
-                                    json!({"label": "ALL NODES!"}).as_object().unwrap().clone(),
+                                    json!({"label": "ALL NODES!"}).as_object().unwrap().to_owned(),
                                 );
-                                assert_eq!(g.last_revision, r + 1);
+                                
+                                assert_eq!(graph.last_revision, r + 1);
 
                                 'and_then_when_undoing_group_metadata_change: {
-                                    g.undo();
+                                    graph.undo();
                                     assert_eq!(
-                                        g.groups[0].metadata.as_ref().unwrap().get("label"),
+                                        graph.groups[0].metadata.as_ref().unwrap().get("label"),
                                         Some(&json!("all nodes"))
                                     );
 
                                     'and_then_when_redoing_group_metadata_change: {
-                                        g.redo();
+                                        graph.redo();
                                         assert_eq!(
-                                            g.groups[0].metadata.as_ref().unwrap().get("label"),
+                                            graph.groups[0].metadata.as_ref().unwrap().get("label"),
                                             Some(&json!("ALL NODES!"))
                                         );
 
                                         'and_then_when_setting_node_metadata: {
-                                            g.set_node_metadata(
+                                            graph.set_node_metadata(
                                                 "Foo",
                                                 json!({"oneone": json!(11), "2": "two"})
                                                     .as_object()
@@ -1214,7 +1156,7 @@ mod tests {
                                             );
 
                                             assert_eq!(
-                                                g.get_node("Foo")
+                                                graph.get_node("Foo")
                                                     .unwrap()
                                                     .metadata
                                                     .as_ref()
@@ -1225,10 +1167,10 @@ mod tests {
                                             );
 
                                             'and_then_when_undoing_node_metadata_change: {
-                                                g.undo();
+                                                graph.undo();
 
                                                 assert_eq!(
-                                                    g.get_node("Foo")
+                                                    graph.get_node("Foo")
                                                         .unwrap()
                                                         .metadata
                                                         .as_ref()
@@ -1238,10 +1180,15 @@ mod tests {
                                                     0
                                                 );
 
-                                                'and_then_when_redoing_node_metadata_change:{
-                                                    g.redo();
-                                                    let node = g.get_node("Foo").unwrap();
-                                                    assert_eq!(node.metadata.as_ref().unwrap().get("oneone"), Some(&json!(11)));
+                                                'and_then_when_redoing_node_metadata_change: {
+                                                    graph.redo();
+                                                    assert_eq!(
+                                                        graph.get_node("Foo").unwrap().metadata
+                                                            .as_ref()
+                                                            .unwrap()
+                                                            .get("oneone"),
+                                                        Some(&json!(11))
+                                                    );
                                                 }
                                             }
                                         }

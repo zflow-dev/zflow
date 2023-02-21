@@ -1,0 +1,27 @@
+[package]
+name = "zflow_runtime"
+version = "0.1.0"
+edition = "2021"
+authors = ["Damilare Akinlaja <dreakinlaja@gmail.com>"]
+license = "MIT"
+description = "An FBP Graph Runtime"
+keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming"]
+
+[dependencies]
+zflow = {path = "../"}
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+cast_trait_object = "0.1.3"
+foreach = "0.3.0"
+fp_rust = "0.3.5"
+futures = {version = "0.3.25", features = ["thread-pool"] }
+futures-util = "0.2.1"
+assert-json-diff = "2.0.2"
+beady = "0.6.0"
+regex = "1.7.1"
+log = "0.4"
+
+
+
+[lib]
+doctest = false
