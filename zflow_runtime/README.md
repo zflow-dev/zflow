@@ -4,6 +4,56 @@ The main runtime for the execution of the directed graph
 
 ## Graph Runtime example 
 Some details may be hidden for brevity
+
+A simple component
+```rs
+// Create a component 
+let mut my_component = Component::new(ComponentOptions {
+    forward_brackets:HashMap::new(),
+    // set input port `in`
+    in_ports: HashMap::from([(
+        "in".to_string(),
+        InPort::default(),
+    )]),
+    // set output port `out`
+    out_ports: HashMap::from([(
+        "out".to_string(),
+        OutPort::default(),
+    )]),
+    process: Box::new(move |context, input, output| {
+        // get something from input port
+        if let Some(input_data) = input.get("out") {
+            // <do stuff>
+        }
+        // send output
+        output.send(&("out", json!("Hello World!")));
+        Ok(ProcessResult::default())
+    }),
+    ..ComponentOptions::default()
+});
+```
+Connect another component to `my_component`
+```rs
+let mut trigger = InternalSocket::create(None);
+let mut output_connector = InternalSocket::create(None);
+my_component...get_inports_mut().ports.get_mut("in").map(|v| v.attach(trigger.clone(), None));
+my_component...get_outports_mut().ports.get_mut("out").map(|v| v.attach(output_connector.clone(), None));
+
+// connect the output_connector from `my_component` out put port to `second_component`'s input port
+let mut second_component = Component::new(ComponentOptions {...});
+second_component...get_outports_mut().ports.get_mut("in").map(|v| v.attach(output_connector.clone(), None));
+
+// Send data to my_component's `in` port to trigger its process function
+let _ = trigger...post(
+    Some(IP::new(
+        IPType::Data(json!("start")),
+        IPOptions::default(),
+    )),
+    true,
+);
+```
+
+Full example that demonstrates generation of an HTML code using ZFlow.
 ```rs
 let mut str = "".to_string();
 let mut level = 0;
