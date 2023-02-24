@@ -444,7 +444,7 @@ mod tests {
                                     level -= 1;
                                     if level <= 0 {
                                         if let Ok(output) = output.clone().try_lock().as_mut() {
-                                            output.send(&HashMap::from([("html", json!(str.clone()))]));
+                                            output.send(&("html", json!(str.clone())));
                                         }
                                         str.push_str("");
                                     }
@@ -471,15 +471,15 @@ mod tests {
                             let mut output = output.try_lock().unwrap();
                             let mut input = input.try_lock().unwrap();
                             if let Some(_bang) = input.get("bang") {
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::OpenBracket(json!("p")), IPOptions::default())))]));
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::OpenBracket(json!("em")), IPOptions::default())))]));
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::Data(json!("Hello")), IPOptions::default())))]));
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::CloseBracket(json!("em")), IPOptions::default())))]));
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::Data(json!(", ")), IPOptions::default())))]));
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::OpenBracket(json!("strong")), IPOptions::default())))]));
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::Data(json!("World!")), IPOptions::default())))]));
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::CloseBracket(json!("strong")), IPOptions::default())))]));
-                                output.send(&HashMap::from([("tags", json!(IP::new(IPType::CloseBracket(json!("p")), IPOptions::default())))]));
+                                output.send(&("tags", IPType::OpenBracket(json!("p"))));
+                                output.send(&("tags", IPType::OpenBracket(json!("em"))));
+                                output.send(&("tags", IPType::Data(json!("Hello"))));
+                                output.send(&("tags", IPType::CloseBracket(json!("em"))));
+                                output.send(&("tags", IPType::Data(json!(", "))));
+                                output.send(&("tags", IPType::OpenBracket(json!("strong"))));
+                                output.send(&("tags", IPType::Data(json!("World!"))));
+                                output.send(&("tags", IPType::CloseBracket(json!("strong"))));
+                                output.send(&("tags", IPType::CloseBracket(json!("p"))));
                             }
                             output.done(None);
                             Ok(ProcessResult::default())

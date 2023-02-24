@@ -480,6 +480,8 @@ where
     pub fn send_ip(&mut self, port: &str, packet: &dyn Any) {
         let mut ip = if let Some(ip) = packet.downcast_ref::<IP>() {
             ip.clone()
+        }  else if let Some(data) = packet.downcast_ref::<IPType>() {
+            IP::new(data.clone(), IPOptions::default())
         } else if let Some(data) = packet.downcast_ref::<Value>() {
             if let Ok(ip) = IP::deserialize(data) {
                 ip
@@ -504,7 +506,6 @@ where
                     port
                 );
             }
-
             if let Some(port_impl) = self.out_ports.ports.get_mut(port) {
                 if port_impl.is_addressable() && ip.index.is_none() {
                     panic!(
@@ -513,7 +514,6 @@ where
                         port
                     );
                 }
-
                 if component.is_ordered() {
                     component.add_to_result(
                         self.result.clone(),
@@ -523,7 +523,6 @@ where
                     );
                     return;
                 }
-
                 if !port_impl.options.scoped {
                     ip.scope = "".to_string();
                 }
@@ -537,10 +536,10 @@ where
         self.send(packet);
         self.done(None);
     }
-    /// Sends packets for each port as a key in the map
+    /// Sends packets for each port as a key in a map, tupple, 
     /// or sends Error or a list of Errors if passed such
     ///
-    /// Accepts either `ProcessError`, `Vec<ProcessError>`, or an output map `Map<String, Value>`
+    /// Accepts either `ProcessError`, `Vec<ProcessError>`, tupple `(&str, Value)`, tupple `(&str, IPType)`  or an output map `Map<String, Value>`
     pub fn send(&mut self, packet: &dyn Any) {
         if let Some(err) = packet.downcast_ref::<ProcessError>() {
             let _ = self.error(err);
@@ -574,7 +573,14 @@ where
 
             return;
         }
-
+        if let Some((port, data)) = packet.downcast_ref::<(&str, Value)>() {
+            self.send_ip(*port, data);
+            return;
+        }
+        if let Some((port, data)) = packet.downcast_ref::<(&str, IPType)>() {
+            self.send_ip(*port, &IP::new(data.clone(), IPOptions::default()));
+            return;
+        }
         for port in self.out_ports.clone().ports.keys() {
             self.send_ip(port, packet);
         }
