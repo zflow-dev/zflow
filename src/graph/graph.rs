@@ -13,15 +13,13 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::iter::FromIterator;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::{any::Any, process::exit};
+use std::process::exit;
 // use z_macros::{event_handler_attributes, EventHandler};
 
 use super::journal::{TransactionEntry};
 use super::types::{
-    GraphEdge, GraphEdgeJson, GraphEvents, GraphExportedPort, GraphGroup, GraphIIP, GraphJson,
+    GraphEdge, GraphEdgeJson, GraphExportedPort, GraphGroup, GraphIIP, GraphJson,
     GraphLeaf, GraphLeafJson, GraphNode, GraphNodeJson, GraphStub, GraphTransaction,
 };
 
@@ -74,7 +72,7 @@ impl EventListener for Graph {
 impl EventManager for Graph {
     /// Send event
     fn emit(&mut self, name: &'static str, data: Value) {
-        self.listeners.clone().get_mut(name).iter().foreach(|actions, iter|{
+        self.listeners.clone().get_mut(name).iter().for_each(|actions|{
             (*actions).iter().enumerate().foreach(|actor, _|{
                 if actor.1.once {
                     self.listeners.get_mut(name).unwrap().remove(actor.0);

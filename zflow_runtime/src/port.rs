@@ -18,11 +18,9 @@ use serde_json::{json, Value};
 use std::fmt::Debug;
 
 use crate::{
-    component::{BaseComponentTrait, Component, ComponentOptions, ComponentTrait},
     errors::async_transform,
     ip::{IPOptions, IPType, IP},
-    process::ProcessFunc,
-    sockets::{InternalSocket, SocketEvent},
+    sockets::{InternalSocket, SocketEvent}, process::ValidatorFn,
 };
 
 #[dyn_cast(PortTrait, BasePort)]
@@ -739,7 +737,7 @@ impl InPort {
         &mut self,
         scope: Option<String>,
         index: Option<usize>,
-        validator: &mut Box<impl (FnMut(IP) -> bool) + Send + Sync>,
+        validator: &mut ValidatorFn,
         initial: bool,
     ) -> bool {
         if let Some(buf) = self.get_buffer(scope, index, initial) {
@@ -758,7 +756,7 @@ impl InPort {
     pub(crate) fn has_iip(
         &mut self,
         index: Option<usize>,
-        validator: &mut Box<impl (FnMut(IP) -> bool) + Send + Sync>,
+        validator: &mut ValidatorFn,
     ) -> bool {
         self.has_iip_in_buffer(None, index, validator, true)
     }
@@ -767,7 +765,7 @@ impl InPort {
         &mut self,
         scope: Option<String>,
         index: Option<usize>,
-        mut validator: Option<Box<impl (FnMut(IP) -> bool) + Send + Sync>>,
+        mut validator: Option<ValidatorFn>,
     ) -> bool {
         if let Some(validator) = validator.as_mut() {
             if self.has_iip_in_buffer(scope, index, validator, false) {
@@ -903,6 +901,7 @@ impl BasePort for OutPort {
             socket.index = idx.unwrap();
             let _ = socket.connect().expect("expected to connect");
         }
+     
         self.sockets.insert(idx.unwrap(), socket.clone());
 
         if let Ok(publisher) = self.bus.clone().try_lock().as_mut() {
@@ -1061,7 +1060,7 @@ impl OutPort {
             name: "".to_string(),
             bus: Arc::new(Mutex::new(Publisher::new())),
             options,
-            sockets: Vec::new(),
+            sockets: vec![InternalSocket::create(None); 1024],
             cache: HashMap::new(),
         }
     }
@@ -1191,7 +1190,6 @@ impl OutPort {
     pub fn send_ip(
         &mut self,
         value: &dyn Any,
-        options: IPOptions,
         index: Option<usize>,
         auto_connect: bool,
     ) -> &mut Self {
@@ -1203,7 +1201,7 @@ impl OutPort {
             if let Ok(ip) = IP::deserialize(data) {
                 ip
             } else {
-                IP::new(IPType::Data(data.clone()), options)
+                IP::new(IPType::Data(data.clone()),IPOptions::default())
             }
         } else {
             panic!("packet type should be either IP or Value");
@@ -1253,7 +1251,7 @@ impl OutPort {
         options: IPOptions,
         index: Option<usize>,
     ) -> &mut Self {
-        self.send_ip(&IPType::OpenBracket(data), options, index, true)
+        self.send_ip(&IP::new(IPType::OpenBracket(data), options), index, true)
     }
 
     pub fn close_bracket(
@@ -1262,11 +1260,11 @@ impl OutPort {
         options: IPOptions,
         index: Option<usize>,
     ) -> &mut Self {
-        self.send_ip(&IPType::CloseBracket(data), options, index, true)
+        self.send_ip(&IP::new(IPType::CloseBracket(data), options), index, true)
     }
 
     pub fn data(&mut self, data: Value, options: IPOptions, index: Option<usize>) -> &mut Self {
-        self.send_ip(&data, options, index, true)
+        self.send_ip(&IP::new(IPType::Data(data), options), index, true)
     }
 
     pub fn get_sockets(

@@ -21,6 +21,7 @@ pub struct IPOptions {
     pub initial: bool,
     pub clonable: bool,
     pub userdata: Value,
+    pub index: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
@@ -40,7 +41,7 @@ impl IP {
     pub fn new(datatype: IPType, options: IPOptions) -> Self {
         
         IP {
-            index: None,
+            index: options.index,
             datatype,
             schema: options.schema,
             scope: options.scope,

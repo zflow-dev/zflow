@@ -62,6 +62,7 @@ where
 {
     type Handle;
     type Comp;
+
     fn get_name(&self) -> Option<String>;
     fn get_node_id(&self) -> String;
     fn set_node_id(&mut self, id: String);
@@ -80,7 +81,28 @@ where
             + Send
             + 'static,
     );
-    fn prepare_forwarding(&mut self);
+
+    fn prepare_forwarding(&mut self) {
+        self.get_forward_brackets().keys().for_each(|inport| {
+            if let Some(out_ports) = self.get_forward_brackets().get(inport) {
+                if !self.get_inports().ports.contains_key(inport) {
+                    self.get_forward_brackets_mut().remove(inport);
+                }
+
+                let mut temp: Vec<String> = Vec::new();
+                out_ports.iter().for_each(|outport| {
+                    if self.get_outports().ports.contains_key(outport) {
+                        temp.push(outport.clone());
+                    }
+                });
+                if temp.is_empty() {
+                    self.get_forward_brackets_mut().remove(inport);
+                } else {
+                    self.get_forward_brackets_mut().insert(inport.clone(), temp);
+                }
+            }
+        });
+    }
     fn get_inports(&self) -> InPorts;
     fn get_inports_mut(&mut self) -> &mut InPorts;
     fn get_outports(&self) -> OutPorts;
@@ -91,8 +113,52 @@ where
     fn get_auto_ordering(&self) -> bool;
     fn set_auto_ordering(&mut self, auto_ordering: bool);
     fn get_ordered(&self) -> bool;
-    fn is_forwarding_outport(&self, inport: &dyn Any, outport: &dyn Any) -> bool;
-    fn is_forwarding_inport(&self, port: &dyn Any) -> bool;
+    fn is_forwarding_outport(&self, inport: &dyn Any, outport: &dyn Any) -> bool {
+        let mut inport_name = None;
+        let mut outport_name = None;
+        if let Some(inport) = inport.downcast_ref::<String>() {
+            inport_name = Some(inport.clone());
+        }
+        if let Some(inport) = inport.downcast_ref::<InPort>() {
+            inport_name = Some((*inport).name.clone());
+        }
+        if let Some(outport) = outport.downcast_ref::<String>() {
+            outport_name = Some(outport.clone());
+        }
+        if let Some(outport) = outport.downcast_ref::<OutPort>() {
+            outport_name = Some((*outport).name.clone());
+        }
+
+        if inport_name.is_none() || outport_name.is_none() {
+            return false;
+        }
+
+        if !self
+            .get_forward_brackets()
+            .contains_key(&inport_name.clone().unwrap())
+        {
+            return false;
+        }
+        if self.get_forward_brackets()[&inport_name.unwrap()].contains(&outport_name.unwrap()) {
+            return true;
+        }
+        false
+    }
+    fn is_forwarding_inport(&self, port: &dyn Any) -> bool {
+        let mut port_name = "";
+        if let Some(port) = port.downcast_ref::<InPort>() {
+            port_name = port.name.as_str();
+        }
+        if let Some(port) = port.downcast_ref::<String>() {
+            port_name = port;
+        }
+
+        if !port_name.is_empty() && self.get_forward_brackets().contains_key(port_name) {
+            return true;
+        }
+
+        return false;
+    }
     fn get_output_queue(&self) -> VecDeque<Arc<Mutex<ProcessResult<Self::Comp>>>>;
     fn get_output_queue_mut(&mut self) -> &mut VecDeque<Arc<Mutex<ProcessResult<Self::Comp>>>>;
     fn get_load(&self) -> usize;
@@ -104,173 +170,7 @@ where
         port: String,
         scope: String,
         idx: Option<usize>,
-    ) -> Option<&mut Vec<Arc<Mutex<ProcessContext<Self::Comp>>>>>;
-    fn get_bracket_context_val(&self) -> BracketContext<Self::Comp>;
-    /// Get contexts that can be forwarded with this in/outport
-    /// pair.
-    fn get_forwardable_contexts(
-        &mut self,
-        inport: String,
-        outport: String,
-        contexts: Vec<Arc<Mutex<ProcessContext<Self::Comp>>>>,
-    ) -> Vec<Arc<Mutex<ProcessContext<Self::Comp>>>>;
-    fn add_bracket_forwards(&mut self, result: Arc<Mutex<ProcessResult<Self::Comp>>>);
-    /// Add an IP object to the list of results to be sent in
-    /// order
-    fn add_to_result(
-        &mut self,
-        result: Arc<Mutex<ProcessResult<Self::Comp>>>,
-        port: String,
-        packet: &mut IP,
-        before: bool,
-    );
-    /// Whenever an execution context finishes, send all resolved
-    /// output from the queue in the order it is in.
-    fn process_output_queue(&mut self);
-    /// Signal that component has deactivated. There may be multiple
-    /// deactivated contexts at the same time
-    fn deactivate(&mut self, context: Arc<Mutex<ProcessContext<Self::Comp>>>);
-    /// Signal that component has activated. There may be multiple
-    /// activated contexts at the same time
-    fn activate(&mut self, context: Arc<Mutex<ProcessContext<Self::Comp>>>);
-
-    /// ### Start
-    ///
-    /// Called when network starts. This calls the setUp
-    /// method and sets the component to a started state.
-    fn start(&mut self) -> Result<(), String>;
-    fn is_started(&self) -> bool;
-    fn is_subgraph(&self) -> bool;
-    fn is_ready(&self) -> bool;
-
-    // /// ### Handling IP objects
-    // ///
-    // /// The component has received an Information Packet. Call the
-    // /// processing function so that firing pattern preconditions can
-    // /// be checked and component can do processing as needed.
-    // fn handle_ip(&mut self, ip: IP, port: InPort)->Arc<Mutex<Self::Comp>>;
-
-    fn get_teardown_function(
-        &self,
-    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>;
-
-    /// Convenience method to find all the event subscribers for this component: Used internally
-    fn get_subscribers(&self) -> Vec<Arc<SubscriptionFunc<ComponentEvent>>>;
-    fn get_subscribers_mut(&mut self) -> &mut Vec<Arc<SubscriptionFunc<ComponentEvent>>>;
-    /// Convenience method to access the internal event publisher for this component: Used internally
-    fn get_publisher(&self) -> Arc<Mutex<Publisher<ComponentEvent>>>;
-
-    /// Housekeeping function to reset this component;
-    fn reset(&mut self);
-
-    /// Clear bracket context
-    fn clear_bracket_context(&mut self);
-
-    fn error(
-        &mut self,
-        e: ProcessError,
-        groups: Vec<String>,
-        error_port: Option<&str>,
-        scope: Option<String>,
-    ) -> Result<(), ProcessError>;
-
-    fn to_dyn(&self) -> &dyn Any;
-    fn to_dyn_mut(&mut self) -> &mut dyn Any;
-}
-
-pub trait ComponentTrait:
-    BaseComponentTrait<Handle = Arc<Mutex<ProcessFunc<Self>>>, Comp = Self>
-    + ComponentCallbacks
-    + Sync
-    + Send
-    + Clone
-    + Default
-    + 'static
-{
-}
-
-/// ZFlow Process Component
-#[derive(Clone)]
-pub struct Component {
-    pub in_ports: InPorts,
-    pub out_ports: OutPorts,
-    /// Set the default component description
-    pub description: String,
-    /// Set the default component icon
-    pub icon: String,
-    /// Whether the component should keep send packets
-    /// out in the order they were received
-    pub ordered: bool,
-    /// Whether the component should activate when it receives packets
-    pub activate_on_input: bool,
-    /// Bracket forwarding rules. By default we forward
-    pub forward_brackets: HashMap<String, Vec<String>>,
-    pub bracket_context: BracketContext<Self>,
-    pub component_name: Option<String>,
-    pub node_id: String,
-    /// Queue for handling ordered output packets
-    pub output_q: VecDeque<Arc<Mutex<ProcessResult<Self>>>>,
-    pub base_dir: Option<String>,
-    /// Initially the component is not started
-    pub started: bool,
-    pub load: usize,
-    pub(crate) handle: Arc<Mutex<ProcessFunc<Self>>>,
-    pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
-    pub auto_ordering: bool,
-    setup_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
-    teardown_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
-    tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
-}
-
-impl BaseComponentTrait for Component {
-    type Handle = Arc<Mutex<ProcessFunc<Self>>>;
-    type Comp = Component;
-    /// ### Start
-    ///
-    /// Called when network starts. This calls the setUp
-    /// method and sets the component to a started state.
-    fn start(&mut self) -> Result<(), String> {
-        if let Some(setup_fn) = &self.setup_fn {
-            if let Ok(setup_fn) = setup_fn.clone().try_lock().as_mut() {
-                (setup_fn)()?;
-            }
-        }
-        self.started = true;
-        self.bus
-            .clone()
-            .try_lock()
-            .unwrap()
-            .publish(ComponentEvent::Start);
-        Ok(())
-    }
-
-    fn is_started(&self) -> bool {
-        self.started
-    }
-    fn is_ordered(&self) -> bool {
-        if self.ordered || self.auto_ordering {
-            return true;
-        };
-        return false;
-    }
-    fn is_subgraph(&self) -> bool {
-        false
-    }
-    fn is_ready(&self) -> bool {
-        return true;
-    }
-    fn get_description(&self) -> String {
-        self.description.clone()
-    }
-
-    /// Get the current bracket forwarding context for an IP object
-    fn get_bracket_context(
-        &mut self,
-        _type: &str,
-        port: String,
-        scope: String,
-        idx: Option<usize>,
-    ) -> Option<&mut Vec<Arc<Mutex<ProcessContext<Self>>>>> {
+    ) -> Option<&mut Vec<Arc<Mutex<ProcessContext<Self::Comp>>>>> {
         let normalized = normalize_port_name(port.clone());
         let mut name = normalized.name;
         let mut index = normalized.index;
@@ -280,7 +180,7 @@ impl BaseComponentTrait for Component {
 
         if _type == "in" {
             if self
-                .in_ports
+                .get_inports()
                 .ports
                 .get(&name)
                 .expect("expected to access port from InPorts by name")
@@ -292,7 +192,7 @@ impl BaseComponentTrait for Component {
             };
         } else if _type == "out" {
             if self
-                .out_ports
+                .get_outports()
                 .get(&name)
                 .expect("expected to access port from OutPorts by name")
                 .is_addressable()
@@ -305,37 +205,43 @@ impl BaseComponentTrait for Component {
 
         // Ensure we have a bracket context for the current scope
         if _type == "in" {
-            if !self.bracket_context.r#in.contains_key(&name.clone()) {
-                self.bracket_context
+            if !self
+            .get_bracket_context_val().r#in.contains_key(&name.clone()) {
+                self
+                .get_bracket_context_val_mut()
                     .r#in
                     .insert(name.clone(), HashMap::new());
             }
-            if let Some(obj) = self.bracket_context.r#in.get_mut(&name.clone()) {
+            if let Some(obj) = self
+            .get_bracket_context_val_mut().r#in.get_mut(&name.clone()) {
                 if !obj.contains_key(&scope.clone()) {
                     (*obj).insert(scope.clone(), Vec::new());
                 }
             }
 
             return self
-                .bracket_context
+                .get_bracket_context_val_mut()
                 .r#in
                 .get_mut(&name)
                 .unwrap()
                 .get_mut(&scope);
         } else if _type == "out" {
-            if !self.bracket_context.out.contains_key(&name.clone()) {
-                self.bracket_context
+            if !self
+            .get_bracket_context_val().out.contains_key(&name.clone()) {
+                self
+                .get_bracket_context_val_mut()
                     .out
                     .insert(name.clone(), HashMap::new());
             }
-            if let Some(obj) = self.bracket_context.out.get_mut(&name.clone()) {
+            if let Some(obj) = self
+            .get_bracket_context_val_mut().out.get_mut(&name.clone()) {
                 if !obj.contains_key(&scope.clone()) {
                     (*obj).insert(scope.clone(), Vec::new());
                 }
             }
 
             return self
-                .bracket_context
+            .get_bracket_context_val_mut()
                 .out
                 .get_mut(&name)
                 .unwrap()
@@ -343,14 +249,16 @@ impl BaseComponentTrait for Component {
         }
         None
     }
-
-    /// Get contexts that can be forwarded with this in/outport pair
+    fn get_bracket_context_val(&self) -> BracketContext<Self::Comp>;
+    fn get_bracket_context_val_mut(&mut self) -> &mut BracketContext<Self::Comp>;
+    /// Get contexts that can be forwarded with this in/outport
+    /// pair.
     fn get_forwardable_contexts(
         &mut self,
         inport: String,
         outport: String,
-        contexts: Vec<Arc<Mutex<ProcessContext<Self>>>>,
-    ) -> Vec<Arc<Mutex<ProcessContext<Self>>>> {
+        contexts: Vec<Arc<Mutex<ProcessContext<Self::Comp>>>>,
+    ) -> Vec<Arc<Mutex<ProcessContext<Self::Comp>>>> {
         let normalized = normalize_port_name(outport.clone());
         let name = normalized.name;
         let index = normalized.index;
@@ -426,154 +334,10 @@ impl BaseComponentTrait for Component {
         forwardable
     }
 
-    fn is_forwarding_outport(&self, inport: &dyn Any, outport: &dyn Any) -> bool {
-        let mut inport_name = None;
-        let mut outport_name = None;
-        if let Some(inport) = inport.downcast_ref::<String>() {
-            inport_name = Some(inport.clone());
-        }
-        if let Some(inport) = inport.downcast_ref::<InPort>() {
-            inport_name = Some((*inport).name.clone());
-        }
-        if let Some(outport) = outport.downcast_ref::<String>() {
-            outport_name = Some(outport.clone());
-        }
-        if let Some(outport) = outport.downcast_ref::<OutPort>() {
-            outport_name = Some((*outport).name.clone());
-        }
+    fn get_forward_brackets(&self) -> HashMap<String, Vec<String>>;
+    fn get_forward_brackets_mut(&mut self) -> &mut HashMap<String, Vec<String>>;
 
-        if inport_name.is_none() || outport_name.is_none() {
-            return false;
-        }
-
-        if !self
-            .forward_brackets
-            .contains_key(&inport_name.clone().unwrap())
-        {
-            return false;
-        }
-        if self.forward_brackets[&inport_name.unwrap()].contains(&outport_name.unwrap()) {
-            return true;
-        }
-        false
-    }
-
-    /// Whenever an execution context finishes, send all resolved
-    /// output from the queue in the order it is in.
-    fn process_output_queue(&mut self) {
-        while !self.output_q.is_empty() {
-            if !&self.output_q[0].clone().try_lock().unwrap().resolved {
-                break;
-            }
-
-            if let Some(result) = self.output_q.pop_front().as_mut() {
-                self.add_bracket_forwards(result.clone());
-                if let Ok(result) = result.clone().try_lock() {
-                    result.outputs
-                    .keys()
-                    .for_each(|port| {
-                        let mut port_identifier: Option<String> = None;
-                        let ips = &result.outputs[port];
-                        if self.out_ports.ports[port].is_addressable() {
-                            ips.keys().for_each(|index| {
-                                let mut idx_ips = (*ips)[index].clone();
-                                if let Ok(idx) = index.parse::<usize>() {
-                                    if !self.out_ports.ports[port].is_attached(Some(idx)) {
-                                        return;
-                                    }
-                                }
-
-                                idx_ips.iter_mut().for_each(|ip| {
-                                    port_identifier = Some(format!("{}{:?}", port, (*ip).index));
-
-                                    match &(*ip).datatype {
-                                        IPType::OpenBracket(data) => {
-                                            log!(
-                                                Level::Debug,
-                                                "zflow::component::send => {} sending {} < '{:?}'",
-                                                self.node_id,
-                                                port_identifier.clone().unwrap(),
-                                                data
-                                            );
-                                        }
-                                        IPType::CloseBracket(data) => {
-                                            log!(
-                                                Level::Debug,
-                                                "zflow::component::send => {} sending {} > '{:?}'",
-                                                self.node_id,
-                                                port_identifier.clone().unwrap(),
-                                                data
-                                            );
-                                        }
-                                        _ => {
-                                            log!(
-                                                Level::Debug,
-                                                "zflow::component::send => {} sending {} DATA",
-                                                self.node_id,
-                                                port_identifier.clone().unwrap()
-                                            );
-                                        }
-                                    }
-                                    self.out_ports.ports.get_mut(port).unwrap().send_ip(
-                                        ip,
-                                        IPOptions::default(),
-                                        (*ip).index,
-                                        true,
-                                    );
-                                });
-                            });
-                            return;
-                        }
-                        if !self.out_ports.ports[port].is_attached(None) {
-                            return;
-                        }
-                        ips.iter().for_each(|(_, ips)| {
-                            ips.iter().for_each(|ip| {
-                                port_identifier = Some(port.clone().to_string());
-                                match &(*ip).datatype {
-                                    IPType::OpenBracket(data) => {
-                                        log!(
-                                            Level::Debug,
-                                            "zflow::component::send => {} sending {} < '{:?}'",
-                                            self.node_id,
-                                            port_identifier.clone().unwrap(),
-                                            data
-                                        );
-                                    }
-                                    IPType::CloseBracket(data) => {
-                                        log!(
-                                            Level::Debug,
-                                            "zflow::component::send => {} sending {} > '{:?}'",
-                                            self.node_id,
-                                            port_identifier.clone().unwrap(),
-                                            data
-                                        );
-                                    }
-                                    _ => {
-                                        log!(
-                                            Level::Debug,
-                                            "zflow::component::send => {} sending {} DATA",
-                                            self.node_id,
-                                            port_identifier.clone().unwrap()
-                                        );
-                                    }
-                                }
-                                self.out_ports.ports.get_mut(port).unwrap().send_ip(
-                                    ip,
-                                    IPOptions::default(),
-                                    None,
-                                    true,
-                                );
-                            });
-                        });
-                    });
-                }
-            }
-        }
-    }
-
-    /// Add any bracket forwards needed to the result queue
-    fn add_bracket_forwards(&mut self, result: Arc<Mutex<ProcessResult<Self>>>) {
+    fn add_bracket_forwards(&mut self, result: Arc<Mutex<ProcessResult<Self::Comp>>>) {
         let result = result.clone();
         if !result
             .clone()
@@ -592,7 +356,7 @@ impl BaseComponentTrait for Component {
                         log!(
                             Level::Debug,
                             "zflow::component::bracket => {} closeBracket-A from '{}' to {:?}: '{:?}'",
-                            self.node_id,
+                            self.get_node_id(),
                             context.source.clone(),
                             context.ports.clone(),
                             context
@@ -639,8 +403,8 @@ impl BaseComponentTrait for Component {
                         let ips = result.clone().try_lock().unwrap().outputs.get(outport).unwrap().clone();
                         let mut datas: Vec<IP> = vec![];
                         let mut forwarded_opens: Vec<IP> = vec![];
-                        let mut unforwarded: Vec<Arc<Mutex<ProcessContext<Self>>>> = vec![];
-                        if self.out_ports.ports[outport].is_addressable() {
+                        let mut unforwarded: Vec<Arc<Mutex<ProcessContext<Self::Comp>>>> = vec![];
+                        if self.get_outports().ports[outport].is_addressable() {
                             ips.keys().for_each(|idx| {
                                 // Don't register indexes we're only sending brackets to
                                 let idx_ips = ips.get(idx).unwrap();
@@ -671,7 +435,7 @@ impl BaseComponentTrait for Component {
                                         log!(
                                             Level::Debug,
                                             "zflow::component::bracket => {} openBracket from '{}' to '{}': '{:?}'",
-                                            self.node_id,
+                                            self.get_node_id(),
                                             inport.clone(),
                                             port_identifier.clone(),
                                             ctx.ip.datatype
@@ -726,7 +490,7 @@ impl BaseComponentTrait for Component {
                                 log!(
                                     Level::Debug,
                                     "zflow::component::bracket => {} openBracket from '{}' to '{}': '{:?}'",
-                                    self.node_id,
+                                    self.get_node_id(),
                                     inport.clone(),
                                     outport.clone(),
                                     ctx.ip.datatype
@@ -770,7 +534,7 @@ impl BaseComponentTrait for Component {
                         log!(
                         Level::Debug,
                         "zflow::component::bracket => {} closeBracket-B from '{}' to {:?}: '{:?}'",
-                        self.node_id,
+                        self.get_node_id(),
                         context.source.clone(),
                         context.ports.clone(),
                         context
@@ -813,10 +577,201 @@ impl BaseComponentTrait for Component {
             .bracket_closing_after
             .clear();
     }
+    /// Add an IP object to the list of results to be sent in
+    /// order
+    fn add_to_result(
+        &mut self,
+        result: Arc<Mutex<ProcessResult<Self::Comp>>>,
+        port: String,
+        ip: &mut IP,
+        before: bool,
+    ) {
+        let normalized = normalize_port_name(port.clone());
+        let name = normalized.name;
+        let index = normalized.index;
 
+        if let Ok(result) = result.clone().try_lock().as_mut() {
+            if self.get_outports().ports[&name].is_addressable() {
+                let idx = if let Some(idx) = &index {
+                    idx.parse::<usize>().expect("expected port index")
+                } else {
+                    ip.index.expect("expected port index")
+                };
+
+                if !result.outputs.contains_key(&name) {
+                    result.outputs.insert(name.clone(), HashMap::new());
+                }
+                if !result.outputs[&name].contains_key(format!("{}", idx).as_str()) {
+                    result
+                        .outputs
+                        .get_mut(&name)
+                        .unwrap()
+                        .insert(format!("{}", idx), vec![]);
+                }
+                ip.index = Some(idx);
+                if before {
+                    result
+                        .outputs
+                        .get_mut(&name)
+                        .unwrap()
+                        .get_mut(format!("{}", idx).as_str())
+                        .unwrap()
+                        .insert(0, ip.clone());
+                } else {
+                    result
+                        .outputs
+                        .get_mut(&name)
+                        .unwrap()
+                        .get_mut(format!("{}", idx).as_str())
+                        .unwrap()
+                        .push(ip.clone());
+                }
+            } else {
+                if !result.outputs.contains_key(&name) {
+                    result.outputs.insert(name.clone(), HashMap::new());
+                }
+                if result.outputs.get_mut(&name).unwrap().is_empty() {
+                    result
+                        .outputs
+                        .get_mut(&name)
+                        .unwrap()
+                        .insert("0".to_owned(), Vec::new());
+                }
+                if before {
+                    result
+                        .outputs
+                        .get_mut(&name)
+                        .unwrap()
+                        .iter_mut()
+                        .for_each(|(_, v)| {
+                            v.insert(0, ip.clone());
+                        });
+                } else {
+                    result
+                        .outputs
+                        .get_mut(&name)
+                        .unwrap()
+                        .get_mut("0")
+                        .unwrap()
+                        .push(ip.clone());
+                }
+            }
+        }
+    }
+    /// Whenever an execution context finishes, send all resolved
+    /// output from the queue in the order it is in.
+    fn process_output_queue(&mut self) {
+        while !self.get_output_queue().is_empty() {
+            if !&self.get_output_queue()[0].clone().try_lock().unwrap().resolved {
+                break;
+            }
+
+            if let Some(result) = self.get_output_queue_mut().pop_front().as_mut() {
+                self.add_bracket_forwards(result.clone());
+                if let Ok(result) = result.clone().try_lock() {
+                    result.outputs
+                    .keys()
+                    .for_each(|port| {
+                        let mut port_identifier: Option<String> = None;
+                        let ips = &result.outputs[port];
+                        if self.get_outports().ports[port].is_addressable() {
+                            ips.keys().for_each(|index| {
+                                let mut idx_ips = (*ips)[index].clone();
+                                if let Ok(idx) = index.parse::<usize>() {
+                                    if !self.get_outports().ports[port].is_attached(Some(idx)) {
+                                        return;
+                                    }
+                                }
+
+                                idx_ips.iter_mut().for_each(|ip| {
+                                    port_identifier = Some(format!("{}{:?}", port, (*ip).index));
+
+                                    match &(*ip).datatype {
+                                        IPType::OpenBracket(data) => {
+                                            log!(
+                                                Level::Debug,
+                                                "zflow::component::send => {} sending {} < '{:?}'",
+                                                self.get_node_id(),
+                                                port_identifier.clone().unwrap(),
+                                                data
+                                            );
+                                        }
+                                        IPType::CloseBracket(data) => {
+                                            log!(
+                                                Level::Debug,
+                                                "zflow::component::send => {} sending {} > '{:?}'",
+                                                self.get_node_id(),
+                                                port_identifier.clone().unwrap(),
+                                                data
+                                            );
+                                        }
+                                        _ => {
+                                            log!(
+                                                Level::Debug,
+                                                "zflow::component::send => {} sending {} DATA",
+                                                self.get_node_id(),
+                                                port_identifier.clone().unwrap()
+                                            );
+                                        }
+                                    }
+                                    self.get_outports_mut().ports.get_mut(port).unwrap().send_ip(
+                                        ip,
+                                        (*ip).index,
+                                        true,
+                                    );
+                                });
+                            });
+                            return;
+                        }
+                        if !self.get_outports().ports[port].is_attached(None) {
+                            return;
+                        }
+                        ips.iter().for_each(|(_, ips)| {
+                            ips.iter().for_each(|ip| {
+                                port_identifier = Some(port.clone().to_string());
+                                match &(*ip).datatype {
+                                    IPType::OpenBracket(data) => {
+                                        log!(
+                                            Level::Debug,
+                                            "zflow::component::send => {} sending {} < '{:?}'",
+                                            self.get_node_id(),
+                                            port_identifier.clone().unwrap(),
+                                            data
+                                        );
+                                    }
+                                    IPType::CloseBracket(data) => {
+                                        log!(
+                                            Level::Debug,
+                                            "zflow::component::send => {} sending {} > '{:?}'",
+                                            self.get_node_id(),
+                                            port_identifier.clone().unwrap(),
+                                            data
+                                        );
+                                    }
+                                    _ => {
+                                        log!(
+                                            Level::Debug,
+                                            "zflow::component::send => {} sending {} DATA",
+                                            self.get_node_id(),
+                                            port_identifier.clone().unwrap()
+                                        );
+                                    }
+                                }
+                                self.get_outports_mut().ports.get_mut(port).unwrap().send_ip(
+                                    ip,
+                                    None,
+                                    true,
+                                );
+                            });
+                        });
+                    });
+                }
+            }
+        }
+    }
     /// Signal that component has deactivated. There may be multiple
-    /// activated contexts at the same time
-    fn deactivate(&mut self, context: Arc<Mutex<ProcessContext<Self>>>) {
+    /// deactivated contexts at the same time
+    fn deactivate(&mut self, context: Arc<Mutex<ProcessContext<Self::Comp>>>) {
         if let Ok(context) = context.clone().try_lock().as_mut() {
             if context.deactivated {
                 return;
@@ -825,23 +780,22 @@ impl BaseComponentTrait for Component {
             context.activated = false;
             context.deactivated = true;
 
-            self.load -= 1;
+            self.set_load(self.get_load() - 1);
 
             if self.is_ordered() {
                 self.process_output_queue();
             }
 
-            self.bus
+            self.get_publisher()
                 .clone()
                 .try_lock()
                 .unwrap()
-                .publish(ComponentEvent::Deactivate(self.load));
+                .publish(ComponentEvent::Deactivate(self.get_load()));
         }
     }
-
     /// Signal that component has activated. There may be multiple
     /// activated contexts at the same time
-    fn activate(&mut self, context: Arc<Mutex<ProcessContext<Self>>>) {
+    fn activate(&mut self, context: Arc<Mutex<ProcessContext<Self::Comp>>>) {
         if let Ok(context) = context.clone().try_lock().as_mut() {
             if context.activated {
                 return;
@@ -850,64 +804,76 @@ impl BaseComponentTrait for Component {
             context.activated = true;
             context.deactivated = false;
 
-            self.load += 1;
+            self.set_load(self.get_load() + 1);
 
-            self.bus
-                .clone()
+            self.get_publisher()
                 .try_lock()
                 .unwrap()
-                .publish(ComponentEvent::Activate(self.load));
+                .publish(ComponentEvent::Activate(self.get_load()));
 
-            if self.is_ordered() || self.auto_ordering {
-                self.output_q.push_back(context.result.clone());
+            if self.is_ordered() || self.get_auto_ordering() {
+                self.get_output_queue_mut().push_back(context.result.clone());
             }
         }
     }
 
-    fn prepare_forwarding(&mut self) {
-        self.forward_brackets.clone().keys().for_each(|inport| {
-            if let Some(out_ports) = self.forward_brackets.clone().get(inport) {
-                if !self.in_ports.ports.contains_key(inport) {
-                    self.forward_brackets.remove(inport);
-                }
-
-                let mut temp: Vec<String> = Vec::new();
-                out_ports.iter().for_each(|outport| {
-                    if self.out_ports.ports.contains_key(outport) {
-                        temp.push(outport.clone());
-                    }
-                });
-                if temp.is_empty() {
-                    self.forward_brackets.remove(inport);
-                } else {
-                    self.forward_brackets.insert(inport.clone(), temp);
-                }
-            }
-        });
-    }
-    /// Method for checking if a given inport is set up for
-    /// automatic bracket forwarding
-    fn is_forwarding_inport(&self, port: &dyn Any) -> bool {
-        let mut port_name = "";
-        if let Some(port) = port.downcast_ref::<InPort>() {
-            port_name = port.name.as_str();
-        }
-        if let Some(port) = port.downcast_ref::<String>() {
-            port_name = port;
-        }
-
-        if !port_name.is_empty() && self.forward_brackets.contains_key(port_name) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /// ### Error emitting helper
+    /// ### Start
     ///
-    /// If component has an `error` outport that is connected, errors
-    /// are sent as IP objects there. If the port is not connected,
-    /// errors are thrown.
+    /// Called when network starts. This calls the setUp
+    /// method and sets the component to a started state.
+    fn start(&mut self) -> Result<(), String> {
+        if let Some(setup_fn) = &self.get_setup_function() {
+            if let Ok(setup_fn) = setup_fn.clone().try_lock().as_mut() {
+                (setup_fn)()?;
+            }
+        }
+        self.set_started(true);
+        self.get_publisher()
+            .clone()
+            .try_lock()
+            .unwrap()
+            .publish(ComponentEvent::Start);
+        Ok(())
+    }
+    fn set_started(&mut self, started:bool);
+    fn is_started(&self) -> bool;
+    fn is_subgraph(&self) -> bool;
+    fn is_ready(&self) -> bool;
+
+    fn get_teardown_function(
+        &self,
+    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>;
+
+    fn get_setup_function(
+        &self,
+    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>;
+
+    /// Convenience method to find all the event subscribers for this component: Used internally
+    fn get_subscribers(&self) -> Vec<Arc<SubscriptionFunc<ComponentEvent>>>;
+    fn get_subscribers_mut(&mut self) -> &mut Vec<Arc<SubscriptionFunc<ComponentEvent>>>;
+    /// Convenience method to access the internal event publisher for this component: Used internally
+    fn get_publisher(&self) -> Arc<Mutex<Publisher<ComponentEvent>>>;
+
+    /// Housekeeping function to reset this component;
+    fn reset(&mut self) {
+        // Clear contents of inport buffers
+        self.get_inports_mut().ports.clear();
+        self.clear_bracket_context();
+        if !self.is_started() {
+            return;
+        }
+        self.set_started(false);
+        self.get_publisher()
+            .clone()
+            .try_lock()
+            .unwrap()
+            .publish(ComponentEvent::End);
+    }
+
+    /// Clear bracket context
+    fn clear_bracket_context(&mut self);
+
+    /// Component error manager
     fn error(
         &mut self,
         e: ProcessError,
@@ -919,7 +885,7 @@ impl BaseComponentTrait for Component {
             error_port = Some("error")
         }
 
-        if let Some(outport) = self.out_ports.ports.get_mut(error_port.unwrap()) {
+        if let Some(outport) = self.get_outports().ports.get_mut(error_port.unwrap()) {
             if outport.is_attached(None) || !outport.is_required() {
                 groups.iter().for_each(|group| {
                     outport.open_bracket(
@@ -955,6 +921,81 @@ impl BaseComponentTrait for Component {
 
         log!(Level::Error, "{:?}", e);
         Err(e)
+    }
+
+    fn to_dyn(&self) -> &dyn Any;
+    fn to_dyn_mut(&mut self) -> &mut dyn Any;
+}
+
+pub trait ComponentTrait:
+    BaseComponentTrait<Handle = Arc<Mutex<ProcessFunc<Self>>>, Comp = Self>
+    + ComponentCallbacks
+    + Sync
+    + Send
+    + Clone
+    + Default
+    + 'static
+{
+}
+
+/// ZFlow Process Component
+#[derive(Clone)]
+pub struct Component {
+    pub in_ports: InPorts,
+    pub out_ports: OutPorts,
+    /// Set the default component description
+    pub description: String,
+    /// Set the default component icon
+    pub icon: String,
+    /// Whether the component should keep send packets
+    /// out in the order they were received
+    pub ordered: bool,
+    /// Whether the component should activate when it receives packets
+    pub activate_on_input: bool,
+    /// Bracket forwarding rules. By default we forward
+    pub forward_brackets: HashMap<String, Vec<String>>,
+    pub bracket_context: BracketContext<Self>,
+    pub component_name: Option<String>,
+    pub node_id: String,
+    /// Queue for handling ordered output packets
+    pub output_q: VecDeque<Arc<Mutex<ProcessResult<Self>>>>,
+    pub base_dir: Option<String>,
+    /// Initially the component is not started
+    pub started: bool,
+    pub load: usize,
+    pub(crate) handle: Arc<Mutex<ProcessFunc<Self>>>,
+    pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
+    pub auto_ordering: bool,
+    setup_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
+    teardown_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
+    tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
+}
+
+impl BaseComponentTrait for Component {
+    type Handle = Arc<Mutex<ProcessFunc<Self>>>;
+    type Comp = Component;
+
+    fn set_started(&mut self, started:bool) {
+        self.started = started;
+    }
+
+    fn is_started(&self) -> bool {
+        self.started
+    }
+    fn is_ordered(&self) -> bool {
+        if self.ordered || self.auto_ordering {
+            return true;
+        };
+        return false;
+    }
+    fn is_subgraph(&self) -> bool {
+        false
+    }
+    fn is_ready(&self) -> bool {
+        return true;
+    }
+    fn get_description(&self) -> String {
+        self.description.clone()
     }
 
     fn get_name(&self) -> Option<String> {
@@ -1032,86 +1073,6 @@ impl BaseComponentTrait for Component {
         self.load = load
     }
 
-    fn add_to_result(
-        &mut self,
-        result: Arc<Mutex<ProcessResult<Self>>>,
-        port: String,
-        ip: &mut IP,
-        before: bool,
-    ) {
-        let normalized = normalize_port_name(port.clone());
-        let name = normalized.name;
-        let index = normalized.index;
-
-        if let Ok(result) = result.clone().try_lock().as_mut() {
-            if self.out_ports.ports[&name].is_addressable() {
-                let idx = if let Some(idx) = &index {
-                    idx.parse::<usize>().expect("expected port index")
-                } else {
-                    ip.index.expect("expected port index")
-                };
-
-                if !result.outputs.contains_key(&name) {
-                    result.outputs.insert(name.clone(), HashMap::new());
-                }
-                if !result.outputs[&name].contains_key(format!("{}", idx).as_str()) {
-                    result
-                        .outputs
-                        .get_mut(&name)
-                        .unwrap()
-                        .insert(format!("{}", idx), vec![]);
-                }
-                ip.index = Some(idx);
-                if before {
-                    result
-                        .outputs
-                        .get_mut(&name)
-                        .unwrap()
-                        .get_mut(format!("{}", idx).as_str())
-                        .unwrap()
-                        .insert(0, ip.clone());
-                } else {
-                    result
-                        .outputs
-                        .get_mut(&name)
-                        .unwrap()
-                        .get_mut(format!("{}", idx).as_str())
-                        .unwrap()
-                        .push(ip.clone());
-                }
-            } else {
-                if !result.outputs.contains_key(&name) {
-                    result.outputs.insert(name.clone(), HashMap::new());
-                }
-                if result.outputs.get_mut(&name).unwrap().is_empty() {
-                    result
-                        .outputs
-                        .get_mut(&name)
-                        .unwrap()
-                        .insert("0".to_owned(), Vec::new());
-                }
-                if before {
-                    result
-                        .outputs
-                        .get_mut(&name)
-                        .unwrap()
-                        .iter_mut()
-                        .for_each(|(_, v)| {
-                            v.insert(0, ip.clone());
-                        });
-                } else {
-                    result
-                        .outputs
-                        .get_mut(&name)
-                        .unwrap()
-                        .get_mut("0")
-                        .unwrap()
-                        .push(ip.clone());
-                }
-            }
-        }
-    }
-
     fn to_dyn(&self) -> &dyn Any {
         self as &dyn Any
     }
@@ -1128,6 +1089,12 @@ impl BaseComponentTrait for Component {
         &self,
     ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>> {
         self.teardown_fn.clone()
+    }
+
+    fn get_setup_function(
+        &self,
+    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>> {
+        self.setup_fn.clone()
     }
 
     fn get_subscribers(&self) -> Vec<Arc<SubscriptionFunc<ComponentEvent>>> {
@@ -1147,27 +1114,23 @@ impl BaseComponentTrait for Component {
         self.bracket_context.out.clear();
     }
 
-    fn reset(&mut self) {
-        // Clear contents of inport buffers
-        self.get_inports_mut().ports.clear();
-        self.clear_bracket_context();
-        if !self.is_started() {
-            return;
-        }
-        self.started = false;
-        self.bus
-            .clone()
-            .try_lock()
-            .unwrap()
-            .publish(ComponentEvent::End);
-    }
-
     fn set_icon(&mut self, icon: String) {
         self.icon = icon;
     }
 
     fn get_bracket_context_val(&self) -> BracketContext<Self::Comp> {
         self.bracket_context.clone()
+    }
+    fn get_bracket_context_val_mut(&mut self) -> &mut BracketContext<Self::Comp> {
+        &mut self.bracket_context
+    }
+
+    fn get_forward_brackets(&self) -> HashMap<String, Vec<String>> {
+        self.forward_brackets.clone()
+    }
+
+    fn get_forward_brackets_mut(&mut self) -> &mut HashMap<String, Vec<String>> {
+        &mut self.forward_brackets
     }
 }
 

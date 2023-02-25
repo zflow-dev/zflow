@@ -1,9 +1,9 @@
 
-// pub mod graph;
 pub mod process;
-// pub mod network;
+pub mod network;
 pub mod runtime;
 pub mod component;
+pub mod graph_component;
 pub mod sockets;
 pub mod ip;
 pub mod port;

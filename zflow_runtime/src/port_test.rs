@@ -498,7 +498,7 @@ mod tests {
                             _ => {}
                         });
 
-                    p.send_ip(&json!("Hello"), IPOptions::default(), None, true);
+                    p.send_ip(&json!("Hello"), None, true);
                 }
                 'then_it_should_stamp_an_ip_object_schema_if_already_set: {
                     let socket = InternalSocket::create(None);
@@ -526,11 +526,12 @@ mod tests {
                         });
 
                     p.send_ip(
-                        &json!("Hello"),
+                        &IP::new(
+                        IPType::Data(json!("Hello")),
                         IPOptions {
                             schema: "text/plain".to_string(),
                             ..IPOptions::default()
-                        },
+                        }),
                         None,
                         true,
                     );

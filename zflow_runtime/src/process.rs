@@ -13,6 +13,8 @@ use crate::port::{normalize_port_name, BasePort, InPort, InPorts, OutPorts};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
+pub type ValidatorFn = Box<dyn (FnMut(IP) -> bool) + Send + Sync>;
+
 #[derive(Debug, Clone, Default)]
 pub struct ProcessError(pub String);
 
@@ -164,7 +166,7 @@ where
     pub fn has(
         &mut self,
         port: &str,
-        validator: Option<Box<impl (FnMut(IP) -> bool) + Send + Sync>>,
+        validator: Option<ValidatorFn>,
     ) -> bool {
         let normalize = normalize_port_name(port.to_string());
         let name = normalize.name;
@@ -526,7 +528,8 @@ where
                 if !port_impl.options.scoped {
                     ip.scope = "".to_string();
                 }
-                port_impl.send_ip(&ip, IPOptions::default(), None, true);
+
+                port_impl.send_ip(&ip, ip.index, true);
             }
         }
     }

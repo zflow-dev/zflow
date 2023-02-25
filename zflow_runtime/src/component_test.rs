@@ -2,11 +2,13 @@
 mod tests {
     use beady::scenario;
     use futures::executor::block_on;
-    use serde_json::{json, Map};
+    use serde_json::{json};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::thread::sleep;
     use std::time::Duration;
+
+    use assert_json_diff::{self, assert_json_include};
 
     use crate::ip::{IPOptions, IP};
     use crate::sockets::SocketEvent;
@@ -518,6 +520,60 @@ mod tests {
                         )),
                         true,
                     );
+                }
+                'then_should_be_able_to_send_ips_to_addressable_connections:{
+                    let mut c = Component::new(ComponentOptions {
+                        forward_brackets:HashMap::new(),
+                        in_ports: HashMap::from([(
+                            "foo".to_string(),
+                            InPort::default(),
+                        )]),
+                        out_ports: HashMap::from([(
+                            "baz".to_string(),
+                            OutPort{
+                                options: PortOptions{
+                                    addressable: true,
+                                    ..PortOptions::default()
+                                },
+                                sockets: vec![InternalSocket::create(None); 2],
+                                ..OutPort::default()
+                            },
+                        )]),
+                        process: Box::new(move |context, input, output| {
+                            let mut output = output.try_lock().unwrap();
+                            if let Some(packet) = input.clone().try_lock().unwrap().get("foo") {
+                                    let mut ip = packet;
+                                    ip.index = if ip.datatype == IPType::Data(json!("first")) {Some(1)} else{Some(0)};
+                                    ip.owner = None;
+                                    output.send_done(&ip);
+                            }
+                            Ok(ProcessResult::default())
+                        }),
+                        ..ComponentOptions::default()
+                    });
+                    let mut sin1 = InternalSocket::create(None);
+                    let mut sout1 = InternalSocket::create(None);
+                    let mut sout2 = InternalSocket::create(None);
+                    c.clone().try_lock().unwrap().get_inports_mut().ports.get_mut("foo").map(|v| v.attach(sin1.clone(), None));
+                    c.clone().try_lock().unwrap().get_outports_mut().ports.get_mut("baz").map(|v| {
+                        v.attach(sout1.clone(), Some(1));
+                        v.attach(sout2.clone(), Some(0))
+                    });
+                    
+                   
+                    sout1.clone().try_lock().unwrap().on(move |event|{
+                        if let SocketEvent::IP(ip, index) = event.as_ref() {
+                            assert_json_diff::assert_json_eq!(json!(ip.clone()), json!(IP::new(IPType::Data(json!("first")), IPOptions{index: Some(1), ..IPOptions::default()})));
+                        }
+                    });
+                    sout2.clone().try_lock().unwrap().on(move |event|{
+                        if let SocketEvent::IP(ip, index) = event.as_ref() {
+                            assert_json_diff::assert_json_eq!(json!(ip.clone()), json!(IP::new(IPType::Data(json!("second")), IPOptions{index: Some(0), ..IPOptions::default()})));
+                        }
+                    });
+
+                    let _= sin1.clone().try_lock().unwrap().post(Some(IP::new(IPType::Data(json!("first")), IPOptions::default())), true);
+                    let _= sin1.clone().try_lock().unwrap().post(Some(IP::new(IPType::Data(json!("second")), IPOptions::default())), true);
                 }
             }
         }
