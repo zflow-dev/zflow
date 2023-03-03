@@ -2,13 +2,11 @@
 mod tests {
     use beady::scenario;
     use futures::executor::block_on;
-    use serde_json::{json};
+    use serde_json::json;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::thread::sleep;
     use std::time::Duration;
-
-    use assert_json_diff::{self, assert_json_include};
 
     use crate::ip::{IPOptions, IP};
     use crate::sockets::SocketEvent;
@@ -125,48 +123,34 @@ mod tests {
                                 InPort::new(PortOptions::default()),
                             ),
                         ]),
-                        process: Box::new(
-                            |context, input: Arc<Mutex<ProcessInput<Component>>>,
-                             output: Arc<Mutex<ProcessOutput<Component>>>,
-                             | {
-                                if let Ok(output) = output.clone().try_lock().as_mut() {
-                                    if let Ok(input) = input.clone().try_lock().as_mut() {
-                                        if input.has_data("in") {
-                                            if let Some(packet) = input
-                                                .get("in")
-                                                
-                                            {
-                                                match &packet.datatype {
-                                                    IPType::Data(packet) => {
-                                                        assert_eq!(packet, &json!("some-data"));
-                                                        output.done(None);
-                                                        return Ok(ProcessResult::default());
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
+                        process: Box::new(|context, input, output| {
+                            if input.has_data("in") {
+                                if let Some(packet) = input.get("in") {
+                                    match &packet.datatype {
+                                        IPType::Data(packet) => {
+                                            assert_eq!(packet, &json!("some-data"));
+                                            output.done(None);
+                                            return Ok(ProcessResult::default());
                                         }
-                                        if input.has_data("just_processor") {
-                                            if let Some(packet) = input
-                                                .get("just_processor")
-                                                
-                                            {
-                                                match &packet.datatype {
-                                                    IPType::Data(packet) => {
-                                                        assert_eq!(packet, &json!("some-data"));
-                                                        output.done(None);
-                                                        return Ok(ProcessResult::default());
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                        }
+                                        _ => {}
                                     }
                                 }
+                            }
+                            if input.has_data("just_processor") {
+                                if let Some(packet) = input.get("just_processor") {
+                                    match &packet.datatype {
+                                        IPType::Data(packet) => {
+                                            assert_eq!(packet, &json!("some-data"));
+                                            output.done(None);
+                                            return Ok(ProcessResult::default());
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
 
-                                Ok(ProcessResult::default())
-                            },
-                        ),
+                            Ok(ProcessResult::default())
+                        }),
                         ..ComponentOptions::default()
                     });
                     let mut s1 = InternalSocket::create(None);
@@ -216,25 +200,14 @@ mod tests {
                                 ..PortOptions::default()
                             }),
                         )]),
-                        process: Box::new(
-                            |context, input: Arc<Mutex<ProcessInput<Component>>>,
-                             output: Arc<Mutex<ProcessOutput<Component>>>,
-                             | {
-                                if let Ok(output) = output.clone().try_lock().as_mut() {
-                                    if let Ok(input) = input.clone().try_lock().as_mut() {
-                                        if let Some(packet) = input.get_data("in") {
-                                            assert_eq!(packet, json!("some-data"));
-                                            assert!(output
-                                                .error(&ProcessError("".to_string()))
-                                                .is_err());
-                                            return Ok(ProcessResult::default());
-                                        }
-                                    }
-                                }
-
-                                Ok(ProcessResult::default())
-                            },
-                        ),
+                        process: Box::new(|context, input, output| {
+                            if let Some(packet) = input.get_data("in") {
+                                assert_eq!(packet, json!("some-data"));
+                                assert!(output.error(&ProcessError("".to_string())).is_err());
+                                return Ok(ProcessResult::default());
+                            }
+                            Ok(ProcessResult::default())
+                        }),
                         ..ComponentOptions::default()
                     });
                     let mut s1 = InternalSocket::create(None);
@@ -272,14 +245,18 @@ mod tests {
                             }),
                         )]),
                         process: Box::new(|context, input, output| {
-                            if let Ok(output) = output.clone().try_lock().as_mut() {
-                                if let Ok(input) = input.clone().try_lock().as_mut() {
-                                    if let Some(packet) = input.get_data("in") {
-                                        assert_eq!(packet, json!("some-data"));
-                                    }
-                                    assert!(context.clone().try_lock().unwrap().component.clone().try_lock().unwrap().error(ProcessError(format!("Some Error")), vec![], None, None).is_ok());
-                                }
+                            if let Some(packet) = input.get_data("in") {
+                                assert_eq!(packet, json!("some-data"));
                             }
+                            assert!(context
+                                .clone()
+                                .try_lock()
+                                .unwrap()
+                                .component
+                                .clone()
+                                .try_lock()
+                                .unwrap()
+                                .error(ProcessError(format!("Some Error")), vec![], None, None).is_ok());
 
                             Ok(ProcessResult::default())
                         }),
@@ -359,17 +336,9 @@ mod tests {
             'when_with_object_based_ips: {
                 'then_it_should_speak_ip_objects: {
                     let mut c = Component::new(ComponentOptions {
-                        in_ports: HashMap::from([(
-                            "in".to_string(),
-                            InPort::default(),
-                        )]),
-                        out_ports: HashMap::from([(
-                            "out".to_string(),
-                            OutPort::default(),
-                        )]),
+                        in_ports: HashMap::from([("in".to_string(), InPort::default())]),
+                        out_ports: HashMap::from([("out".to_string(), OutPort::default())]),
                         process: Box::new(|context, input, output| {
-                            let mut output = output.try_lock().unwrap();
-                            let mut input = input.try_lock().unwrap();
                             output.send_done(&input.get("in").expect("expected inport data"));
                             Ok(ProcessResult::default())
                         }),
@@ -378,8 +347,10 @@ mod tests {
                     let mut s1 = InternalSocket::create(None);
                     let mut s2 = InternalSocket::create(None);
 
-                    s2.clone().try_lock().unwrap().on(|event| {
-                        match event.as_ref() {
+                    s2.clone()
+                        .try_lock()
+                        .unwrap()
+                        .on(|event| match event.as_ref() {
                             SocketEvent::IP(ip, None) => {
                                 assert_eq!(
                                     ip.userdata,
@@ -396,12 +367,19 @@ mod tests {
                                 }
                             }
                             _ => {}
-                        }
-                    });
+                        });
 
                     if let Ok(component) = c.clone().try_lock().as_mut() {
-                        component.in_ports.ports.get_mut("in").map(|val| val.attach(s1.clone(), None));
-                        component.out_ports.ports.get_mut("out").map(|val| val.attach(s2.clone(), None));
+                        component
+                            .in_ports
+                            .ports
+                            .get_mut("in")
+                            .map(|val| val.attach(s1.clone(), None));
+                        component
+                            .out_ports
+                            .ports
+                            .get_mut("out")
+                            .map(|val| val.attach(s2.clone(), None));
                     }
 
                     let _ = s1.clone().try_lock().unwrap().post(
@@ -417,43 +395,37 @@ mod tests {
                         true,
                     );
                 }
-                'then_it_should_support_substreams:{
+                'then_it_should_support_substreams: {
                     let mut str = "".to_string();
                     let mut level = 0;
                     let mut c = Component::new(ComponentOptions {
-                        forward_brackets:HashMap::new(),
-                        in_ports: HashMap::from([(
-                            "tags".to_string(),
-                            InPort::default(),
-                        )]),
-                        out_ports: HashMap::from([(
-                            "html".to_string(),
-                            OutPort::default(),
-                        )]),
+                        forward_brackets: HashMap::new(),
+                        in_ports: HashMap::from([("tags".to_string(), InPort::default())]),
+                        out_ports: HashMap::from([("html".to_string(), OutPort::default())]),
                         process: Box::new(move |context, input, output| {
-                            let ip_data = input.clone().try_lock().unwrap().get("tags").expect("expected inport data").datatype;
+                            let ip_data = input
+                                .get("tags")
+                                .expect("expected inport data")
+                                .datatype;
 
                             match ip_data {
-                                IPType::OpenBracket(data) =>{
+                                IPType::OpenBracket(data) => {
                                     str.push_str(format!("<{}>", data.as_str().unwrap()).as_str());
-                                    level += 1;   
+                                    level += 1;
                                 }
-                                IPType::Data(data) =>{
+                                IPType::Data(data) => {
                                     str.push_str(format!("{}", data.as_str().unwrap()).as_str());
                                 }
-                                IPType::CloseBracket(data) =>{
+                                IPType::CloseBracket(data) => {
                                     str.push_str(format!("</{}>", data.as_str().unwrap()).as_str());
                                     level -= 1;
                                     if level <= 0 {
-                                        if let Ok(output) = output.clone().try_lock().as_mut() {
-                                            output.send(&("html", json!(str.clone())));
-                                        }
+                                        output.send(&("html", json!(str.clone())));
                                         str.push_str("");
                                     }
                                 }
-                                _=>{}
+                                _ => {}
                             }
-                            let mut output = output.try_lock().unwrap();
                             output.done(None);
                             Ok(ProcessResult::default())
                         }),
@@ -461,17 +433,9 @@ mod tests {
                     });
 
                     let mut d = Component::new(ComponentOptions {
-                        in_ports: HashMap::from([(
-                            "bang".to_string(),
-                            InPort::default(),
-                        )]),
-                        out_ports: HashMap::from([(
-                            "tags".to_string(),
-                            OutPort::default(),
-                        )]),
+                        in_ports: HashMap::from([("bang".to_string(), InPort::default())]),
+                        out_ports: HashMap::from([("tags".to_string(), OutPort::default())]),
                         process: Box::new(|context, input, output| {
-                            let mut output = output.try_lock().unwrap();
-                            let mut input = input.try_lock().unwrap();
                             if let Some(_bang) = input.get("bang") {
                                 output.send(&("tags", IPType::OpenBracket(json!("p"))));
                                 output.send(&("tags", IPType::OpenBracket(json!("em"))));
@@ -486,52 +450,72 @@ mod tests {
                             output.done(None);
                             Ok(ProcessResult::default())
                         }),
-                    ..ComponentOptions::default()});
-                            
+                        ..ComponentOptions::default()
+                    });
 
                     let mut s1 = InternalSocket::create(None);
                     let mut s2 = InternalSocket::create(None);
                     let mut s3 = InternalSocket::create(None);
 
-                    s3.clone().try_lock().unwrap().on(|event| {
-                        match event.as_ref() {
-                            SocketEvent::IP(ip, None) => {
-                                match &ip.datatype {
-                                    IPType::Data(data) => {
-                                        assert_eq!(data, &json!("<p><em>Hello</em>, <strong>World!</strong></p>"));
-                                        return;
-                                    }
-                                    _ => {}
+                    s3.clone()
+                        .try_lock()
+                        .unwrap()
+                        .on(|event| match event.as_ref() {
+                            SocketEvent::IP(ip, None) => match &ip.datatype {
+                                IPType::Data(data) => {
+                                    assert_eq!(
+                                        data,
+                                        &json!("<p><em>Hello</em>, <strong>World!</strong></p>")
+                                    );
+                                    return;
                                 }
-                            }
+                                _ => {}
+                            },
                             _ => {}
-                        }
-                    });
+                        });
 
-                    d.clone().try_lock().unwrap().get_inports_mut().ports.get_mut("bang").map(|v| v.attach(s1.clone(), None));
-                    d.clone().try_lock().unwrap().get_outports_mut().ports.get_mut("tags").map(|v| v.attach(s2.clone(), None));
-                    c.clone().try_lock().unwrap().get_inports_mut().ports.get_mut("tags").map(|v| v.attach(s2.clone(), None));
-                    c.clone().try_lock().unwrap().get_outports_mut().ports.get_mut("html").map(|v| v.attach(s3.clone(), None));
+                    d.clone()
+                        .try_lock()
+                        .unwrap()
+                        .get_inports_mut()
+                        .ports
+                        .get_mut("bang")
+                        .map(|v| v.attach(s1.clone(), None));
+                    d.clone()
+                        .try_lock()
+                        .unwrap()
+                        .get_outports_mut()
+                        .ports
+                        .get_mut("tags")
+                        .map(|v| v.attach(s2.clone(), None));
+                    c.clone()
+                        .try_lock()
+                        .unwrap()
+                        .get_inports_mut()
+                        .ports
+                        .get_mut("tags")
+                        .map(|v| v.attach(s2.clone(), None));
+                    c.clone()
+                        .try_lock()
+                        .unwrap()
+                        .get_outports_mut()
+                        .ports
+                        .get_mut("html")
+                        .map(|v| v.attach(s3.clone(), None));
 
                     let _ = s1.clone().try_lock().unwrap().post(
-                        Some(IP::new(
-                            IPType::Data(json!("start")),
-                            IPOptions::default(),
-                        )),
+                        Some(IP::new(IPType::Data(json!("start")), IPOptions::default())),
                         true,
                     );
                 }
-                'then_should_be_able_to_send_ips_to_addressable_connections:{
+                'then_should_be_able_to_send_ips_to_addressable_connections: {
                     let mut c = Component::new(ComponentOptions {
-                        forward_brackets:HashMap::new(),
-                        in_ports: HashMap::from([(
-                            "foo".to_string(),
-                            InPort::default(),
-                        )]),
+                        forward_brackets: HashMap::new(),
+                        in_ports: HashMap::from([("foo".to_string(), InPort::default())]),
                         out_ports: HashMap::from([(
                             "baz".to_string(),
-                            OutPort{
-                                options: PortOptions{
+                            OutPort {
+                                options: PortOptions {
                                     addressable: true,
                                     ..PortOptions::default()
                                 },
@@ -540,12 +524,15 @@ mod tests {
                             },
                         )]),
                         process: Box::new(move |context, input, output| {
-                            let mut output = output.try_lock().unwrap();
-                            if let Some(packet) = input.clone().try_lock().unwrap().get("foo") {
-                                    let mut ip = packet;
-                                    ip.index = if ip.datatype == IPType::Data(json!("first")) {Some(1)} else{Some(0)};
-                                    ip.owner = None;
-                                    output.send_done(&ip);
+                            if let Some(packet) = input.get("foo") {
+                                let mut ip = packet;
+                                ip.index = if ip.datatype == IPType::Data(json!("first")) {
+                                    Some(1)
+                                } else {
+                                    Some(0)
+                                };
+                                ip.owner = None;
+                                output.send_done(&ip);
                             }
                             Ok(ProcessResult::default())
                         }),
@@ -554,26 +541,61 @@ mod tests {
                     let mut sin1 = InternalSocket::create(None);
                     let mut sout1 = InternalSocket::create(None);
                     let mut sout2 = InternalSocket::create(None);
-                    c.clone().try_lock().unwrap().get_inports_mut().ports.get_mut("foo").map(|v| v.attach(sin1.clone(), None));
-                    c.clone().try_lock().unwrap().get_outports_mut().ports.get_mut("baz").map(|v| {
-                        v.attach(sout1.clone(), Some(1));
-                        v.attach(sout2.clone(), Some(0))
-                    });
-                    
-                   
-                    sout1.clone().try_lock().unwrap().on(move |event|{
+                    c.clone()
+                        .try_lock()
+                        .unwrap()
+                        .get_inports_mut()
+                        .ports
+                        .get_mut("foo")
+                        .map(|v| v.attach(sin1.clone(), None));
+                    c.clone()
+                        .try_lock()
+                        .unwrap()
+                        .get_outports_mut()
+                        .ports
+                        .get_mut("baz")
+                        .map(|v| {
+                            v.attach(sout1.clone(), Some(1));
+                            v.attach(sout2.clone(), Some(0))
+                        });
+
+                    sout1.clone().try_lock().unwrap().on(move |event| {
                         if let SocketEvent::IP(ip, index) = event.as_ref() {
-                            assert_json_diff::assert_json_eq!(json!(ip.clone()), json!(IP::new(IPType::Data(json!("first")), IPOptions{index: Some(1), ..IPOptions::default()})));
+                            assert_json_diff::assert_json_eq!(
+                                json!(ip.clone()),
+                                json!(IP::new(
+                                    IPType::Data(json!("first")),
+                                    IPOptions {
+                                        index: Some(1),
+                                        ..IPOptions::default()
+                                    }
+                                ))
+                            );
                         }
                     });
-                    sout2.clone().try_lock().unwrap().on(move |event|{
+                    sout2.clone().try_lock().unwrap().on(move |event| {
                         if let SocketEvent::IP(ip, index) = event.as_ref() {
-                            assert_json_diff::assert_json_eq!(json!(ip.clone()), json!(IP::new(IPType::Data(json!("second")), IPOptions{index: Some(0), ..IPOptions::default()})));
+                            assert_json_diff::assert_json_eq!(
+                                json!(ip.clone()),
+                                json!(IP::new(
+                                    IPType::Data(json!("second")),
+                                    IPOptions {
+                                        index: Some(0),
+                                        ..IPOptions::default()
+                                    }
+                                ))
+                            );
                         }
                     });
 
-                    let _= sin1.clone().try_lock().unwrap().post(Some(IP::new(IPType::Data(json!("first")), IPOptions::default())), true);
-                    let _= sin1.clone().try_lock().unwrap().post(Some(IP::new(IPType::Data(json!("second")), IPOptions::default())), true);
+                    let _ = sin1.clone().try_lock().unwrap().post(
+                        Some(IP::new(IPType::Data(json!("first")), IPOptions::default())),
+                        true,
+                    );
+                    let _ = sin1.clone().try_lock().unwrap().post(
+                        Some(IP::new(IPType::Data(json!("second")), IPOptions::default())),
+                        true,
+                    );
                 }
             }
         }

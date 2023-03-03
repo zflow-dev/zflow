@@ -1,8 +1,7 @@
 use std::{
     any::Any,
     collections::{HashMap, VecDeque},
-    fmt::{Debug, Error},
-    rc::Rc,
+    fmt::Debug,
     sync::{Arc, Mutex},
     thread,
 };
@@ -69,18 +68,8 @@ where
     fn get_description(&self) -> String;
     fn get_icon(&self) -> String;
     fn set_icon(&mut self, icon: String);
-    fn get_handle(&self) -> Self::Handle;
-    fn set_handle(
-        &mut self,
-        handle: impl FnMut(
-                Arc<Mutex<ProcessContext<Self::Comp>>>,
-                Arc<Mutex<ProcessInput<Self::Comp>>>,
-                Arc<Mutex<ProcessOutput<Self::Comp>>>,
-            ) -> Result<ProcessResult<Self::Comp>, ProcessError>
-            + Sync
-            + Send
-            + 'static,
-    );
+    fn get_handle(&self) -> Option<Self::Handle>;
+    fn set_handle(&mut self, handle: Box<ProcessFunc<Self::Comp>>);
 
     fn prepare_forwarding(&mut self) {
         self.get_forward_brackets().keys().for_each(|inport| {
@@ -206,14 +195,19 @@ where
         // Ensure we have a bracket context for the current scope
         if _type == "in" {
             if !self
-            .get_bracket_context_val().r#in.contains_key(&name.clone()) {
-                self
-                .get_bracket_context_val_mut()
+                .get_bracket_context_val()
+                .r#in
+                .contains_key(&name.clone())
+            {
+                self.get_bracket_context_val_mut()
                     .r#in
                     .insert(name.clone(), HashMap::new());
             }
             if let Some(obj) = self
-            .get_bracket_context_val_mut().r#in.get_mut(&name.clone()) {
+                .get_bracket_context_val_mut()
+                .r#in
+                .get_mut(&name.clone())
+            {
                 if !obj.contains_key(&scope.clone()) {
                     (*obj).insert(scope.clone(), Vec::new());
                 }
@@ -227,21 +221,26 @@ where
                 .get_mut(&scope);
         } else if _type == "out" {
             if !self
-            .get_bracket_context_val().out.contains_key(&name.clone()) {
-                self
-                .get_bracket_context_val_mut()
+                .get_bracket_context_val()
+                .out
+                .contains_key(&name.clone())
+            {
+                self.get_bracket_context_val_mut()
                     .out
                     .insert(name.clone(), HashMap::new());
             }
             if let Some(obj) = self
-            .get_bracket_context_val_mut().out.get_mut(&name.clone()) {
+                .get_bracket_context_val_mut()
+                .out
+                .get_mut(&name.clone())
+            {
                 if !obj.contains_key(&scope.clone()) {
                     (*obj).insert(scope.clone(), Vec::new());
                 }
             }
 
             return self
-            .get_bracket_context_val_mut()
+                .get_bracket_context_val_mut()
                 .out
                 .get_mut(&name)
                 .unwrap()
@@ -662,16 +661,19 @@ where
     /// output from the queue in the order it is in.
     fn process_output_queue(&mut self) {
         while !self.get_output_queue().is_empty() {
-            if !&self.get_output_queue()[0].clone().try_lock().unwrap().resolved {
+            if !&self.get_output_queue()[0]
+                .clone()
+                .try_lock()
+                .unwrap()
+                .resolved
+            {
                 break;
             }
 
             if let Some(result) = self.get_output_queue_mut().pop_front().as_mut() {
                 self.add_bracket_forwards(result.clone());
                 if let Ok(result) = result.clone().try_lock() {
-                    result.outputs
-                    .keys()
-                    .for_each(|port| {
+                    result.outputs.keys().for_each(|port| {
                         let mut port_identifier: Option<String> = None;
                         let ips = &result.outputs[port];
                         if self.get_outports().ports[port].is_addressable() {
@@ -714,11 +716,11 @@ where
                                             );
                                         }
                                     }
-                                    self.get_outports_mut().ports.get_mut(port).unwrap().send_ip(
-                                        ip,
-                                        (*ip).index,
-                                        true,
-                                    );
+                                    self.get_outports_mut()
+                                        .ports
+                                        .get_mut(port)
+                                        .unwrap()
+                                        .send_ip(ip, (*ip).index, true);
                                 });
                             });
                             return;
@@ -757,11 +759,11 @@ where
                                         );
                                     }
                                 }
-                                self.get_outports_mut().ports.get_mut(port).unwrap().send_ip(
-                                    ip,
-                                    None,
-                                    true,
-                                );
+                                self.get_outports_mut()
+                                    .ports
+                                    .get_mut(port)
+                                    .unwrap()
+                                    .send_ip(ip, None, true);
                             });
                         });
                     });
@@ -812,7 +814,8 @@ where
                 .publish(ComponentEvent::Activate(self.get_load()));
 
             if self.is_ordered() || self.get_auto_ordering() {
-                self.get_output_queue_mut().push_back(context.result.clone());
+                self.get_output_queue_mut()
+                    .push_back(context.result.clone());
             }
         }
     }
@@ -835,7 +838,7 @@ where
             .publish(ComponentEvent::Start);
         Ok(())
     }
-    fn set_started(&mut self, started:bool);
+    fn set_started(&mut self, started: bool);
     fn is_started(&self) -> bool;
     fn is_subgraph(&self) -> bool;
     fn is_ready(&self) -> bool;
@@ -963,7 +966,7 @@ pub struct Component {
     /// Initially the component is not started
     pub started: bool,
     pub load: usize,
-    pub(crate) handle: Arc<Mutex<ProcessFunc<Self>>>,
+    pub(crate) handle: Option<Arc<Mutex<ProcessFunc<Self>>>>,
     pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
     pub auto_ordering: bool,
     setup_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
@@ -975,7 +978,7 @@ impl BaseComponentTrait for Component {
     type Handle = Arc<Mutex<ProcessFunc<Self>>>;
     type Comp = Component;
 
-    fn set_started(&mut self, started:bool) {
+    fn set_started(&mut self, started: bool) {
         self.started = started;
     }
 
@@ -1010,23 +1013,12 @@ impl BaseComponentTrait for Component {
         self.node_id = id;
     }
 
-    fn get_handle(&self) -> Self::Handle {
+    fn get_handle(&self) -> Option<Self::Handle> {
         self.handle.clone()
     }
 
-    fn set_handle(
-        &mut self,
-        handle: impl FnMut(
-                Arc<Mutex<ProcessContext<Self::Comp>>>,
-                Arc<Mutex<ProcessInput<Self::Comp>>>,
-                Arc<Mutex<ProcessOutput<Self::Comp>>>,
-                // Arc<Mutex<ProcessContext<T>>>,
-            ) -> Result<ProcessResult<Self::Comp>, ProcessError>
-            + Sync
-            + Send
-            + 'static,
-    ) {
-        self.handle = Arc::new(Mutex::new(handle));
+    fn set_handle(&mut self, handle: Box<ProcessFunc<Self::Comp>>) {
+        self.handle = Some(Arc::new(Mutex::new(handle)));
     }
 
     fn get_inports(&self) -> InPorts {
@@ -1180,7 +1172,7 @@ impl Default for Component {
             base_dir: Default::default(),
             started: Default::default(),
             load: Default::default(),
-            handle: Arc::new(Mutex::new(|_, __, ___| return Ok(ProcessResult::default()))),
+            handle: None,
             bus: Default::default(),
             auto_ordering: Default::default(),
             setup_fn: Default::default(),
@@ -1239,9 +1231,7 @@ impl Component {
             base_dir: None,
             started: false,
             load: 0,
-            handle: Arc::new(Mutex::new(Box::new(|_, __, ___| {
-                Ok(ProcessResult::default())
-            }))),
+            handle: None,
             auto_ordering: false,
             node_id: String::from(""),
             bus: Arc::new(Mutex::new(Publisher::new())),
@@ -1291,22 +1281,13 @@ impl Component {
     }
 
     /// Sets process handler function
-    pub fn link_process<T>(
-        component: Arc<Mutex<T>>,
-        mut process_func: impl FnMut(
-                Arc<Mutex<ProcessContext<T>>>,
-                Arc<Mutex<ProcessInput<T>>>,
-                Arc<Mutex<ProcessOutput<T>>>,
-            ) -> Result<ProcessResult<T>, ProcessError>
-            + Sync
-            + Send
-            + 'static,
-    ) where
+    pub fn link_process<T>(component: Arc<Mutex<T>>, process_func: Box<ProcessFunc<T>>)
+    where
         T: ComponentTrait + Debug,
     {
         if let Ok(_component) = component.clone().try_lock().as_mut() {
             _component.prepare_forwarding();
-            _component.set_handle(move |c, i, o| (process_func)(c.clone(), i.clone(), o.clone()));
+            _component.set_handle(process_func);
             _component.get_inports().ports.keys().for_each(move |name| {
                 let mut port = _component.get_inports_mut().ports.get_mut(name).unwrap();
                 if port.name.is_empty() {
@@ -1483,7 +1464,7 @@ impl Component {
             scope: None,
             component: _component.clone(),
         }));
-        let input = Arc::new(Mutex::new(ProcessInput::<T> {
+        let input = &mut ProcessInput::<T> {
             in_ports: inports,
             context: context.clone(),
             component: _component.clone(),
@@ -1491,42 +1472,42 @@ impl Component {
             port: port.clone(),
             scope: None,
             result: result.clone(),
-        }));
-        let output = Arc::new(Mutex::new(ProcessOutput::<T> {
+        };
+        let output = &mut ProcessOutput::<T> {
             out_ports: outports,
             context: context.clone(),
             component: _component.clone(),
             ip: ip.clone(),
             scope: None,
             result: result.clone(),
-        }));
+        };
 
         // Call the processing function
-        let handle_binding = _component
+        let handle = _component
             .clone()
             .try_lock()
             .as_mut()
             .expect("expected component instance")
-            .get_handle()
-            .clone();
-        let mut handle_binding = handle_binding.try_lock();
-        let handle = handle_binding
-            .as_mut()
-            .expect("Processing function is not defined");
-        let res = (handle)(context.clone(), input.clone(), output.clone());
+            .get_handle();
+
+        if handle.is_none() {
+            return;
+        }
+
+        let binding = handle.unwrap();
+        let mut binding = binding.try_lock();
+        let handle_binding = binding.as_mut().unwrap();
+        let res = (handle_binding)(context.clone(), input, output);
         if res.is_ok() {
-            output.clone().try_lock().unwrap().send_done(&res.ok());
+            output.send_done(&res.ok());
         } else {
             if res.clone().err().is_some() {
-                output
-                    .clone()
-                    .try_lock()
-                    .unwrap()
-                    .done(Some(res.err().as_ref().unwrap()));
+                output.done(Some(res.err().as_ref().unwrap()));
             } else {
-                output.clone().try_lock().unwrap().done(None);
+                output.done(None);
             }
         }
+
         if let Ok(component) = _component.clone().try_lock().as_mut() {
             if context.clone().try_lock().unwrap().activated {
                 return;

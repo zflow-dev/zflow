@@ -1,13 +1,15 @@
 # ZFlow Process Runtime
+
 The main runtime for the execution of the directed graph
 
+## Graph Runtime example
 
-## Graph Runtime example 
 Some details may be hidden for brevity
 
 A simple component
+
 ```rs
-// Create a component 
+// Create a component
 let mut my_component = Component::new(ComponentOptions {
     forward_brackets:HashMap::new(),
     // set input port `in`
@@ -32,7 +34,9 @@ let mut my_component = Component::new(ComponentOptions {
     ..ComponentOptions::default()
 });
 ```
+
 Connect another component to `my_component`
+
 ```rs
 let mut trigger = InternalSocket::create(None);
 let mut output_connector = InternalSocket::create(None);
@@ -54,11 +58,12 @@ let _ = trigger...post(
 ```
 
 Full example that demonstrates generation of an HTML code using ZFlow.
+
 ```rs
 let mut str = "".to_string();
 let mut level = 0;
 
-// Create the C component 
+// Create the C component
 let mut c = Component::new(ComponentOptions {
     forward_brackets:HashMap::new(),
     // set input port `tags`
@@ -73,12 +78,12 @@ let mut c = Component::new(ComponentOptions {
     )]),
     // the process function that takes the input data and transform them into an html string that is then sent out via the output port
     process: Box::new(move |context, input, output| {
-        let ip_data = input...get("tags").expect("expected inport data").datatype;
+        let ip_data = input.get("tags").expect("expected inport data").datatype;
 
         match ip_data {
             IPType::OpenBracket(data) =>{
                 str.push_str(format!("<{}>", data.as_str().unwrap()).as_str());
-                level += 1;   
+                level += 1;
             }
             IPType::Data(data) =>{
                 str.push_str(format!("{}", data.as_str().unwrap()).as_str());
@@ -87,15 +92,12 @@ let mut c = Component::new(ComponentOptions {
                 str.push_str(format!("</{}>", data.as_str().unwrap()).as_str());
                 level -= 1;
                 if level <= 0 {
-                    if let Ok(output) = output.clone().try_lock().as_mut() {
-                        output.send(&("html", json!(str.clone())));
-                    }
+                    output.send(&("html", json!(str.clone())));
                     str.push_str("");
                 }
             }
             _=>{}
         }
-        let mut output = output.try_lock().unwrap();
         output.done(None);
         Ok(ProcessResult::default())
     }),
@@ -116,8 +118,6 @@ let mut d = Component::new(ComponentOptions {
     )]),
     // the process function that generates the html tags that we would send to the C component
     process: Box::new(|context, input, output| {
-        let mut output = output.try_lock().unwrap();
-        let mut input = input.try_lock().unwrap();
         if let Some(_bang) = input.get("bang") {
             output.send(&("tags", IPType::OpenBracket(json!("p"))));
             output.send(&("tags", IPType::OpenBracket(json!("em"))));
@@ -133,7 +133,7 @@ let mut d = Component::new(ComponentOptions {
         Ok(ProcessResult::default())
     }),
 ..ComponentOptions::default()});
-        
+
 // create internal sockets that will connect our components together via their ports
 let mut s1 = InternalSocket::create(None);
 let mut s2 = InternalSocket::create(None);
@@ -155,8 +155,8 @@ s3...on(|event| {
     }
 });
 
-// attach the sockets to the respective input and output ports, 
-// this will allow communication between components 
+// attach the sockets to the respective input and output ports,
+// this will allow communication between components
 // through the attached internal sockets
 d...get_inports_mut().ports.get_mut("bang").map(|v| v.attach(s1.clone(), None));
 d...get_outports_mut().ports.get_mut("tags").map(|v| v.attach(s2.clone(), None));
@@ -173,4 +173,4 @@ let _ = s1...post(
 );
 ```
 
-See [the runtime tests cases](https://github.com/darmie/zflow/blob/618f1ca4304d44400b6b7021d098d35240dedc62/zflow_runtime/src/component_test.rs) for more examples
+See [the runtime tests cases](https://github.com/darmie/zflow/blob/main/zflow_runtime/src/component_test.rs) for more examples

@@ -2357,6 +2357,7 @@ name = "zflow_runtime"
 version = "0.1.0"
 dependencies = [
  "assert-json-diff",
+ "async-trait",
  "beady",
  "cast_trait_object",
  "foreach",

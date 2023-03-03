@@ -2,12 +2,12 @@ use core::panic;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
-use futures_util::StreamExt;
-use log::{log, Level};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
 
-use crate::component::{BaseComponentTrait, Component, ComponentOptions, ComponentTrait};
+use log::{log, Level};
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+use crate::component::ComponentTrait;
 use crate::ip::{IPOptions, IPType, IP};
 use crate::port::{normalize_port_name, BasePort, InPort, InPorts, OutPorts};
 use std::collections::{HashMap, VecDeque};
@@ -20,12 +20,12 @@ pub struct ProcessError(pub String);
 
 pub type ProcessFunc<T> = dyn FnMut(
         Arc<Mutex<ProcessContext<T>>>,
-        Arc<Mutex<ProcessInput<T>>>,
-        Arc<Mutex<ProcessOutput<T>>>,
-        // Arc<Mutex<ProcessContext<T>>>,
+        &mut ProcessInput<T>,
+        &mut ProcessOutput<T>,
     ) -> Result<ProcessResult<T>, ProcessError>
     + Sync
-    + Send;
+    + Send
+    + 'static;
 
 #[derive(Clone, Default)]
 pub struct ProcessResult<T: ComponentTrait> {

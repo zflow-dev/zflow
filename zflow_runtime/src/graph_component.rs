@@ -37,7 +37,7 @@ pub struct GraphComponent {
     pub started: bool,
     pub starting: bool,
     pub load: usize,
-    pub(crate) handle: Arc<Mutex<ProcessFunc<Self>>>,
+    pub(crate) handle: Option<Arc<Mutex<ProcessFunc<Self>>>>,
     pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
     pub auto_ordering: bool,
     setup_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
@@ -84,23 +84,15 @@ impl BaseComponentTrait for GraphComponent {
         self.node_id = id;
     }
 
-    fn get_handle(&self) -> Self::Handle {
+    fn get_handle(&self) -> Option<Self::Handle> {
         self.handle.clone()
     }
 
     fn set_handle(
         &mut self,
-        handle: impl FnMut(
-                Arc<Mutex<ProcessContext<Self::Comp>>>,
-                Arc<Mutex<ProcessInput<Self::Comp>>>,
-                Arc<Mutex<ProcessOutput<Self::Comp>>>,
-                // Arc<Mutex<ProcessContext<T>>>,
-            ) -> Result<ProcessResult<Self::Comp>, ProcessError>
-            + Sync
-            + Send
-            + 'static,
+        handle: Box<ProcessFunc<Self::Comp>>,
     ) {
-        self.handle = Arc::new(Mutex::new(handle));
+        self.handle = Some(Arc::new(Mutex::new(handle)));
     }
 
     fn get_inports(&self) -> InPorts {
@@ -265,7 +257,7 @@ impl Default for GraphComponent {
             base_dir: Default::default(),
             started: Default::default(),
             load: 0,
-            handle: Arc::new(Mutex::new(|_, __, ___| return Ok(ProcessResult::default()))),
+            handle: None,
             bus: Default::default(),
             auto_ordering: Default::default(),
             setup_fn: Default::default(),
