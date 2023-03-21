@@ -10,3 +10,5 @@ pub mod port;
 pub mod port_test;
 pub mod errors;
 pub mod component_test;
+pub mod loader;
+pub mod default_component_registry;

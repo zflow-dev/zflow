@@ -1,10 +1,11 @@
-use std::{collections::{HashMap, VecDeque}, sync::{Arc, Mutex}, any::Any, fmt::Debug, path::Path};
+use std::{collections::{HashMap, VecDeque}, sync::{Arc, Mutex}, any::Any, fmt::Debug};
 
 use fp_rust::{publisher::Publisher, common::SubscriptionFunc};
+use serde::Deserialize;
 use serde_json::Value;
 use zflow::graph::{graph::Graph, types::GraphJson};
 
-use crate::{port::{InPorts, OutPorts, InPortsOptions, InPort, PortOptions, OutPortsOptions}, component::{BracketContext, ComponentEvent, BaseComponentTrait, ComponentCallbacks, ComponentTrait, ComponentOptions}, process::{ProcessResult, ProcessFunc, ProcessContext, ProcessInput, ProcessOutput, ProcessError}, sockets::SocketEvent, ip::IPType};
+use crate::{port::{InPorts, OutPorts, InPortsOptions, InPort, PortOptions, OutPortsOptions}, component::{BracketContext, ComponentEvent, BaseComponentTrait, ComponentCallbacks, ComponentTrait, ComponentOptions}, process::{ProcessResult, ProcessFunc}, sockets::SocketEvent, ip::IPType, loader::ComponentLoader, network::{BaseNetwork, NetworkProcess}};
 
 /// A ZFlow component that represents a subgraph
 /// 
@@ -12,6 +13,7 @@ use crate::{port::{InPorts, OutPorts, InPortsOptions, InPort, PortOptions, OutPo
 /// another network
 #[derive(Clone)]
 pub struct GraphComponent {
+    pub network: Option<Arc<Mutex<dyn BaseNetwork<Self> + Send + Sync>>>,
     pub metadata: HashMap<String, Value>,
     pub in_ports: InPorts,
     pub out_ports: OutPorts,
@@ -32,7 +34,7 @@ pub struct GraphComponent {
     pub node_id: String,
     /// Queue for handling ordered output packets
     pub output_q: VecDeque<Arc<Mutex<ProcessResult<Self>>>>,
-    pub base_dir: Option<String>,
+    pub base_dir: String,
     /// Initially the component is not started
     pub started: bool,
     pub starting: bool,
@@ -198,6 +200,21 @@ impl BaseComponentTrait for GraphComponent {
     fn get_forward_brackets_mut(&mut self) -> &mut HashMap<String, Vec<String>> {
         &mut self.forward_brackets
     }
+
+    fn get_base_dir(&self) -> String {
+        self.base_dir.clone()
+    }
+
+    fn set_base_dir(&mut self, dir: String) {
+        self.base_dir = dir;
+    }
+    fn set_name(&mut self, name:String) {
+        self.component_name = Some(name);
+    }
+
+    fn set_ready(&mut self, ready:bool) {
+        self.ready = ready;
+    }
 }
 
 impl ComponentCallbacks for GraphComponent {
@@ -227,12 +244,48 @@ impl ComponentCallbacks for GraphComponent {
     }
 }
 
+pub trait GraphComponentTrait:ComponentTrait {
+    fn set_loader(&mut self, loader:ComponentLoader<Self>);
+    fn create_network(&mut self, graph:Graph)  -> Result<(), String>;
+    fn subscribe_network(&mut self, network:Arc<Mutex<dyn BaseNetwork<Self> + Send + Sync>>);
+    fn setup(&mut self);
+    fn teardown(&mut self);
+    fn find_edge_ports(&mut self, name:&str, process:NetworkProcess<Self>) -> bool;
+    
+}
+impl ComponentTrait for GraphComponent  {}
 
-impl ComponentTrait for GraphComponent {}
+impl GraphComponentTrait for GraphComponent {
+    fn set_loader(&mut self, _loader:ComponentLoader<Self>) {
+        todo!()
+    }
+
+    fn create_network(&mut self, _graph:Graph)  -> Result<(), String> {
+        // Todo: create network
+        todo!()
+    }
+
+    fn subscribe_network(&mut self, network:Arc<Mutex<dyn BaseNetwork<Self> + Send + Sync>>) {
+        todo!()
+    }
+
+    fn setup(&mut self) {
+        todo!()
+    }
+
+    fn teardown(&mut self) {
+        todo!()
+    }
+
+    fn find_edge_ports(&mut self, name:&str, process:NetworkProcess<Self>) -> bool {
+        todo!()
+    }
+}
 
 impl Default for GraphComponent {
     fn default() -> Self {
         Self {
+            network: None,
             metadata: Default::default(),
             in_ports: InPorts::new(InPortsOptions{
                 ports: HashMap::from([
@@ -308,9 +361,11 @@ impl GraphComponent {
             s.metadata = metadata;
         }
 
-        if let Some(options) = options {
-            s.in_ports = InPorts::new(InPortsOptions { ports: options.in_ports });
-            s.out_ports = OutPorts::new(OutPortsOptions { ports: options.out_ports });
+        if let Some(options) = &options {
+            options.in_ports.iter().for_each(|(name, port)|{
+                s.in_ports.ports.insert(name.to_owned(), port.to_owned());
+            });
+            s.out_ports = OutPorts::new(OutPortsOptions { ports: options.out_ports.clone() });
         }
 
         let _s = Arc::new(Mutex::new(s.clone()));
@@ -321,7 +376,9 @@ impl GraphComponent {
                 graph_port.on(move |event|{
                     if let SocketEvent::IP(ip, _) = event.as_ref() {
                         if let IPType::Data(graph) = &ip.datatype {
-                            let _ = Self::setup_graph(_s.clone(), graph);
+                            if let Ok(graph_json) = GraphJson::deserialize(graph) {
+                                let _ = Self::setup_graph(_s.clone(), &graph_json);
+                            }
                         }
                     }
                 });
@@ -331,9 +388,9 @@ impl GraphComponent {
         _s.clone()
     }
 
-    fn setup_graph(component:Arc<Mutex<Self>>, graph:&dyn Any) -> Result<(), String>{
+    pub fn setup_graph<T>(component:Arc<Mutex<T>>, graph:&dyn Any) -> Result<(), String> where T: ComponentTrait + GraphComponentTrait {
         if let Ok(component) = component.clone().try_lock().as_mut() {
-            component.ready = false;
+            component.set_ready(false);
             if let Some(graph) = graph.downcast_ref::<Graph>() {
                 component.create_network(graph.clone())?;
             }
@@ -351,13 +408,8 @@ impl GraphComponent {
 
             return Ok(())
         }
-       
 
         Err(format!("Could not setup graph component with data {:?}", graph))
     }
 
-    pub fn create_network(&mut self, graph:Graph)  -> Result<(), String> {
-        // Todo: create network
-        Ok(())
-    }
 }

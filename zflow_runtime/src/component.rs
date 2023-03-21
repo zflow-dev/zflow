@@ -63,11 +63,14 @@ where
     type Comp;
 
     fn get_name(&self) -> Option<String>;
+    fn set_name(&mut self, name:String);
     fn get_node_id(&self) -> String;
     fn set_node_id(&mut self, id: String);
     fn get_description(&self) -> String;
     fn get_icon(&self) -> String;
     fn set_icon(&mut self, icon: String);
+    fn get_base_dir(&self) -> String;
+    fn set_base_dir(&mut self, dir: String);
     fn get_handle(&self) -> Option<Self::Handle>;
     fn set_handle(&mut self, handle: Box<ProcessFunc<Self::Comp>>);
 
@@ -842,6 +845,7 @@ where
     fn is_started(&self) -> bool;
     fn is_subgraph(&self) -> bool;
     fn is_ready(&self) -> bool;
+    fn set_ready(&mut self, ready:bool);
 
     fn get_teardown_function(
         &self,
@@ -962,7 +966,7 @@ pub struct Component {
     pub node_id: String,
     /// Queue for handling ordered output packets
     pub output_q: VecDeque<Arc<Mutex<ProcessResult<Self>>>>,
-    pub base_dir: Option<String>,
+    pub base_dir: String,
     /// Initially the component is not started
     pub started: bool,
     pub load: usize,
@@ -1124,6 +1128,22 @@ impl BaseComponentTrait for Component {
     fn get_forward_brackets_mut(&mut self) -> &mut HashMap<String, Vec<String>> {
         &mut self.forward_brackets
     }
+
+    fn get_base_dir(&self) -> String {
+        self.base_dir.clone()
+    }
+
+    fn set_base_dir(&mut self, dir: String) {
+        self.base_dir = dir;
+    }
+
+    fn set_name(&mut self, name:String) {
+        self.component_name = Some(name);
+    }
+
+    fn set_ready(&mut self, ready:bool) {
+
+    }
 }
 
 impl ComponentCallbacks for Component {
@@ -1228,7 +1248,7 @@ impl Component {
             component_name: None,
             output_q: VecDeque::new(),
             bracket_context: BracketContext::default(),
-            base_dir: None,
+            base_dir: "/".to_owned(),
             started: false,
             load: 0,
             handle: None,

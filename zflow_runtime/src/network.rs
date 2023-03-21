@@ -1,12 +1,11 @@
 use std::{
-    any::Any,
     collections::HashMap,
     path::Path,
     sync::{Arc, Mutex},
     time::SystemTime,
 };
 
-use async_trait::async_trait;
+
 use serde_json::{Map, Value};
 use zflow::graph::{
     graph::Graph,
@@ -15,6 +14,8 @@ use zflow::graph::{
 
 use crate::{
     component::{BaseComponentTrait, ComponentTrait},
+    graph_component::GraphComponentTrait,
+    loader::ComponentLoader,
     sockets::InternalSocket,
 };
 
@@ -38,22 +39,18 @@ pub enum NetworkEvent {
 
 pub struct NetworkOptions {}
 
-// ## The ZFlow Network
-//
-// ZFlow networks consist of processes connected to each other
-// via sockets attached from outports to inports.
-//
-// The role of the network coordinator is to take a graph and
-// instantiate all the necessary processes from the designated
-// components, attach sockets between them, and handle the sending
-// of Initial Information Packets.
-#[async_trait]
-pub trait BaseNetwork
-where
-    Self::ComponentType: ComponentTrait,
+/// ## The ZFlow Network
+///
+/// ZFlow networks consist of processes connected to each other
+/// via sockets attached from outports to inports.
+///
+/// The role of the network coordinator is to take a graph and
+/// instantiate all the necessary processes from the designated
+/// components, attach sockets between them, and handle the sending
+/// of Initial Information Packets.
+pub trait BaseNetwork<T:ComponentTrait>
 {
-    type Network;
-    type ComponentType;
+
 
     fn is_started(&self) -> bool;
     fn is_stopped(&self) -> bool;
@@ -62,8 +59,10 @@ where
     }
     fn set_started(&mut self, started: bool);
 
+    fn get_loader(&mut self) -> &mut Option<ComponentLoader<T>>;
+
     /// Processes contains all the instantiated components for this network
-    fn get_processes(&self) -> HashMap<String, NetworkProcess<Self::ComponentType>>;
+    fn get_processes(&self) -> HashMap<String, NetworkProcess<T>>;
     fn get_active_processes(&self) -> Vec<String> {
         let mut active = vec![];
         if !self.is_started() {
@@ -97,9 +96,9 @@ where
     /// with component instance object
     fn load(
         &mut self,
-        component: Arc<Mutex<Self::ComponentType>>,
+        component: Arc<Mutex<T>>,
         metadata: Option<Map<String, Value>>,
-    ) -> Result<Arc<Mutex<Self::ComponentType>>, String> {
+    ) -> Result<Arc<Mutex<T>>, String> {
         Err("unimplemented".to_string())
     }
     /// ## Loading components
@@ -108,7 +107,7 @@ where
         &mut self,
         component: &Path,
         metadata: Option<Map<String, Value>>,
-    ) -> Result<Arc<Mutex<Self::ComponentType>>, String> {
+    ) -> Result<Arc<Mutex<T>>, String> {
         Err("unimplemented".to_string())
     }
 
@@ -120,43 +119,43 @@ where
     ///
     /// * `id`: Identifier of the process in the network. Typically a string
     /// * `component`: A ZFlow component instance object
-    async fn add_node(
+    fn add_node(
         &mut self,
         node: GraphNode,
         options: Option<Map<String, Value>>,
-    ) -> Result<NetworkProcess<Self::ComponentType>, String>;
+    ) -> Result<NetworkProcess<T>, String>;
 
     /// Remove node from network
-    async fn remove_node(&mut self, node: GraphNode) -> Result<(), String>;
+    fn remove_node(&mut self, node: GraphNode) -> Result<(), String>;
     /// Rename a node in the  network
-    async fn rename_node(&mut self, old_id: &str, new_id: &str) -> Result<(), String>;
+    fn rename_node(&mut self, old_id: &str, new_id: &str) -> Result<(), String>;
 
     /// Get process by its ID.
-    fn get_node(&self, id: &str) -> Option<NetworkProcess<Self::ComponentType>>;
+    fn get_node(&self, id: &str) -> Option<NetworkProcess<T>>;
 
-    async fn connect(&self);
+    fn connect(&self);
 
     /// Add edge
-    async fn add_edge(
+    fn add_edge(
         &mut self,
         edge: GraphEdge,
         options: Option<Map<String, Value>>,
     ) -> Result<Arc<Mutex<InternalSocket>>, String>;
 
     /// Remove edge
-    async fn remove_edge(&mut self, node: GraphEdge) -> Result<(), String>;
+    fn remove_edge(&mut self, node: GraphEdge) -> Result<(), String>;
 
     /// Add initial packets
-    async fn add_initial(
+    fn add_initial(
         &mut self,
         initializer: GraphIIP,
         options: Option<Map<String, Value>>,
     ) -> Result<Arc<Mutex<InternalSocket>>, String>;
 
     /// Remove initial packets
-    async fn remove_initial(&mut self, initializer: GraphIIP) -> Result<(), String>;
+    fn remove_initial(&mut self, initializer: GraphIIP) -> Result<(), String>;
 
-    async fn send_defaults(&self) -> Result<(), String>;
+    fn send_defaults(&self) -> Result<(), String>;
 
     fn start(&self) -> Result<(), String>;
     fn stop(&self) -> Result<(), String>;
@@ -165,26 +164,37 @@ where
     fn set_debug(&mut self, active: bool);
 }
 
-pub trait NetworkSubsciption<T: BaseNetwork> {
+pub trait NetworkSubsciption<'a,C:ComponentTrait, T: BaseNetwork<C>>
+{
+    type Network;
     fn subscribe_subgraph(
         network: Arc<Mutex<T>>,
-        node: NetworkProcess<T::ComponentType>,
+        node: NetworkProcess<C>,
     ) -> Result<(), String>;
 
     /// Subscribe to events from all connected sockets and re-emit them
     fn subscribe_socket(
         network: Arc<Mutex<T>>,
         socket: Arc<Mutex<InternalSocket>>,
-        source: NetworkProcess<T::ComponentType>,
+        source: NetworkProcess<C>,
     ) -> Result<(), String>;
 
     fn subscribe_node(
         network: Arc<Mutex<T>>,
-        node: NetworkProcess<T::ComponentType>,
+        node: NetworkProcess<C>,
     ) -> Result<(), String>;
 }
 
-pub struct Network<T: ComponentTrait> {
+/// ## The ZFlow Network
+///
+/// ZFlow networks consist of processes connected to each other
+/// via sockets attached from outports to inports.
+///
+/// The role of the network coordinator is to take a graph and
+/// instantiate all the necessary processes from the designated
+/// components, attach sockets between them, and handle the sending
+/// of Initial Information Packets.
+pub struct Network<T: ComponentTrait + GraphComponentTrait> {
     pub options: NetworkOptions,
     /// Processes contains all the instantiated components for this network
     pub processes: HashMap<String, NetworkProcess<T>>,
@@ -201,15 +211,82 @@ pub struct Network<T: ComponentTrait> {
     pub stopped: bool,
     pub debug: bool,
     pub event_buffer: Vec<NetworkEvent>,
-    // pub loader:ComponentLoader
+    pub loader: Option<ComponentLoader<T>>,
 }
 
-impl<T> BaseNetwork for Network<T>
+impl<T:ComponentTrait + GraphComponentTrait> Network<T> {
+    pub fn new(graph:Graph, options: NetworkOptions) -> Self {
+        Self {
+            options,
+            processes: HashMap::new(),
+            initials: Vec::new(),
+            next_initials: Vec::new(),
+            connections: Vec::new(),
+            defaults: Vec::new(),
+            graph,
+            started: false,
+            stopped: false,
+            debug: false,
+            event_buffer: Vec::new(),
+            loader: None
+        }
+    }
+}
+
+impl<T> BaseNetwork<T> for Network<T>
 where
-    T: ComponentTrait,
+    T: ComponentTrait + GraphComponentTrait,
 {
-    type Network = Self;
-    type ComponentType = T;
+
+
+    fn get_loader(&mut self) -> &mut Option<ComponentLoader<T>> {
+        &mut self.loader
+    }
+
+    fn is_running(&self) -> bool {
+        self.get_active_processes().len() > 0
+    }
+
+    fn get_active_processes(&self) -> Vec<String> {
+        let mut active = vec![];
+        if !self.is_started() {
+            return active;
+        }
+        self.get_processes().iter().for_each(|(name, process)| {
+            if let Ok(component) = &process.component.try_lock() {
+                if component.get_load() > 0 {
+                    active.push(name.to_string());
+                }
+            }
+        });
+        active
+    }
+
+    fn uptime(&self) -> u128 {
+        if let Some(earlier) = self.get_startup_time() {
+            return SystemTime::now()
+                .duration_since(earlier)
+                .unwrap()
+                .as_millis();
+        }
+        0
+    }
+
+    fn load(
+        &mut self,
+        component: Arc<Mutex<T>>,
+        metadata: Option<Map<String, Value>>,
+    ) -> Result<Arc<Mutex<T>>, String> {
+        Err("unimplemented".to_string())
+    }
+
+    fn load_from_path(
+        &mut self,
+        component: &Path,
+        metadata: Option<Map<String, Value>>,
+    ) -> Result<Arc<Mutex<T>>, String> {
+        Err("unimplemented".to_string())
+    }
 
     fn is_started(&self) -> bool {
         todo!()
@@ -219,180 +296,63 @@ where
         todo!()
     }
 
-    fn set_started(&mut self, started: bool) {
+    fn set_started(&mut self,started:bool) {
         todo!()
     }
 
-    fn get_processes(&self) -> HashMap<String, NetworkProcess<Self::ComponentType>> {
+    fn get_processes(&self) -> HashMap<String,NetworkProcess<T> >  {
         todo!()
     }
 
-    fn get_startup_time(&self) -> Option<SystemTime> {
+    fn get_startup_time(&self) -> Option<SystemTime>  {
         todo!()
     }
 
-    fn add_node<'life0, 'async_trait>(
-        &'life0 mut self,
-        node: GraphNode,
-        options: Option<Map<String, Value>>,
-    ) -> core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<NetworkProcess<Self::ComponentType>, String>>
-                + core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn add_node(&mut self,node:GraphNode,options:Option<Map<String,Value> > ,) -> Result<NetworkProcess<T> ,String>  {
         todo!()
     }
 
-    fn remove_node<'life0, 'async_trait>(
-        &'life0 mut self,
-        node: GraphNode,
-    ) -> core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<(), String>>
-                + core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn remove_node(&mut self,node:GraphNode) -> Result<(),String>  {
         todo!()
     }
 
-    fn rename_node<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 mut self,
-        old_id: &'life1 str,
-        new_id: &'life2 str,
-    ) -> core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<(), String>>
-                + core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn rename_node(&mut self,old_id: &str,new_id: &str) -> Result<(),String>  {
         todo!()
     }
 
-    fn get_node(&self, id: &str) -> Option<NetworkProcess<Self::ComponentType>> {
+    fn get_node(&self,id: &str) -> Option<NetworkProcess<T> >  {
         todo!()
     }
 
-    fn connect<'life0, 'async_trait>(
-        &'life0 self,
-    ) -> core::pin::Pin<
-        Box<dyn core::future::Future<Output = ()> + core::marker::Send + 'async_trait>,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn connect(&self) {
         todo!()
     }
 
-    fn add_edge<'life0, 'async_trait>(
-        &'life0 mut self,
-        edge: GraphEdge,
-        options: Option<Map<String, Value>>,
-    ) -> core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<Arc<Mutex<InternalSocket>>, String>>
-                + core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn add_edge(&mut self,edge:GraphEdge,options:Option<Map<String,Value> > ,) ->  Result<Arc<Mutex<InternalSocket> > ,String> {
         todo!()
     }
 
-    fn remove_edge<'life0, 'async_trait>(
-        &'life0 mut self,
-        node: GraphEdge,
-    ) -> core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<(), String>>
-                + core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn remove_edge(&mut self,node:GraphEdge) -> Result<(),String>  {
         todo!()
     }
 
-    fn add_initial<'life0, 'async_trait>(
-        &'life0 mut self,
-        initializer: GraphIIP,
-        options: Option<Map<String, Value>>,
-    ) -> core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<Arc<Mutex<InternalSocket>>, String>>
-                + core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn add_initial(&mut self,initializer:GraphIIP,options:Option<Map<String,Value> > ,) -> Result<Arc<Mutex<InternalSocket> > ,String>  {
         todo!()
     }
 
-    fn remove_initial<'life0, 'async_trait>(
-        &'life0 mut self,
-        initializer: GraphIIP,
-    ) -> core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<(), String>>
-                + core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn remove_initial(&mut self,initializer:GraphIIP) -> Result<(),String> {
         todo!()
     }
 
-    fn send_defaults<'life0, 'async_trait>(
-        &'life0 self,
-    ) -> core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<(), String>>
-                + core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    fn send_defaults(&self) -> Result<(),String> {
         todo!()
     }
 
-    fn start(&self) -> Result<(), String> {
+    fn start(&self) -> Result<(),String>  {
         todo!()
     }
 
-    fn stop(&self) -> Result<(), String> {
+    fn stop(&self) -> Result<(),String>  {
         todo!()
     }
 
@@ -400,7 +360,7 @@ where
         todo!()
     }
 
-    fn set_debug(&mut self, active: bool) {
+    fn set_debug(&mut self,active:bool) {
         todo!()
     }
 }
