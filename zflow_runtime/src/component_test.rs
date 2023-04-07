@@ -4,7 +4,6 @@ mod tests {
     use futures::executor::block_on;
     use serde_json::json;
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
     use std::thread::sleep;
     use std::time::Duration;
 
@@ -16,7 +15,7 @@ mod tests {
         },
         ip::IPType,
         port::{BasePort, InPort, OutPort, PortOptions},
-        process::{ProcessError, ProcessInput, ProcessOutput, ProcessResult},
+        process::{ProcessError, ProcessResult},
         sockets::InternalSocket,
     };
 
@@ -123,7 +122,7 @@ mod tests {
                                 InPort::new(PortOptions::default()),
                             ),
                         ]),
-                        process: Box::new(|context, input, output| {
+                        process: Box::new(|context, mut input, mut output| {
                             if input.has_data("in") {
                                 if let Some(packet) = input.get("in") {
                                     match &packet.datatype {
@@ -200,7 +199,7 @@ mod tests {
                                 ..PortOptions::default()
                             }),
                         )]),
-                        process: Box::new(|context, input, output| {
+                        process: Box::new(|context, mut input, mut output| {
                             if let Some(packet) = input.get_data("in") {
                                 assert_eq!(packet, json!("some-data"));
                                 assert!(output.error(&ProcessError("".to_string())).is_err());
@@ -244,7 +243,7 @@ mod tests {
                                 ..PortOptions::default()
                             }),
                         )]),
-                        process: Box::new(|context, input, output| {
+                        process: Box::new(|context, mut input, output| {
                             if let Some(packet) = input.get_data("in") {
                                 assert_eq!(packet, json!("some-data"));
                             }
@@ -256,7 +255,8 @@ mod tests {
                                 .clone()
                                 .try_lock()
                                 .unwrap()
-                                .error(ProcessError(format!("Some Error")), vec![], None, None).is_ok());
+                                .error(ProcessError(format!("Some Error")), vec![], None, None)
+                                .is_ok());
 
                             Ok(ProcessResult::default())
                         }),
@@ -338,7 +338,7 @@ mod tests {
                     let mut c = Component::new(ComponentOptions {
                         in_ports: HashMap::from([("in".to_string(), InPort::default())]),
                         out_ports: HashMap::from([("out".to_string(), OutPort::default())]),
-                        process: Box::new(|context, input, output| {
+                        process: Box::new(|context, mut input, mut output| {
                             output.send_done(&input.get("in").expect("expected inport data"));
                             Ok(ProcessResult::default())
                         }),
@@ -396,35 +396,40 @@ mod tests {
                     );
                 }
                 'then_it_should_support_substreams: {
-                    let mut str = "".to_string();
+                    let mut str = std::sync::Arc::new(std::sync::Mutex::new("".to_string()));
                     let mut level = 0;
                     let mut c = Component::new(ComponentOptions {
                         forward_brackets: HashMap::new(),
                         in_ports: HashMap::from([("tags".to_string(), InPort::default())]),
                         out_ports: HashMap::from([("html".to_string(), OutPort::default())]),
-                        process: Box::new(move |context, input, output| {
-                            let ip_data = input
-                                .get("tags")
-                                .expect("expected inport data")
-                                .datatype;
-
-                            match ip_data {
-                                IPType::OpenBracket(data) => {
-                                    str.push_str(format!("<{}>", data.as_str().unwrap()).as_str());
-                                    level += 1;
-                                }
-                                IPType::Data(data) => {
-                                    str.push_str(format!("{}", data.as_str().unwrap()).as_str());
-                                }
-                                IPType::CloseBracket(data) => {
-                                    str.push_str(format!("</{}>", data.as_str().unwrap()).as_str());
-                                    level -= 1;
-                                    if level <= 0 {
-                                        output.send(&("html", json!(str.clone())));
-                                        str.push_str("");
+                        process: Box::new(move |context, mut input, mut output| {
+                            let mut str = str.clone();
+                            let ip_data = input.get("tags").expect("expected inport data").datatype;
+                            if let Ok(str) = str.clone().try_lock().as_mut() {
+                                match ip_data {
+                                    IPType::OpenBracket(data) => {
+                                        str.push_str(
+                                            format!("<{}>", data.as_str().unwrap()).as_str(),
+                                        );
+                                        level += 1;
                                     }
+                                    IPType::Data(data) => {
+                                        str.push_str(
+                                            format!("{}", data.as_str().unwrap()).as_str(),
+                                        );
+                                    }
+                                    IPType::CloseBracket(data) => {
+                                        str.push_str(
+                                            format!("</{}>", data.as_str().unwrap()).as_str(),
+                                        );
+                                        level -= 1;
+                                        if level <= 0 {
+                                            output.send(&("html", json!(*str.clone())));
+                                            str.push_str("");
+                                        }
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                             output.done(None);
                             Ok(ProcessResult::default())
@@ -435,7 +440,7 @@ mod tests {
                     let mut d = Component::new(ComponentOptions {
                         in_ports: HashMap::from([("bang".to_string(), InPort::default())]),
                         out_ports: HashMap::from([("tags".to_string(), OutPort::default())]),
-                        process: Box::new(|context, input, output| {
+                        process: Box::new(|context, mut input, mut output| {
                             if let Some(_bang) = input.get("bang") {
                                 output.send(&("tags", IPType::OpenBracket(json!("p"))));
                                 output.send(&("tags", IPType::OpenBracket(json!("em"))));
@@ -523,7 +528,7 @@ mod tests {
                                 ..OutPort::default()
                             },
                         )]),
-                        process: Box::new(move |context, input, output| {
+                        process: Box::new(move |context, mut input, mut output| {
                             if let Some(packet) = input.get("foo") {
                                 let mut ip = packet;
                                 ip.index = if ip.datatype == IPType::Data(json!("first")) {

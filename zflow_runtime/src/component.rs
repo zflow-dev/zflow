@@ -2,17 +2,21 @@ use std::{
     any::Any,
     collections::{HashMap, VecDeque},
     fmt::Debug,
+    pin::Pin,
     sync::{Arc, Mutex},
     thread,
 };
 
 use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
 use fp_rust::{common::SubscriptionFunc, publisher::Publisher};
+use futures::executor::{block_on, ThreadPool};
 use log::{log, Level};
+use poll_promise::Promise;
 use serde_json::{json, Value};
 
 use crate::{
     ip::{IPOptions, IPType, IP},
+    loader::ComponentLoader,
     port::{
         normalize_port_name, BasePort, InPort, InPorts, InPortsOptions, OutPort, OutPorts,
         OutPortsOptions, PortsTrait,
@@ -34,6 +38,7 @@ pub enum ComponentEvent {
     Activate(usize),
     Deactivate(usize),
     Start,
+    Ready,
     End,
 }
 
@@ -62,11 +67,13 @@ where
     type Handle;
     type Comp;
 
+    fn set_loader(&mut self, loader: ComponentLoader<Self::Comp>);
     fn get_name(&self) -> Option<String>;
-    fn set_name(&mut self, name:String);
+    fn set_name(&mut self, name: String);
     fn get_node_id(&self) -> String;
     fn set_node_id(&mut self, id: String);
     fn get_description(&self) -> String;
+    fn set_description(&mut self, desc: String);
     fn get_icon(&self) -> String;
     fn set_icon(&mut self, icon: String);
     fn get_base_dir(&self) -> String;
@@ -354,7 +361,7 @@ where
                 .bracket_closing_before.clone()
                 .iter()
                 .for_each(|context| {
-                    if let Some(context) = context.clone().try_lock().ok() {
+                    if let Ok(context) = context.clone().try_lock() {
                         log!(
                             Level::Debug,
                             "zflow::component::bracket => {} closeBracket-A from '{}' to {:?}: '{:?}'",
@@ -532,7 +539,7 @@ where
                 .bracket_closing_after
                 .iter()
                 .for_each(|context| {
-                    if let Some(context) = context.clone().try_lock().ok() {
+                    if let Ok(context) = context.clone().try_lock() {
                         log!(
                         Level::Debug,
                         "zflow::component::bracket => {} closeBracket-B from '{}' to {:?}: '{:?}'",
@@ -845,7 +852,7 @@ where
     fn is_started(&self) -> bool;
     fn is_subgraph(&self) -> bool;
     fn is_ready(&self) -> bool;
-    fn set_ready(&mut self, ready:bool);
+    fn set_ready(&mut self, ready: bool);
 
     fn get_teardown_function(
         &self,
@@ -929,9 +936,6 @@ where
         log!(Level::Error, "{:?}", e);
         Err(e)
     }
-
-    fn to_dyn(&self) -> &dyn Any;
-    fn to_dyn_mut(&mut self) -> &mut dyn Any;
 }
 
 pub trait ComponentTrait:
@@ -1069,14 +1073,6 @@ impl BaseComponentTrait for Component {
         self.load = load
     }
 
-    fn to_dyn(&self) -> &dyn Any {
-        self as &dyn Any
-    }
-
-    fn to_dyn_mut(&mut self) -> &mut dyn Any {
-        self as &mut dyn Any
-    }
-
     fn get_icon(&self) -> String {
         self.icon.clone()
     }
@@ -1137,12 +1133,18 @@ impl BaseComponentTrait for Component {
         self.base_dir = dir;
     }
 
-    fn set_name(&mut self, name:String) {
+    fn set_name(&mut self, name: String) {
         self.component_name = Some(name);
     }
 
-    fn set_ready(&mut self, ready:bool) {
+    fn set_ready(&mut self, ready: bool) {}
 
+    fn set_loader(&mut self, loader: ComponentLoader<Self::Comp>) {
+        // Only works for graph component
+    }
+
+    fn set_description(&mut self, desc: String) {
+        self.description = desc;
     }
 }
 
@@ -1348,13 +1350,15 @@ impl Component {
         let mut result = Arc::new(Mutex::new(ProcessResult::<T>::default()));
         let mut inports = InPorts::default();
         let mut outports = OutPorts::default();
+        let mut handle = None;
+        let mut component_name = None;
 
         if let Ok(component) = _component.clone().try_lock().as_mut() {
             if !port.options.triggering {
                 // If port is non-triggering, we can skip the process function call
                 return;
             }
-
+            component_name = component.get_name();
             match ip.datatype {
                 IPType::OpenBracket(_) => {
                     if !component.get_auto_ordering() && !component.get_ordered() {
@@ -1429,9 +1433,7 @@ impl Component {
                                         .pop()
                                         .as_mut()
                                     {
-                                        if let Some(bracket_ctx) =
-                                            _bracket_ctx.try_lock().ok().as_mut()
-                                        {
+                                        if let Ok(bracket_ctx) = _bracket_ctx.try_lock().as_mut() {
                                             bracket_ctx.close_ip = Some(ip.clone());
                                             log!(
                                         Level::Debug,
@@ -1467,11 +1469,11 @@ impl Component {
 
             inports = component.get_inports();
             outports = component.get_outports();
+            handle = component.get_handle();
         }
 
         // We have to free the component's mutex, so that we can use it in the process function
 
-        // Prepare the input/output pair
         let context = Arc::new(Mutex::new(ProcessContext::<T> {
             ip: ip.clone(),
             result: result.clone(),
@@ -1484,7 +1486,14 @@ impl Component {
             scope: None,
             component: _component.clone(),
         }));
-        let input = &mut ProcessInput::<T> {
+
+        // Call the processing function
+        if handle.is_none() {
+            return;
+        }
+
+         // Prepare the input/output pair
+        let input = ProcessInput::<T> {
             in_ports: inports,
             context: context.clone(),
             component: _component.clone(),
@@ -1493,7 +1502,7 @@ impl Component {
             scope: None,
             result: result.clone(),
         };
-        let output = &mut ProcessOutput::<T> {
+        let output = ProcessOutput::<T> {
             out_ports: outports,
             context: context.clone(),
             component: _component.clone(),
@@ -1502,32 +1511,21 @@ impl Component {
             result: result.clone(),
         };
 
-        // Call the processing function
-        let handle = _component
-            .clone()
-            .try_lock()
-            .as_mut()
-            .expect("expected component instance")
-            .get_handle();
-
-        if handle.is_none() {
-            return;
-        }
-
-        let binding = handle.unwrap();
-        let mut binding = binding.try_lock();
-        let handle_binding = binding.as_mut().unwrap();
-        let res = (handle_binding)(context.clone(), input, output);
-        if res.is_ok() {
-            output.send_done(&res.ok());
-        } else {
-            if res.clone().err().is_some() {
-                output.done(Some(res.err().as_ref().unwrap()));
+        let _context = context.clone();
+        if let Ok(handle_binding) = handle.unwrap().clone().try_lock().as_mut() {
+            let res = (handle_binding)(_context.clone(), input, output.clone());
+            if res.is_ok() {
+                output.clone().send_done(&res.ok());
             } else {
-                output.done(None);
+                if res.clone().err().is_some() {
+                    output.clone().done(Some(res.err().as_ref().unwrap()));
+                } else {
+                    output.clone().done(None);
+                }
             }
         }
 
+        let _component =  _component.clone();
         if let Ok(component) = _component.clone().try_lock().as_mut() {
             if context.clone().try_lock().unwrap().activated {
                 return;
@@ -1572,6 +1570,14 @@ pub struct ComponentOptions<T: ComponentTrait> {
     /// Bracket forwarding rules. By default we forward
     pub forward_brackets: HashMap<String, Vec<String>>,
     pub process: Box<ProcessFunc<T>>,
+}
+
+pub async fn default_process<T: ComponentTrait>(
+    context: Arc<Mutex<ProcessContext<T>>>,
+    input: Arc<&mut ProcessInput<T>>,
+    output: Arc<&mut ProcessOutput<T>>,
+) -> Pin<Box<Result<ProcessResult<T>, ProcessError>>> {
+    Box::pin(Ok(ProcessResult::<T>::default()))
 }
 
 impl<T> Default for ComponentOptions<T>

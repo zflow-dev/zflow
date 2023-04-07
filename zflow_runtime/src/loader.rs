@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use async_trait::async_trait;
+
 use poll_promise::Promise;
 use regex::Regex;
 use serde_json::Value;
@@ -13,14 +13,14 @@ use zflow::graph::graph::Graph;
 use crate::{
     component::{BaseComponentTrait, ComponentTrait},
     default_component_registry::DefaultRegistry,
-    graph_component::{GraphComponent, GraphComponentTrait},
+    graph_component::{GraphComponent},
 };
 use zflow::graph::types::GraphJson;
 
-#[async_trait]
+
 pub trait RuntimeRegistry<T>
 where
-    T: ComponentTrait + ?GraphComponentTrait,
+    T: ComponentTrait
 {
     fn set_source(
         &mut self,
@@ -55,7 +55,7 @@ pub trait ModuleComponent<T: BaseComponentTrait>: Sync + Send {
 type ComponentFactory<T> =
     Box<dyn Fn(Option<HashMap<String, Value>>) -> Result<Arc<Mutex<T>>, String> + Send + Sync>;
 
-pub trait ComponentDefinition<T: ComponentTrait + ?GraphComponentTrait>: Send {}
+pub trait ComponentDefinition<T: ComponentTrait >: Send {}
 
 impl<T: ComponentTrait> ComponentDefinition<T> for ComponentFactory<T> {}
 impl<T: ComponentTrait> ComponentDefinition<T> for Box<dyn ModuleComponent<T>> {}
@@ -79,7 +79,7 @@ pub struct ComponentLoaderOptions {
 /// them.
 
 #[derive(Clone)]
-pub struct ComponentLoader<T: ?GraphComponentTrait + ComponentTrait> {
+pub struct ComponentLoader<T: ComponentTrait > {
     pub(crate) components: ComponentList<T>,
     pub options: ComponentLoaderOptions,
     pub base_dir: String,
@@ -100,7 +100,7 @@ pub struct ComponentLoader<T: ?GraphComponentTrait + ComponentTrait> {
     pub registry: Arc<Mutex<dyn RuntimeRegistry<T> + Send>>,
 }
 
-impl<T: GraphComponentTrait> ComponentLoader<T> {
+impl<T: ComponentTrait > ComponentLoader<T> {
     pub fn new(
         base_dir: &str,
         options: ComponentLoaderOptions,
@@ -177,9 +177,8 @@ impl<T: GraphComponentTrait> ComponentLoader<T> {
     pub fn load(
         &mut self,
         name: &str,
-        // registry: (impl RuntimeRegistry<T> + Send + Sync),
         metadata: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<T>>, String> {
+    ) -> Result<Arc<Mutex<T>>, String>  {
         let mut component = None;
 
         if !self.ready {
@@ -268,13 +267,13 @@ impl<T: GraphComponentTrait> ComponentLoader<T> {
         name: &str,
         graph_json: GraphJson,
         metadata: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<T>>, String> {
+    ) -> Result<Arc<Mutex<T>>, String>    {
         let binding = self.components.clone();
         let binding = binding
             .try_lock()
             .expect("Expected component list container");
         let graph_component = binding
-            .get(name)
+            .get("Graph")
             .expect("Expected Graph in components list");
         let graph = self
             .create_component(name, graph_component as &dyn Any, metadata)?
@@ -285,8 +284,7 @@ impl<T: GraphComponentTrait> ComponentLoader<T> {
             g.get_inports_mut().ports.remove("graph");
             self.set_icon(name, graph.clone());
 
-            GraphComponent::setup_graph(graph.clone(), &graph_json)
-                .expect("Expected graph setup to be executed");
+            GraphComponent::setup_graph(graph.clone(), &graph_json)?;
             return Ok(graph.clone());
         }
 

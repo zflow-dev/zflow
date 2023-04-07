@@ -1,8 +1,10 @@
 use core::panic;
 use std::any::Any;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 
+use futures::Future;
 use log::{log, Level};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -18,14 +20,12 @@ pub type ValidatorFn = Box<dyn (FnMut(IP) -> bool) + Send + Sync>;
 #[derive(Debug, Clone, Default)]
 pub struct ProcessError(pub String);
 
-pub type ProcessFunc<T> = dyn FnMut(
-        Arc<Mutex<ProcessContext<T>>>,
-        &mut ProcessInput<T>,
-        &mut ProcessOutput<T>,
-    ) -> Result<ProcessResult<T>, ProcessError>
-    + Sync
-    + Send
-    + 'static;
+pub type ProcessFunc<T> = dyn (FnMut(
+    Arc<Mutex<ProcessContext<T>>>,
+    ProcessInput<T>,
+    ProcessOutput<T>,
+) ->Result<ProcessResult<T>, ProcessError>)
++ Sync + Send;
 
 #[derive(Clone, Default)]
 pub struct ProcessResult<T: ComponentTrait> {
@@ -98,13 +98,13 @@ where
 
     /// When preconditions are met, set component state to `activated`
     pub fn activate(&mut self) {
-        if let Some(context) = self.context.clone().try_lock().ok() {
+        if let Ok(context) = self.context.clone().try_lock() {
             if context.activated {
                 return;
             }
         }
 
-        if let Some(component) = self.component.clone().try_lock().as_mut().ok() {
+        if let Ok(component) = self.component.clone().try_lock().as_mut() {
                 if component.is_ordered() {
                     // We're handling packets in order. Set the result as non-resolved
                     // so that it can be send when the order comes up
@@ -237,7 +237,7 @@ where
                 }
 
                 let idx = idx.unwrap().parse::<usize>().ok();
-                if let Some(component) = self.component.clone().try_lock().as_mut().ok() {
+                if let Ok(component) = self.component.clone().try_lock().as_mut() {
                     if component.is_forwarding_inport(&port_name) {
                         return self.get_for_forwarding(port_name, idx);
                     } else {
@@ -247,7 +247,7 @@ where
             }
         }
 
-        if let Some(component) = self.component.clone().try_lock().as_mut().ok() {
+        if let Ok(component) = self.component.clone().try_lock().as_mut() {
             if component.is_forwarding_inport(&port_name) {
                 return self.get_for_forwarding(port_name, None);
             }
@@ -327,7 +327,7 @@ where
                 match ip.clone().datatype {
                     IPType::OpenBracket(_) => {
                         // Bracket openings need to go to bracket context
-                        if let Some(component) = self.component.clone().try_lock().as_mut().ok() {
+                        if let Ok(component) = self.component.clone().try_lock().as_mut() {
                             if let Some(contexts) = component.get_bracket_context(
                                 "in",
                                 name.clone(),
@@ -345,8 +345,8 @@ where
                     }
                     IPType::CloseBracket(_) => {
                         // Bracket closings before data should remove bracket context
-                        if let Some(res) = self.result.clone().try_lock().as_mut().ok() {
-                            if let Some(component) = self.component.clone().try_lock().as_mut().ok()
+                        if let Ok(res) = self.result.clone().try_lock().as_mut() {
+                            if let Ok(component) = self.component.clone().try_lock().as_mut()
                             {
                                 if let Some(contexts) = component.get_bracket_context(
                                     "in",
@@ -368,8 +368,8 @@ where
             });
             // Add current bracket context to the result so that when we send
             // to ports we can also add the surrounding brackets
-            if let Some(res) = self.result.clone().try_lock().as_mut().ok() {
-                if let Some(component) = self.component.clone().try_lock().as_mut().ok() {
+            if let Ok(res) = self.result.clone().try_lock().as_mut() {
+                if let Ok(component) = self.component.clone().try_lock().as_mut() {
                     if let Some(contexts) = component.get_bracket_context(
                         "in",
                         name.clone(),

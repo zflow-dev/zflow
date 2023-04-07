@@ -6,6 +6,7 @@ use std::{
 };
 
 
+use fp_rust::publisher::Publisher;
 use serde_json::{Map, Value};
 use zflow::graph::{
     graph::Graph,
@@ -14,7 +15,6 @@ use zflow::graph::{
 
 use crate::{
     component::{BaseComponentTrait, ComponentTrait},
-    graph_component::GraphComponentTrait,
     loader::ComponentLoader,
     sockets::InternalSocket,
 };
@@ -51,7 +51,7 @@ pub struct NetworkOptions {}
 pub trait BaseNetwork<T:ComponentTrait>
 {
 
-
+    fn get_publisher(&self) -> Arc<Mutex<Publisher<NetworkEvent>>>;
     fn is_started(&self) -> bool;
     fn is_stopped(&self) -> bool;
     fn is_running(&self) -> bool {
@@ -162,6 +162,7 @@ pub trait BaseNetwork<T:ComponentTrait>
 
     fn get_debug(&self) -> bool;
     fn set_debug(&mut self, active: bool);
+    fn get_graph(&self) -> Graph;
 }
 
 pub trait NetworkSubsciption<'a,C:ComponentTrait, T: BaseNetwork<C>>
@@ -194,7 +195,7 @@ pub trait NetworkSubsciption<'a,C:ComponentTrait, T: BaseNetwork<C>>
 /// instantiate all the necessary processes from the designated
 /// components, attach sockets between them, and handle the sending
 /// of Initial Information Packets.
-pub struct Network<T: ComponentTrait + GraphComponentTrait> {
+pub struct Network<T: ComponentTrait> {
     pub options: NetworkOptions,
     /// Processes contains all the instantiated components for this network
     pub processes: HashMap<String, NetworkProcess<T>>,
@@ -212,9 +213,10 @@ pub struct Network<T: ComponentTrait + GraphComponentTrait> {
     pub debug: bool,
     pub event_buffer: Vec<NetworkEvent>,
     pub loader: Option<ComponentLoader<T>>,
+    pub publisher: Arc<Mutex<Publisher<NetworkEvent>>>,
 }
 
-impl<T:ComponentTrait + GraphComponentTrait> Network<T> {
+impl<T:ComponentTrait> Network<T> {
     pub fn new(graph:Graph, options: NetworkOptions) -> Self {
         Self {
             options,
@@ -228,14 +230,15 @@ impl<T:ComponentTrait + GraphComponentTrait> Network<T> {
             stopped: false,
             debug: false,
             event_buffer: Vec::new(),
-            loader: None
+            loader: None,
+            publisher: Arc::new(Mutex::new(Publisher::new()))
         }
     }
 }
 
 impl<T> BaseNetwork<T> for Network<T>
 where
-    T: ComponentTrait + GraphComponentTrait,
+    T: ComponentTrait
 {
 
 
@@ -362,5 +365,13 @@ where
 
     fn set_debug(&mut self,active:bool) {
         todo!()
+    }
+
+    fn get_publisher(&self) -> Arc<Mutex<Publisher<NetworkEvent>>> {
+        self.publisher.clone()
+    }
+
+    fn get_graph(&self) -> Graph {
+        self.graph.clone()
     }
 }

@@ -1,17 +1,18 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::{Arc, Mutex}};
+
 
 use poll_promise::Promise;
 
-use crate::{loader::{RuntimeRegistry, ComponentLoader, ComponentDefinition, ComponentSource},graph_component::GraphComponentTrait, component::ComponentTrait};
+use crate::{loader::{RuntimeRegistry, ComponentLoader, ComponentDefinition, ComponentSource}, component::ComponentTrait};
 
 #[derive(Default, Clone)]
-pub struct DefaultRegistry<T:ComponentTrait + ?GraphComponentTrait> {
+pub struct DefaultRegistry<T:ComponentTrait> {
     _data:T
 }
 
-unsafe impl<T: ComponentTrait + ?GraphComponentTrait> Send for DefaultRegistry<T>{}
+unsafe impl<T: ComponentTrait> Send for DefaultRegistry<T>{}
 
-impl<T:ComponentTrait + ?GraphComponentTrait> RuntimeRegistry<T> for DefaultRegistry<T>{
+impl<T:ComponentTrait> RuntimeRegistry<T> for DefaultRegistry<T>{
     fn set_source(&mut self,namespace: &str,component_name: &str,source: ComponentSource,) -> Result<(),String>  {
         todo!()
     }
@@ -28,7 +29,7 @@ impl<T:ComponentTrait + ?GraphComponentTrait> RuntimeRegistry<T> for DefaultRegi
         todo!()
     }
 
-    fn dynamic_load(&mut self, component_name: &str, path: &str) -> Result<std::sync::Arc<std::sync::Mutex<T>>, String> {
+    fn dynamic_load(&mut self, component_name: &str, path: &str) -> Result<Arc<Mutex<T>>, String> {
         todo!()
     }
 }

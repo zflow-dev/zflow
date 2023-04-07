@@ -712,13 +712,15 @@ impl InPort {
         initial: bool,
     ) -> Option<IP> {
         let buf = self.get_buffer(scope, index, initial);
-        if let Some(buf) = buf {
+        if let Some(buf) = buf.clone() {
             if let Ok(buf) = buf.clone().try_lock().as_mut() {
                 if self.options.control {
                     return buf.get(buf.len() - 1).cloned();
                 }
-
-                return Some(buf.remove(0));
+                if buf.len() > 0 {
+                    return Some(buf.remove(0));
+                }
+                return None
             }
         }
         None
@@ -1072,7 +1074,7 @@ impl OutPort {
         sockets.iter().for_each(|socket| {
             let socket = socket.clone();
             futures.push(Box::pin(async move {
-                if let Ok(socket) = socket.try_lock().as_mut().as_mut() {
+                if let Ok(socket) = socket.try_lock().as_mut() {
                     socket.connect()?;
                 }
                 Ok(())
@@ -1119,7 +1121,7 @@ impl OutPort {
             let socket = socket.clone();
             let ip = ip.clone();
             futures.push(Box::pin(async move {
-                if let Ok(socket) = socket.try_lock().as_mut().as_mut() {
+                if let Ok(socket) = socket.try_lock().as_mut() {
                     if let Ok(_) = socket.send(Some(&ip)).await {
                     } else {
                         return Err("Socket Send".to_string());
@@ -1140,7 +1142,7 @@ impl OutPort {
             let socket = socket.clone();
             let group = group.clone();
             futures.push(Box::pin(async move {
-                if let Ok(socket) = socket.try_lock().as_mut().as_mut() {
+                if let Ok(socket) = socket.try_lock().as_mut() {
                     socket.begin_group(group)?;
                 }
                 Ok(())
