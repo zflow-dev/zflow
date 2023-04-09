@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 
+use fp_rust::handler::HandlerThread;
 use futures::Future;
 use log::{log, Level};
 use serde::Deserialize;
@@ -20,10 +21,34 @@ pub type ValidatorFn = Box<dyn (FnMut(IP) -> bool) + Send + Sync>;
 #[derive(Debug, Clone, Default)]
 pub struct ProcessError(pub String);
 
+
+#[derive(Clone, Default)]
+pub struct ProcessHandle<T:ComponentTrait> {
+    pub (crate) context:Arc<Mutex<ProcessContext<T>>>,
+    pub (crate) handler_thread:Arc<Mutex<HandlerThread>>,
+    pub (crate) input: ProcessInput<T>,
+    pub (crate) output: ProcessOutput<T>,
+}
+
+impl<T:ComponentTrait> ProcessHandle<T> {
+    pub fn background_thread(&mut self) ->  Arc<Mutex<HandlerThread>> {
+        self.handler_thread.clone()
+    }
+    pub fn context(&mut self) -> Arc<Mutex<ProcessContext<T>>> {
+        self.context.clone()
+    }
+
+    pub fn input(&mut self) -> ProcessInput<T> {
+        self.input.clone()
+    }
+
+    pub fn output(&mut self) -> ProcessOutput<T> {
+        self.output.clone()
+    }
+}
+
 pub type ProcessFunc<T> = dyn (FnMut(
-    Arc<Mutex<ProcessContext<T>>>,
-    ProcessInput<T>,
-    ProcessOutput<T>,
+    Arc<Mutex<ProcessHandle<T>>>,
 ) ->Result<ProcessResult<T>, ProcessError>)
 + Sync + Send;
 
@@ -53,7 +78,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ProcessInput<T: ComponentTrait> {
     pub in_ports: InPorts,
     pub context: Arc<Mutex<ProcessContext<T>>>,
@@ -394,7 +419,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ProcessOutput<T: ComponentTrait> {
     pub out_ports: OutPorts,
     pub context: Arc<Mutex<ProcessContext<T>>>,

@@ -8,10 +8,12 @@ use std::{
 };
 
 use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
-use fp_rust::{common::SubscriptionFunc, publisher::Publisher};
-use futures::executor::{block_on, ThreadPool};
+use fp_rust::{
+    common::SubscriptionFunc,
+    handler::{Handler, HandlerThread},
+    publisher::Publisher,
+};
 use log::{log, Level};
-use poll_promise::Promise;
 use serde_json::{json, Value};
 
 use crate::{
@@ -22,7 +24,8 @@ use crate::{
         OutPortsOptions, PortsTrait,
     },
     process::{
-        ProcessContext, ProcessError, ProcessFunc, ProcessInput, ProcessOutput, ProcessResult,
+        ProcessContext, ProcessError, ProcessFunc, ProcessHandle, ProcessInput, ProcessOutput,
+        ProcessResult,
     },
     sockets::SocketEvent,
 };
@@ -46,17 +49,20 @@ pub trait ComponentCallbacks {
     /// ### Setup
     /// Provide the setUp function to be called for component-specific initialization.
     /// Called at network start-up.
-    fn setup(&mut self, setup_fn: impl FnMut() -> Result<(), String> + Send + Sync + 'static);
+    fn setup(
+        &mut self,
+        setup_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static,
+    );
 
     /// ### Teardown
     /// Provide the setUp function to be called for component-specific cleanup.
     /// Called at network shutdown.
-    fn teardown(&mut self, teardown_fn: impl FnMut() -> Result<(), String> + Send + Sync + 'static);
+    fn teardown(
+        &mut self,
+        teardown_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static,
+    );
 
-    fn on(
-        &self,
-        callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static,
-    ) -> Arc<SubscriptionFunc<ComponentEvent>>;
+    fn on(&mut self, callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static);
 }
 
 /// Base Component trait that provides a way to instantiate and extend ZFLow components
@@ -80,6 +86,7 @@ where
     fn set_base_dir(&mut self, dir: String);
     fn get_handle(&self) -> Option<Self::Handle>;
     fn set_handle(&mut self, handle: Box<ProcessFunc<Self::Comp>>);
+    fn get_handler_thread(&self) -> Arc<Mutex<HandlerThread>>;
 
     fn prepare_forwarding(&mut self) {
         self.get_forward_brackets().keys().for_each(|inport| {
@@ -829,25 +836,6 @@ where
             }
         }
     }
-
-    /// ### Start
-    ///
-    /// Called when network starts. This calls the setUp
-    /// method and sets the component to a started state.
-    fn start(&mut self) -> Result<(), String> {
-        if let Some(setup_fn) = &self.get_setup_function() {
-            if let Ok(setup_fn) = setup_fn.clone().try_lock().as_mut() {
-                (setup_fn)()?;
-            }
-        }
-        self.set_started(true);
-        self.get_publisher()
-            .clone()
-            .try_lock()
-            .unwrap()
-            .publish(ComponentEvent::Start);
-        Ok(())
-    }
     fn set_started(&mut self, started: bool);
     fn is_started(&self) -> bool;
     fn is_subgraph(&self) -> bool;
@@ -856,11 +844,11 @@ where
 
     fn get_teardown_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>;
+    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>;
 
     fn get_setup_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>;
+    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>;
 
     /// Convenience method to find all the event subscribers for this component: Used internally
     fn get_subscribers(&self) -> Vec<Arc<SubscriptionFunc<ComponentEvent>>>;
@@ -976,9 +964,14 @@ pub struct Component {
     pub load: usize,
     pub(crate) handle: Option<Arc<Mutex<ProcessFunc<Self>>>>,
     pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
+    pub(crate) internal_thread: Arc<Mutex<HandlerThread>>,
     pub auto_ordering: bool,
-    setup_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
-    teardown_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
+    setup_fn: Option<
+        Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>,
+    >,
+    teardown_fn: Option<
+        Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>,
+    >,
     tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
 }
 
@@ -1079,13 +1072,15 @@ impl BaseComponentTrait for Component {
 
     fn get_teardown_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>> {
+    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>
+    {
         self.teardown_fn.clone()
     }
 
     fn get_setup_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>> {
+    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>
+    {
         self.setup_fn.clone()
     }
 
@@ -1146,13 +1141,20 @@ impl BaseComponentTrait for Component {
     fn set_description(&mut self, desc: String) {
         self.description = desc;
     }
+
+    fn get_handler_thread(&self) -> Arc<Mutex<HandlerThread>> {
+        self.internal_thread.clone()
+    }
 }
 
 impl ComponentCallbacks for Component {
     /// ### Setup
     /// Provide the setUp function to be called for component-specific initialization.
     /// Called at network start-up.
-    fn setup(&mut self, setup_fn: impl FnMut() -> Result<(), String> + Send + Sync + 'static) {
+    fn setup(
+        &mut self,
+        setup_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static,
+    ) {
         self.setup_fn = Some(Arc::new(Mutex::new(setup_fn)));
     }
 
@@ -1161,17 +1163,15 @@ impl ComponentCallbacks for Component {
     /// Called at network shutdown.
     fn teardown(
         &mut self,
-        teardown_fn: impl FnMut() -> Result<(), String> + Send + Sync + 'static,
+        teardown_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static,
     ) {
         self.teardown_fn = Some(Arc::new(Mutex::new(teardown_fn)));
     }
 
     /// Subscribe to component's events
-    fn on(
-        &self,
-        callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static,
-    ) -> Arc<SubscriptionFunc<ComponentEvent>> {
-        self.bus.clone().try_lock().unwrap().subscribe_fn(callback)
+    fn on(&mut self, callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static) {
+        self.tracked_signals
+            .push(self.bus.clone().try_lock().unwrap().subscribe_fn(callback));
     }
 }
 
@@ -1196,6 +1196,7 @@ impl Default for Component {
             load: Default::default(),
             handle: None,
             bus: Default::default(),
+            internal_thread: Arc::new(Mutex::new(HandlerThread::default())),
             auto_ordering: Default::default(),
             setup_fn: Default::default(),
             teardown_fn: Default::default(),
@@ -1233,6 +1234,7 @@ impl Debug for Component {
 
 impl Component {
     pub fn new(options: ComponentOptions<Self>) -> Arc<Mutex<Self>> {
+        let bus_handle = HandlerThread::new_with_mutex();
         let component = Arc::new(Mutex::new(Self {
             out_ports: OutPorts::new(OutPortsOptions {
                 ports: options.out_ports,
@@ -1256,7 +1258,10 @@ impl Component {
             handle: None,
             auto_ordering: false,
             node_id: String::from(""),
-            bus: Arc::new(Mutex::new(Publisher::new())),
+            bus: Arc::new(Mutex::new(Publisher::new_with_handlers(Some(
+                bus_handle.clone(),
+            )))),
+            internal_thread: bus_handle.clone(),
             setup_fn: None,
             teardown_fn: None,
             tracked_signals: Vec::new(),
@@ -1265,6 +1270,37 @@ impl Component {
         let _ = Self::link_process(component.clone(), options.process);
 
         component.clone()
+    }
+
+    /// ### Start
+    ///
+    /// Called when network starts. This calls the setUp
+    /// method and sets the component to a started state.
+    pub fn start<T>(_component: Arc<Mutex<T>>) -> Result<(), String>
+    where
+        T: ComponentTrait + 'static,
+    {
+        if let Some(setup_fn) = _component
+            .clone()
+            .try_lock()
+            .as_mut()
+            .unwrap()
+            .get_setup_function()
+        {
+            if let Ok(setup_fn) = setup_fn.clone().try_lock().as_mut() {
+                (setup_fn)(_component.clone())?;
+            }
+        }
+        if let Ok(component) = _component.clone().try_lock().as_mut() {
+            component.set_started(true);
+            component
+                .get_publisher()
+                .clone()
+                .try_lock()
+                .unwrap()
+                .publish(ComponentEvent::Start);
+        }
+        Ok(())
     }
 
     /// ### Shutdown
@@ -1276,16 +1312,29 @@ impl Component {
     where
         T: ComponentTrait + 'static,
     {
-        if let Ok(component) = _component.clone().try_lock().as_mut() {
-            // Tell the component that it is time to shut down
-            if let Some(teardown_fn) = component.get_teardown_function().clone() {
-                if let Ok(teardown_fn) = teardown_fn.clone().try_lock().as_mut() {
-                    (teardown_fn)()?;
-                }
+        // Tell the component that it is time to shut down
+        if let Some(teardown_fn) = _component
+            .clone()
+            .try_lock()
+            .as_mut()
+            .unwrap()
+            .get_teardown_function()
+            .clone()
+        {
+            if let Ok(teardown_fn) = teardown_fn.clone().try_lock().as_mut() {
+                (teardown_fn)(_component.clone())?;
             }
+        }
+        if let Ok(component) = _component.clone().try_lock().as_mut() {
             thread::spawn(move || {
                 if let Ok(component) = _component.clone().try_lock().as_mut() {
-                    while component.get_load() > 0 {
+                    while component.get_load() > 0
+                        || component
+                            .get_handler_thread()
+                            .try_lock()
+                            .unwrap()
+                            .is_alive()
+                    {
                         // Some in-flight processes, wait for them to finish
                     }
                     component.get_subscribers().iter().for_each(|signal| {
@@ -1343,7 +1392,7 @@ impl Component {
     /// be checked and component can do processing as needed.
     pub fn handle_ip<T>(_component: Arc<Mutex<T>>, ip: IP, mut port: InPort)
     where
-        T: ComponentTrait + Debug,
+        T: ComponentTrait,
     {
         // Initialize the result object for situations where output needs
         // to be queued to be kept in order
@@ -1351,14 +1400,14 @@ impl Component {
         let mut inports = InPorts::default();
         let mut outports = OutPorts::default();
         let mut handle = None;
-        let mut component_name = None;
+        let mut handler_thread = None;
 
         if let Ok(component) = _component.clone().try_lock().as_mut() {
             if !port.options.triggering {
                 // If port is non-triggering, we can skip the process function call
                 return;
             }
-            component_name = component.get_name();
+            // component_name = component.get_name();
             match ip.datatype {
                 IPType::OpenBracket(_) => {
                     if !component.get_auto_ordering() && !component.get_ordered() {
@@ -1470,6 +1519,7 @@ impl Component {
             inports = component.get_inports();
             outports = component.get_outports();
             handle = component.get_handle();
+            handler_thread = Some(component.get_handler_thread());
         }
 
         // We have to free the component's mutex, so that we can use it in the process function
@@ -1492,7 +1542,7 @@ impl Component {
             return;
         }
 
-         // Prepare the input/output pair
+        // Prepare the input/output pair
         let input = ProcessInput::<T> {
             in_ports: inports,
             context: context.clone(),
@@ -1513,7 +1563,12 @@ impl Component {
 
         let _context = context.clone();
         if let Ok(handle_binding) = handle.unwrap().clone().try_lock().as_mut() {
-            let res = (handle_binding)(_context.clone(), input, output.clone());
+            let res = (handle_binding)(Arc::new(Mutex::new(ProcessHandle {
+                context: _context.clone(),
+                handler_thread: handler_thread.clone().unwrap(),
+                input,
+                output: output.clone(),
+            })));
             if res.is_ok() {
                 output.clone().send_done(&res.ok());
             } else {
@@ -1525,7 +1580,7 @@ impl Component {
             }
         }
 
-        let _component =  _component.clone();
+        let _component = _component.clone();
         if let Ok(component) = _component.clone().try_lock().as_mut() {
             if context.clone().try_lock().unwrap().activated {
                 return;
@@ -1572,14 +1627,6 @@ pub struct ComponentOptions<T: ComponentTrait> {
     pub process: Box<ProcessFunc<T>>,
 }
 
-pub async fn default_process<T: ComponentTrait>(
-    context: Arc<Mutex<ProcessContext<T>>>,
-    input: Arc<&mut ProcessInput<T>>,
-    output: Arc<&mut ProcessOutput<T>>,
-) -> Pin<Box<Result<ProcessResult<T>, ProcessError>>> {
-    Box::pin(Ok(ProcessResult::<T>::default()))
-}
-
 impl<T> Default for ComponentOptions<T>
 where
     T: ComponentTrait,
@@ -1596,7 +1643,7 @@ where
                 "in".to_string(),
                 vec!["out".to_string(), "error".to_string()],
             )]),
-            process: Box::new(|_, __, ___| Ok(ProcessResult::default())),
+            process: Box::new(|_| Ok(ProcessResult::default())),
         }
     }
 }

@@ -17,7 +17,7 @@ use crate::{
 };
 use zflow::graph::types::GraphJson;
 
-
+/// Registry is a way to tell the Component Loader where to discover, load and execute custom components
 pub trait RuntimeRegistry<T>
 where
     T: ComponentTrait

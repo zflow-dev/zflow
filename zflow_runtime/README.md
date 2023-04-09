@@ -22,13 +22,15 @@ let mut my_component = Component::new(ComponentOptions {
         "out".to_string(),
         OutPort::default(),
     )]),
-    process: Box::new(move |context, input, output| {
-        // get something from input port
-        if let Some(input_data) = input.get("out") {
-            // <do stuff>
+    process: Box::new(move |this| {
+        if let Ok(handle) = this.try_lock().as_mut() {
+            // get something from input port
+            if let Some(input_data) = handle.input().get("out") {
+                // <do stuff>
+            }
+            // send output
+            handle.output().send(&("out", json!("Hello World!")));
         }
-        // send output
-        output.send(&("out", json!("Hello World!")));
         Ok(ProcessResult::default())
     }),
     ..ComponentOptions::default()
@@ -77,28 +79,29 @@ let mut c = Component::new(ComponentOptions {
         OutPort::default(),
     )]),
     // the process function that takes the input data and transform them into an html string that is then sent out via the output port
-    process: Box::new(move |context, input, output| {
-        let ip_data = input.get("tags").expect("expected inport data").datatype;
+    process: Box::new(move |this| {
+        if let Ok(handle) = this.try_lock().as_mut() {
+            let ip_data = handle.input().get("tags").expect("expected inport data").datatype;
 
-        match ip_data {
-            IPType::OpenBracket(data) =>{
-                str.push_str(format!("<{}>", data.as_str().unwrap()).as_str());
-                level += 1;
-            }
-            IPType::Data(data) =>{
-                str.push_str(format!("{}", data.as_str().unwrap()).as_str());
-            }
-            IPType::CloseBracket(data) =>{
-                str.push_str(format!("</{}>", data.as_str().unwrap()).as_str());
-                level -= 1;
-                if level <= 0 {
-                    output.send(&("html", json!(str.clone())));
-                    str.push_str("");
+            match ip_data {
+                IPType::OpenBracket(data) =>{
+                    str.push_str(format!("<{}>", data.as_str().unwrap()).as_str());
+                    level += 1;
                 }
+                IPType::Data(data) =>{
+                    str.push_str(format!("{}", data.as_str().unwrap()).as_str());
+                }
+                IPType::CloseBracket(data) =>{
+                    str.push_str(format!("</{}>", data.as_str().unwrap()).as_str());
+                    level -= 1;
+                    if level <= 0 {
+                        handle.output().send(&("html", json!(str.clone())));
+                        str.push_str("");
+                    }
+                }
+                _=>{}
             }
-            _=>{}
         }
-        output.done(None);
         Ok(ProcessResult::default())
     }),
     ..ComponentOptions::default()
@@ -117,19 +120,22 @@ let mut d = Component::new(ComponentOptions {
         OutPort::default(),
     )]),
     // the process function that generates the html tags that we would send to the C component
-    process: Box::new(|context, input, output| {
-        if let Some(_bang) = input.get("bang") {
-            output.send(&("tags", IPType::OpenBracket(json!("p"))));
-            output.send(&("tags", IPType::OpenBracket(json!("em"))));
-            output.send(&("tags", IPType::Data(json!("Hello"))));
-            output.send(&("tags", IPType::CloseBracket(json!("em"))));
-            output.send(&("tags", IPType::Data(json!(", "))));
-            output.send(&("tags", IPType::OpenBracket(json!("strong"))));
-            output.send(&("tags", IPType::Data(json!("World!"))));
-            output.send(&("tags", IPType::CloseBracket(json!("strong"))));
-            output.send(&("tags", IPType::CloseBracket(json!("p"))));
+    process: Box::new(|this| {
+        if let Ok(handle) = this.try_lock().as_mut() {
+            let mut output = handle.output();
+            if let Some(_bang) = handle.input().get("bang") {
+                output.send(&("tags", IPType::OpenBracket(json!("p"))));
+                output.send(&("tags", IPType::OpenBracket(json!("em"))));
+                output.send(&("tags", IPType::Data(json!("Hello"))));
+                output.send(&("tags", IPType::CloseBracket(json!("em"))));
+                output.send(&("tags", IPType::Data(json!(", "))));
+                output.send(&("tags", IPType::OpenBracket(json!("strong"))));
+                output.send(&("tags", IPType::Data(json!("World!"))));
+                output.send(&("tags", IPType::CloseBracket(json!("strong"))));
+                output.send(&("tags", IPType::CloseBracket(json!("p"))));
+            }
+            output.done(None);
         }
-        output.done(None);
         Ok(ProcessResult::default())
     }),
 ..ComponentOptions::default()});

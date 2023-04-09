@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use beady::scenario;
+
     use futures::executor::block_on;
     use serde_json::json;
     use std::collections::HashMap;
@@ -122,28 +123,30 @@ mod tests {
                                 InPort::new(PortOptions::default()),
                             ),
                         ]),
-                        process: Box::new(|context, mut input, mut output| {
-                            if input.has_data("in") {
-                                if let Some(packet) = input.get("in") {
-                                    match &packet.datatype {
-                                        IPType::Data(packet) => {
-                                            assert_eq!(packet, &json!("some-data"));
-                                            output.done(None);
-                                            return Ok(ProcessResult::default());
+                        process: Box::new(|this| {
+                            if let Ok(handle) = this.try_lock().as_mut() {
+                                if handle.input().has_data("in") {
+                                    if let Some(packet) = handle.input().get("in") {
+                                        match &packet.datatype {
+                                            IPType::Data(packet) => {
+                                                assert_eq!(packet, &json!("some-data"));
+                                                handle.output().done(None);
+                                                return Ok(ProcessResult::default());
+                                            }
+                                            _ => {}
                                         }
-                                        _ => {}
                                     }
                                 }
-                            }
-                            if input.has_data("just_processor") {
-                                if let Some(packet) = input.get("just_processor") {
-                                    match &packet.datatype {
-                                        IPType::Data(packet) => {
-                                            assert_eq!(packet, &json!("some-data"));
-                                            output.done(None);
-                                            return Ok(ProcessResult::default());
+                                if handle.input().has_data("just_processor") {
+                                    if let Some(packet) = handle.input().get("just_processor") {
+                                        match &packet.datatype {
+                                            IPType::Data(packet) => {
+                                                assert_eq!(packet, &json!("some-data"));
+                                                handle.output().done(None);
+                                                return Ok(ProcessResult::default());
+                                            }
+                                            _ => {}
                                         }
-                                        _ => {}
                                     }
                                 }
                             }
@@ -199,11 +202,16 @@ mod tests {
                                 ..PortOptions::default()
                             }),
                         )]),
-                        process: Box::new(|context, mut input, mut output| {
-                            if let Some(packet) = input.get_data("in") {
-                                assert_eq!(packet, json!("some-data"));
-                                assert!(output.error(&ProcessError("".to_string())).is_err());
-                                return Ok(ProcessResult::default());
+                        process: Box::new(|this| {
+                            if let Ok(handle) = this.try_lock().as_mut() {
+                                if let Some(packet) = handle.input().get_data("in") {
+                                    assert_eq!(packet, json!("some-data"));
+                                    assert!(handle
+                                        .output()
+                                        .error(&ProcessError("".to_string()))
+                                        .is_err());
+                                    return Ok(ProcessResult::default());
+                                }
                             }
                             Ok(ProcessResult::default())
                         }),
@@ -243,20 +251,23 @@ mod tests {
                                 ..PortOptions::default()
                             }),
                         )]),
-                        process: Box::new(|context, mut input, output| {
-                            if let Some(packet) = input.get_data("in") {
-                                assert_eq!(packet, json!("some-data"));
+                        process: Box::new(|this| {
+                            if let Ok(handle) = this.try_lock().as_mut() {
+                                if let Some(packet) = handle.input().get_data("in") {
+                                    assert_eq!(packet, json!("some-data"));
+                                }
+                                assert!(handle
+                                    .context
+                                    .clone()
+                                    .try_lock()
+                                    .unwrap()
+                                    .component
+                                    .clone()
+                                    .try_lock()
+                                    .unwrap()
+                                    .error(ProcessError(format!("Some Error")), vec![], None, None)
+                                    .is_ok());
                             }
-                            assert!(context
-                                .clone()
-                                .try_lock()
-                                .unwrap()
-                                .component
-                                .clone()
-                                .try_lock()
-                                .unwrap()
-                                .error(ProcessError(format!("Some Error")), vec![], None, None)
-                                .is_ok());
 
                             Ok(ProcessResult::default())
                         }),
@@ -305,11 +316,11 @@ mod tests {
                         .map(|val| {
                             val.attach(s1.clone(), None);
                         });
-                    c.clone().try_lock().unwrap().setup(|| {
+                    c.clone().try_lock().unwrap().setup(|_| {
                         assert!(true);
                         Ok(())
                     });
-                    c.clone().try_lock().unwrap().teardown(|| {
+                    c.clone().try_lock().unwrap().teardown(|_| {
                         assert!(true);
                         Ok(())
                     });
@@ -326,7 +337,7 @@ mod tests {
                             }
                             _ => {}
                         });
-                    let _ = c.clone().try_lock().unwrap().start();
+                    let _ = Component::start(c.clone());
                     assert!(c.clone().try_lock().unwrap().started);
                     let _ = Component::shutdown(c.clone());
                     sleep(Duration::from_millis(10));
@@ -338,8 +349,12 @@ mod tests {
                     let mut c = Component::new(ComponentOptions {
                         in_ports: HashMap::from([("in".to_string(), InPort::default())]),
                         out_ports: HashMap::from([("out".to_string(), OutPort::default())]),
-                        process: Box::new(|context, mut input, mut output| {
-                            output.send_done(&input.get("in").expect("expected inport data"));
+                        process: Box::new(|this| {
+                            if let Ok(handle) = this.try_lock().as_mut() {
+                                handle.output().send_done(
+                                    &handle.input().get("in").expect("expected inport data"),
+                                );
+                            }
                             Ok(ProcessResult::default())
                         }),
                         ..ComponentOptions::default()
@@ -402,36 +417,43 @@ mod tests {
                         forward_brackets: HashMap::new(),
                         in_ports: HashMap::from([("tags".to_string(), InPort::default())]),
                         out_ports: HashMap::from([("html".to_string(), OutPort::default())]),
-                        process: Box::new(move |context, mut input, mut output| {
+                        process: Box::new(move |this| {
                             let mut str = str.clone();
-                            let ip_data = input.get("tags").expect("expected inport data").datatype;
-                            if let Ok(str) = str.clone().try_lock().as_mut() {
-                                match ip_data {
-                                    IPType::OpenBracket(data) => {
-                                        str.push_str(
-                                            format!("<{}>", data.as_str().unwrap()).as_str(),
-                                        );
-                                        level += 1;
-                                    }
-                                    IPType::Data(data) => {
-                                        str.push_str(
-                                            format!("{}", data.as_str().unwrap()).as_str(),
-                                        );
-                                    }
-                                    IPType::CloseBracket(data) => {
-                                        str.push_str(
-                                            format!("</{}>", data.as_str().unwrap()).as_str(),
-                                        );
-                                        level -= 1;
-                                        if level <= 0 {
-                                            output.send(&("html", json!(*str.clone())));
-                                            str.push_str("");
+                            if let Ok(handle) = this.try_lock().as_mut() {
+                                let ip_data = handle
+                                    .input()
+                                    .get("tags")
+                                    .expect("expected inport data")
+                                    .datatype;
+                                if let Ok(str) = str.clone().try_lock().as_mut() {
+                                    match ip_data {
+                                        IPType::OpenBracket(data) => {
+                                            str.push_str(
+                                                format!("<{}>", data.as_str().unwrap()).as_str(),
+                                            );
+                                            level += 1;
                                         }
+                                        IPType::Data(data) => {
+                                            str.push_str(
+                                                format!("{}", data.as_str().unwrap()).as_str(),
+                                            );
+                                        }
+                                        IPType::CloseBracket(data) => {
+                                            str.push_str(
+                                                format!("</{}>", data.as_str().unwrap()).as_str(),
+                                            );
+                                            level -= 1;
+                                            if level <= 0 {
+                                                handle
+                                                    .output()
+                                                    .send(&("html", json!(*str.clone())));
+                                                str.clear();
+                                            }
+                                        }
+                                        _ => {}
                                     }
-                                    _ => {}
                                 }
                             }
-                            output.done(None);
                             Ok(ProcessResult::default())
                         }),
                         ..ComponentOptions::default()
@@ -440,19 +462,22 @@ mod tests {
                     let mut d = Component::new(ComponentOptions {
                         in_ports: HashMap::from([("bang".to_string(), InPort::default())]),
                         out_ports: HashMap::from([("tags".to_string(), OutPort::default())]),
-                        process: Box::new(|context, mut input, mut output| {
-                            if let Some(_bang) = input.get("bang") {
-                                output.send(&("tags", IPType::OpenBracket(json!("p"))));
-                                output.send(&("tags", IPType::OpenBracket(json!("em"))));
-                                output.send(&("tags", IPType::Data(json!("Hello"))));
-                                output.send(&("tags", IPType::CloseBracket(json!("em"))));
-                                output.send(&("tags", IPType::Data(json!(", "))));
-                                output.send(&("tags", IPType::OpenBracket(json!("strong"))));
-                                output.send(&("tags", IPType::Data(json!("World!"))));
-                                output.send(&("tags", IPType::CloseBracket(json!("strong"))));
-                                output.send(&("tags", IPType::CloseBracket(json!("p"))));
+                        process: Box::new(|this| {
+                            if let Ok(handle) = this.try_lock().as_mut() {
+                                let mut output = handle.output();
+                                if let Some(_bang) = handle.input().get("bang") {
+                                    output.send(&("tags", IPType::OpenBracket(json!("p"))));
+                                    output.send(&("tags", IPType::OpenBracket(json!("em"))));
+                                    output.send(&("tags", IPType::Data(json!("Hello"))));
+                                    output.send(&("tags", IPType::CloseBracket(json!("em"))));
+                                    output.send(&("tags", IPType::Data(json!(", "))));
+                                    output.send(&("tags", IPType::OpenBracket(json!("strong"))));
+                                    output.send(&("tags", IPType::Data(json!("World!"))));
+                                    output.send(&("tags", IPType::CloseBracket(json!("strong"))));
+                                    output.send(&("tags", IPType::CloseBracket(json!("p"))));
+                                }
+                                output.done(None);   
                             }
-                            output.done(None);
                             Ok(ProcessResult::default())
                         }),
                         ..ComponentOptions::default()
@@ -528,16 +553,18 @@ mod tests {
                                 ..OutPort::default()
                             },
                         )]),
-                        process: Box::new(move |context, mut input, mut output| {
-                            if let Some(packet) = input.get("foo") {
-                                let mut ip = packet;
-                                ip.index = if ip.datatype == IPType::Data(json!("first")) {
-                                    Some(1)
-                                } else {
-                                    Some(0)
-                                };
-                                ip.owner = None;
-                                output.send_done(&ip);
+                        process: Box::new(move |this| {
+                            if let Ok(handle) = this.try_lock().as_mut() {
+                                if let Some(packet) = handle.input().get("foo") {
+                                    let mut ip = packet;
+                                    ip.index = if ip.datatype == IPType::Data(json!("first")) {
+                                        Some(1)
+                                    } else {
+                                        Some(0)
+                                    };
+                                    ip.owner = None;
+                                    handle.output().send_done(&ip);
+                                }
                             }
                             Ok(ProcessResult::default())
                         }),

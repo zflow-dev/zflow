@@ -10,7 +10,7 @@ use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
 use cast_trait_object::dyn_cast;
 
 use foreach::ForEach;
-use fp_rust::publisher::Publisher;
+use fp_rust::{common::SubscriptionFunc, publisher::Publisher};
 use futures::{executor::block_on, Future};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,8 @@ use std::fmt::Debug;
 use crate::{
     errors::async_transform,
     ip::{IPOptions, IPType, IP},
-    sockets::{InternalSocket, SocketEvent}, process::ValidatorFn,
+    process::ValidatorFn,
+    sockets::{InternalSocket, SocketEvent},
 };
 
 #[dyn_cast(PortTrait, BasePort)]
@@ -100,6 +101,7 @@ pub struct InPort {
     pub indexed_iip_buffer: Arc<Mutex<HashMap<usize, Arc<Mutex<Vec<IP>>>>>>,
     pub iip_buffer: Arc<Mutex<Vec<IP>>>,
     pub(crate) bus: Arc<Mutex<Publisher<SocketEvent>>>,
+    pub(crate) subscribers: Vec<Arc<SubscriptionFunc<SocketEvent>>>,
 }
 
 impl Debug for InPort {
@@ -446,6 +448,7 @@ impl InPort {
             iip_buffer: Arc::new(Mutex::new(Vec::new())),
             indexed_iip_buffer: Arc::new(Mutex::new(HashMap::new())),
             indexed_buffer: Arc::new(Mutex::new(HashMap::new())),
+            subscribers: Vec::new(),
         }
     }
     fn has_default(&self) -> bool {
@@ -461,11 +464,13 @@ impl InPort {
     }
 
     pub fn on(&mut self, fun: impl FnMut(Arc<SocketEvent>) -> () + 'static + Send + Sync) {
-        self.bus
-            .clone()
-            .try_lock()
-            .expect("expected inport bus instance")
-            .subscribe_fn(fun);
+        self.subscribers.push(
+            self.bus
+                .clone()
+                .try_lock()
+                .expect("expected inport bus instance")
+                .subscribe_fn(fun),
+        );
     }
 
     pub fn emit(&mut self, event: SocketEvent) {
@@ -720,7 +725,7 @@ impl InPort {
                 if buf.len() > 0 {
                     return Some(buf.remove(0));
                 }
-                return None
+                return None;
             }
         }
         None
@@ -755,11 +760,7 @@ impl InPort {
         false
     }
 
-    pub(crate) fn has_iip(
-        &mut self,
-        index: Option<usize>,
-        validator: &mut ValidatorFn,
-    ) -> bool {
+    pub(crate) fn has_iip(&mut self, index: Option<usize>, validator: &mut ValidatorFn) -> bool {
         self.has_iip_in_buffer(None, index, validator, true)
     }
 
@@ -873,6 +874,7 @@ pub struct OutPort {
     pub sockets: Vec<Arc<Mutex<InternalSocket>>>,
     pub cache: HashMap<String, IP>,
     pub(crate) bus: Arc<Mutex<Publisher<SocketEvent>>>,
+    pub(crate) subscribers: Vec<Arc<SubscriptionFunc<SocketEvent>>>,
 }
 impl Debug for OutPort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -903,7 +905,7 @@ impl BasePort for OutPort {
             socket.index = idx.unwrap();
             let _ = socket.connect().expect("expected to connect");
         }
-     
+
         self.sockets.insert(idx.unwrap(), socket.clone());
 
         if let Ok(publisher) = self.bus.clone().try_lock().as_mut() {
@@ -1064,6 +1066,7 @@ impl OutPort {
             options,
             sockets: vec![InternalSocket::create(None); 1024],
             cache: HashMap::new(),
+            subscribers: Vec::new(),
         }
     }
 
@@ -1203,14 +1206,13 @@ impl OutPort {
             if let Ok(ip) = IP::deserialize(data) {
                 ip
             } else {
-                IP::new(IPType::Data(data.clone()),IPOptions::default())
+                IP::new(IPType::Data(data.clone()), IPOptions::default())
             }
         } else {
             panic!("packet type should be either IP or Value");
         };
         let idx = index;
         ip.index = idx;
-
 
         let sockets = self.get_sockets(idx).expect("expected list of sockets");
         self.check_required().expect("check failed");
@@ -1303,11 +1305,13 @@ impl OutPort {
     }
 
     pub fn on(&mut self, rec: impl FnMut(Arc<SocketEvent>) -> () + 'static + Send + Sync) {
-        self.bus
-            .clone()
-            .try_lock()
-            .expect("expected event bus")
-            .subscribe_fn(rec);
+        self.subscribers.push(
+            self.bus
+                .clone()
+                .try_lock()
+                .expect("expected outport event bus instance")
+                .subscribe_fn(rec),
+        );
     }
 }
 
@@ -1333,14 +1337,14 @@ pub struct OutPortsOptions {
 
 impl OutPorts {
     pub fn new(options: OutPortsOptions) -> Self {
-        options.ports.iter().for_each(|(name, _)|{
+        options.ports.iter().for_each(|(name, _)| {
             if let Err(err) = validate_port_name(name.clone()) {
                 panic!("{}", err);
             }
         });
         Self {
             ports: options.ports,
-            bus: Arc::new(Mutex::new(Publisher::new())),
+            bus: Arc::new(Mutex::new(Publisher::new()))
         }
     }
 

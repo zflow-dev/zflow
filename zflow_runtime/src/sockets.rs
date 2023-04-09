@@ -20,7 +20,7 @@ pub struct SocketConnection {
     pub index: Option<usize>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum SocketEvent {
     Connect(Option<usize>),
     Disconnect(Option<usize>),
@@ -31,6 +31,8 @@ pub enum SocketEvent {
     EndGroup(Option<usize>),
     IP(IP, Option<usize>),
     Error(String, Option<usize>),
+    #[default]
+    Undefined,
 }
 
 /// ## Internal Sockets

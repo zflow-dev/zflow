@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex}
 };
 
-use fp_rust::{common::SubscriptionFunc, publisher::Publisher};
+use fp_rust::{common::SubscriptionFunc, publisher::Publisher, handler::HandlerThread};
 use serde::Deserialize;
 use serde_json::Value;
 use zflow::graph::{graph::Graph, types::GraphJson};
@@ -58,9 +58,10 @@ pub struct GraphComponent {
     pub load: usize,
     pub(crate) handle: Option<Arc<Mutex<ProcessFunc<Self>>>>,
     pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
+    pub (crate) internal_thread:  Arc<Mutex<HandlerThread>>,
     pub auto_ordering: bool,
-    setup_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
-    teardown_fn: Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>>,
+    setup_fn: Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>,
+    teardown_fn: Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>,
     tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
 }
 
@@ -161,13 +162,13 @@ impl BaseComponentTrait for GraphComponent {
 
     fn get_teardown_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>> {
+    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>> {
         self.teardown_fn.clone()
     }
 
     fn get_setup_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut() -> Result<(), String> + Send + Sync + 'static>>> {
+    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>> {
         self.setup_fn.clone()
     }
 
@@ -233,13 +234,17 @@ impl BaseComponentTrait for GraphComponent {
     fn set_description(&mut self, desc: String) {
         self.description = desc;
     }
+
+    fn get_handler_thread(&self) -> Arc<Mutex<HandlerThread>> {
+        self.internal_thread.clone()
+    }
 }
 
 impl ComponentCallbacks for GraphComponent {
     /// ### Setup
     /// Provide the setUp function to be called for component-specific initialization.
     /// Called at network start-up.
-    fn setup(&mut self, setup_fn: impl FnMut() -> Result<(), String> + Send + Sync + 'static) {
+    fn setup(&mut self, setup_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static) {
         // self.setup_fn = Some(Arc::new(Mutex::new(setup_fn)));
     }
 
@@ -248,17 +253,17 @@ impl ComponentCallbacks for GraphComponent {
     /// Called at network shutdown.
     fn teardown(
         &mut self,
-        teardown_fn: impl FnMut() -> Result<(), String> + Send + Sync + 'static,
+        teardown_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static,
     ) {
         // self.teardown_fn = Some(Arc::new(Mutex::new(teardown_fn)));
     }
 
     /// Subscribe to component's events
     fn on(
-        &self,
+        &mut self,
         callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static,
-    ) -> Arc<SubscriptionFunc<ComponentEvent>> {
-        self.bus.clone().try_lock().unwrap().subscribe_fn(callback)
+    ) {
+        self.tracked_signals.push(self.bus.clone().try_lock().unwrap().subscribe_fn(callback));
     }
 }
 
@@ -297,6 +302,7 @@ impl Default for GraphComponent {
             load: 0,
             handle: None,
             bus: Default::default(),
+            internal_thread:  Arc::new(Mutex::new(HandlerThread::default())),
             auto_ordering: Default::default(),
             setup_fn: Default::default(),
             teardown_fn: Default::default(),
@@ -373,13 +379,13 @@ impl GraphComponent {
                     }
                 });
             });
-            let __s = _s.clone();
-            s.setup_fn = Some(Arc::new(Mutex::new(move ||{
-                return GraphComponent::set_up(__s.clone())
+           
+            s.setup_fn = Some(Arc::new(Mutex::new(move |this:Arc<Mutex<Self>>|{
+                return GraphComponent::set_up(this.clone())
             })));
-            let __s = _s.clone();
-            s.teardown_fn = Some(Arc::new(Mutex::new(move ||{
-                return GraphComponent::tear_down(__s.clone())
+            
+            s.teardown_fn = Some(Arc::new(Mutex::new(move |this:Arc<Mutex<Self>>|{
+                return GraphComponent::tear_down(this.clone())
             })));
         }
         _s.clone()
@@ -480,7 +486,7 @@ impl GraphComponent {
 
     pub fn is_exported_inport(
         &mut self,
-        port: InPort,
+        _port: InPort,
         name: &str,
         port_name: &str,
     ) -> Option<String> {
@@ -504,7 +510,7 @@ impl GraphComponent {
 
     pub fn is_exported_outport(
         &mut self,
-        port: OutPort,
+        _port: OutPort,
         name: &str,
         port_name: &str,
     ) -> Option<String> {
