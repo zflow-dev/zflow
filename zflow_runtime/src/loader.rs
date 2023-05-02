@@ -1,67 +1,19 @@
 use std::{
-    any::Any,
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex}, path::{Path, PathBuf}, str::FromStr,
 };
-
 
 use poll_promise::Promise;
 use regex::Regex;
 use serde_json::Value;
-use zflow::graph::graph::Graph;
-
-use crate::{
-    component::{BaseComponentTrait, ComponentTrait},
-    default_component_registry::DefaultRegistry,
-    graph_component::{GraphComponent},
-};
 use zflow::graph::types::GraphJson;
 
-/// Registry is a way to tell the Component Loader where to discover, load and execute custom components
-pub trait RuntimeRegistry<T>
-where
-    T: ComponentTrait
-{
-    fn set_source(
-        &mut self,
-        namespace: &str,
-        component_name: &str,
-        source: ComponentSource,
-    ) -> Result<(), String>;
-    fn get_source(&self, component_name: &str) -> Option<ComponentSource>;
-    fn get_languages(&mut self) -> Result<Vec<String>, String>;
-    /// Register custom component loaders
-    fn register(
-        &mut self,
-        loader: &mut ComponentLoader<T>,
-    ) -> Promise<Result<HashMap<String, &'static (dyn ComponentDefinition<T> + Sync + Send)>, String>>;
-    fn dynamic_load(&mut self, component_name: &str, path: &str) -> Result<Arc<Mutex<T>>, String>;
-}
+use crate::{
+    component::{Component, GraphDefinition},
+    registry::{ComponentSource, DefaultRegistry, RuntimeRegistry},
+};
 
-pub type ComponentList<T> =
-    Arc<Mutex<HashMap<String, &'static (dyn ComponentDefinition<T> + Sync + Send)>>>;
-
-pub struct ComponentSource {
-    pub name: String,
-    pub code: String,
-    pub language: String,
-}
-
-/// Useful for when you want to use structs as a component provider
-pub trait ModuleComponent<T: BaseComponentTrait>: Sync + Send {
-    fn get_component(&self) -> ComponentFactory<T>;
-}
-
-type ComponentFactory<T> =
-    Box<dyn Fn(Option<HashMap<String, Value>>) -> Result<Arc<Mutex<T>>, String> + Send + Sync>;
-
-pub trait ComponentDefinition<T: ComponentTrait >: Send {}
-
-impl<T: ComponentTrait> ComponentDefinition<T> for ComponentFactory<T> {}
-impl<T: ComponentTrait> ComponentDefinition<T> for Box<dyn ModuleComponent<T>> {}
-impl<T: ComponentTrait> ComponentDefinition<T> for String {}
-impl<T: ComponentTrait> ComponentDefinition<T> for &str {}
-impl<T: ComponentTrait> ComponentDefinition<T> for GraphJson {}
+use is_url::is_url;
 
 #[derive(Debug, Default, Clone)]
 pub struct ComponentLoaderOptions {
@@ -77,36 +29,39 @@ pub struct ComponentLoaderOptions {
 /// The Component Loader is responsible for discovering components
 /// available in the running system, as well as for instantiating
 /// them.
-
-#[derive(Clone)]
-pub struct ComponentLoader<T: ComponentTrait > {
-    pub(crate) components: ComponentList<T>,
+// #[derive(Clone)]
+pub struct ComponentLoader {
+    pub(crate) components: Arc<Mutex<HashMap<String, Box<dyn GraphDefinition>>>>,
     pub options: ComponentLoaderOptions,
     pub base_dir: String,
     pub library_icons: HashMap<String, String>,
-    pub(crate) processing: Option<
-        Arc<
-            Mutex<
-                Promise<
-                    Result<
-                        HashMap<String, &'static (dyn ComponentDefinition<T> + Sync + Send)>,
-                        String,
-                    >,
-                >,
-            >,
-        >,
-    >,
+    pub(crate) processing:
+        Option<Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>>>,
     pub ready: bool,
-    pub registry: Arc<Mutex<dyn RuntimeRegistry<T> + Send>>,
+    pub registry: Arc<Mutex<dyn RuntimeRegistry + Send>>,
 }
 
-impl<T: ComponentTrait > ComponentLoader<T> {
+impl Clone for ComponentLoader {
+    fn clone(&self) -> Self {
+        Self {
+            components: self.components.clone(),
+            options: self.options.clone(),
+            base_dir: self.base_dir.clone(),
+            library_icons: self.library_icons.clone(),
+            processing: None,
+            ready: self.ready.clone(),
+            registry: self.registry.clone(),
+        }
+    }
+}
+
+impl ComponentLoader {
     pub fn new(
         base_dir: &str,
         options: ComponentLoaderOptions,
-        registry: Option<Arc<Mutex<dyn RuntimeRegistry<T> + Send>>>,
+        registry: Option<Arc<Mutex<dyn RuntimeRegistry + Send>>>,
     ) -> Self {
-        let mut _registry: Arc<Mutex<dyn RuntimeRegistry<T> + Send>> =
+        let mut _registry: Arc<Mutex<dyn RuntimeRegistry + Send>> =
             Arc::new(Mutex::new(DefaultRegistry::default()));
         if let Some(reg) = registry {
             _registry = reg.clone();
@@ -123,29 +78,29 @@ impl<T: ComponentTrait > ComponentLoader<T> {
     }
 
     /// Get the list of all available components
-    pub fn list_components(&mut self) -> Result<ComponentList<T>, String> {
-        if self.processing.is_some() {
-            if let Some(processing) = self.processing.as_mut() {
-                if let Ok(processing) = processing.clone().try_lock() {
-                    loop {
-                        let result = processing
-                            .ready()
-                            .expect("expected processing loaders to be ready");
-                        if let Ok(complist) = result {
-                            self.ready = true;
-                            self.processing = None;
-
-                            self.components = Arc::new(Mutex::new(HashMap::new()));
-                            if let Ok(comp) = self.components.clone().try_lock().as_mut() {
-                                for (name, def) in complist {
-                                    comp.insert(name.clone(), def.to_owned());
-                                }
-                            }
-                        }
-                        return Ok(self.components.clone());
+    pub fn list_components(
+        &mut self,
+    ) -> Result<Arc<Mutex<HashMap<String, Box<dyn GraphDefinition>>>>, String> {
+        if let Some(processing) = self.processing.as_mut() {
+            let p = processing.block_until_ready();
+            self.ready = true;
+            self.components = Arc::new(Mutex::new(HashMap::new()));
+            let comps = self.components.clone();
+            if let Ok(comp) = comps.clone().try_lock().as_mut() {
+                if let Ok(p) = p {
+                    // comp.extend(p);
+                    for (name, def) in p {
+                        comp.insert(name.clone(), dyn_clone::clone_box(&**def));
                     }
                 }
             }
+            // loop {
+            //     if let Some(p) = processing.ready() {
+
+            //     }
+            // }
+            self.processing = None;
+            return Ok(self.components.clone());
         } else if self.ready {
             let binding = self.components.clone();
             let components = binding
@@ -159,37 +114,36 @@ impl<T: ComponentTrait > ComponentLoader<T> {
         } else {
             self.components = Arc::new(Mutex::new(HashMap::new()));
             self.ready = false;
-            self.processing = Some(Arc::new(Mutex::new(
+            self.processing = Some(
                 self.registry
                     .clone()
                     .try_lock()
                     .expect("Could not instantiate registry")
                     .register(self),
-            )))
+            );
+            return self.list_components();
         }
-        return Ok(self.components.clone());
     }
 
     /// Load an instance of a specific component. If the
-    /// registered component is a JSON or FBP graph, it will
+    /// registered component is a FBP graph, it will
     /// be loaded as an instance a subgraph
     /// component.
     pub fn load(
         &mut self,
         name: &str,
         metadata: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<T>>, String>  {
+    ) -> Result<Arc<Mutex<Component>>, String> {
         let mut component = None;
 
         if !self.ready {
-            let res = ComponentLoader::<T>::list_components(self);
+            let res = ComponentLoader::list_components(self);
             if res.is_err() {
                 return Err(res.err().unwrap());
             }
             return self.load(name, metadata);
         }
 
-        // let components:HashMap<String, Box<dyn ComponentDefinition<T> + Send + Sync>> = HashMap::from_iter(loader.components.clone().into());
         let binding = self.components.clone();
         let components = binding
             .try_lock()
@@ -214,89 +168,133 @@ impl<T: ComponentTrait > ComponentLoader<T> {
             ));
         }
 
-        let comp = component.expect(format!("Component {} could not be loaded", name).as_str())
-            as &dyn Any;
-        if let Some(graph) = comp.downcast_ref::<GraphJson>() {
-            return self.load_graph(name, graph.clone(), metadata);
+        if let Some(graph) = component.unwrap().to_any().downcast_ref::<GraphJson>() {
+            return self.load_graph(name, graph, metadata);
         }
 
-        let _instance = self.create_component(name, comp, metadata)?.clone();
-        if let Ok(instance) = _instance.clone().try_lock().as_mut() {
-            if instance.get_name() == Some("Graph".to_owned()) {
-                instance.set_base_dir(self.base_dir.clone());
+        let _instance = self
+            .create_component(name, &**component.unwrap(), metadata)?
+            .clone();
+        let binding = _instance.clone();
+        let mut binding = binding.try_lock();
+        let instance = binding
+            .as_mut()
+            .expect(format!("Component {} could not be loaded", name).as_str());
+        if instance.get_name() == Some("Graph".to_owned()) || instance.is_subgraph() {
+            instance.set_base_dir(self.base_dir.clone());
+        }
+
+        if !name.is_empty() {
+            instance.set_name(name.to_owned());
+        }
+
+        // self.set_icon(name, _instance.clone());
+
+        // See if component has an icon
+        if !instance.get_icon().is_empty() {
+            return Ok(_instance.clone());
+        }
+        // See if library has an icon
+        let v: Vec<&str> = name.split("/").collect();
+        let library = v[0];
+        let component_name = v.get(1);
+
+        if let Some(prefix) = self.get_library_icon(library) {
+            if component_name.is_some() {
+                instance.set_icon(prefix.to_owned());
+                return Ok(_instance.clone());
             }
+        }
 
-            if !name.is_empty() {
-                instance.set_name(name.to_owned());
-            }
-
-            self.set_icon("name", _instance.clone());
-
+        // See if instance is a subgraph
+        if instance.is_subgraph() {
+            instance.set_icon("჻".to_owned());
             return Ok(_instance.clone());
         }
 
-        Err(format!("Component {} could not be loaded", name))
+        instance.set_icon("⚙".to_owned());
+
+        return Ok(_instance.clone());
     }
 
     /// Creates an instance of a component.
     pub fn create_component(
-        &self,
+        &mut self,
         name: &str,
-        component: &dyn Any,
+        component: &dyn GraphDefinition,
         metadata: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<T>>, String> {
-        if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
-            if let Some(implementation) = component.downcast_ref::<&str>() {
-                return registry.dynamic_load(*implementation, &self.base_dir);
-            } else if let Some(implementation) = component.downcast_ref::<String>() {
-                return registry.dynamic_load(implementation, &self.base_dir);
-            } else if let Some(implementation) = component.downcast_ref::<ComponentFactory<T>>() {
-                return (implementation)(metadata);
-            } else if let Some(implementation) =
-                component.downcast_ref::<Box<dyn ModuleComponent<T>>>()
-            {
-                return ((implementation).get_component())(metadata);
+    ) -> Result<Arc<Mutex<Component>>, String> {
+        // If a string was specified, attempt to load it dynamically
+        if let Some(path) = component.to_any().downcast_ref::<String>() {
+            if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
+                if is_url(path) {
+                    return registry.dynamic_load(name, path);
+                }
+
+                if Path::new(path).extension().is_some() || path.contains(std::path::is_separator) {
+                    if let Ok(buf) = PathBuf::from_str(&self.base_dir).as_mut() {
+                        buf.push(path);
+                        return registry.dynamic_load(name, buf.as_os_str().to_str().expect("expected valid path string"));
+                    }
+                }
             }
         }
-        Err(format!("Could not load component {}. Ensure that component definition is of either ComponentFactory<dyn ComponentTrait>, ModuleComponent<dyn ComponentTrait>, &str, String, or GraphJson", name))
+
+        // check if it's a component instance
+        if let Some(instance) = component.to_any().downcast_ref::<Component>() {
+            return Ok(Component::from_instance(instance.clone()));
+        }
+
+        Err("".to_owned())
     }
 
-    /// Load a graph as a subgraph component instance
+    /// Load a graph as a ZFlow subgraph component instance
     pub fn load_graph(
         &mut self,
         name: &str,
-        graph_json: GraphJson,
+        component: &dyn GraphDefinition,
         metadata: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<T>>, String>    {
-        let binding = self.components.clone();
-        let binding = binding
-            .try_lock()
-            .expect("Expected component list container");
-        let graph_component = binding
-            .get("Graph")
-            .expect("Expected Graph in components list");
-        let graph = self
-            .create_component(name, graph_component as &dyn Any, metadata)?
-            .clone();
-        if let Ok(g) = graph.try_lock().as_mut() {
-            g.set_loader(self.clone());
-            g.set_base_dir(self.base_dir.clone());
-            g.get_inports_mut().ports.remove("graph");
-            self.set_icon(name, graph.clone());
+    ) -> Result<Arc<Mutex<Component>>, String> {
+        if let Ok(components) = self.components.clone().try_lock().as_mut() {
+            if let Some(graph_component) = components.get_mut("Graph") {
+                let _instance = self
+                    .create_component(name, &**graph_component, metadata)
+                    .expect("expected to create subgraph component instance");
+                if let Ok(instance) = _instance.clone().try_lock().as_mut() {
+                    instance.set_base_dir(self.base_dir.clone());
+                    instance.set_loader(self.clone());
+                    instance.in_ports.ports.remove("graph");
+                    if !instance.get_icon().is_empty() {
+                        return Ok(_instance.clone());
+                    }
+                    // See if library has an icon
+                    let v: Vec<&str> = name.split("/").collect();
+                    let library = v[0];
+                    let component_name = v.get(1);
 
-            GraphComponent::setup_graph(graph.clone(), &graph_json)?;
-            return Ok(graph.clone());
+                    if let Some(prefix) = self.get_library_icon(library) {
+                        if component_name.is_some() {
+                            instance.set_icon(prefix.to_owned());
+                            return Ok(_instance.clone());
+                        }
+                    }
+                    instance.set_icon("჻".to_owned());
+
+                    Component::setup_graph(_instance.clone(), Some(component))?;
+                }
+                return Ok(_instance.clone());
+            }
         }
-
-        Err(format!("Could not load graph of {}", name))
+        Err(format!("Could not load Graph component {}", name))
     }
+
     /// Set icon for the component instance. If the instance
     /// has an icon set, then this is a no-op. Otherwise we
     /// determine an icon based on the module it is coming
     /// from, or use a fallback icon separately for subgraphs
     /// and elementary components.
-    pub fn set_icon(&mut self, name: &str, instance: Arc<Mutex<T>>) {
-        if let Ok(instance) = instance.try_lock().as_mut() {
+    pub fn set_icon(&mut self, name: &str, instance: Arc<Mutex<Component>>) {
+        if let Ok(instance) = instance.clone().try_lock().as_mut() {
             // See if component has an icon
             if !instance.get_icon().is_empty() {
                 return;
@@ -339,11 +337,11 @@ impl<T: ComponentTrait > ComponentLoader<T> {
     /// With the `register_component` method you can register
     /// a ZFlow Component constructor or factory method
     /// as a component available for loading.
-    fn register_component(
+    pub fn register_component(
         &mut self,
         namespace: &str,
         name: &str,
-        component: impl ComponentDefinition<T> + Send + Sync + 'static,
+        component: impl GraphDefinition,
     ) {
         let f_name = normalize_name(namespace, name);
         self.components
@@ -351,33 +349,33 @@ impl<T: ComponentTrait > ComponentLoader<T> {
             .try_lock()
             .as_mut()
             .expect("Expected component list container")
-            .insert(f_name, Box::leak(Box::new(component)));
-    }
-
-    /// Register new graphs as loadable components.
-    pub fn register_graph(&mut self, namespace: &str, name: &str, graph: Graph) {
-        self.register_component(namespace, name, graph.clone().to_json());
+            .insert(f_name, Box::new(component));
     }
 
     /// With `set_source` you can register a component by providing
     /// a source code string. Supported languages and techniques
     /// depend on the runtime environment registry provided
-    pub fn set_source(&mut self, namespace: &str, name: &str, source: ComponentSource) -> Result<(), String> {
+    pub fn set_source(
+        &mut self,
+        namespace: &str,
+        name: &str,
+        source: ComponentSource,
+    ) -> Result<(), String> {
         if !self.ready {
             self.list_components()?;
             return self.set_source(namespace, name, source);
         }
         if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
-            return registry.set_source(namespace, name, source)
+            return registry.set_source(namespace, name, source);
         }
-        Err(format!("Could not set code source for component '{}'", name))
+        Err(format!(
+            "Could not set code source for component '{}'",
+            name
+        ))
     }
     /// Allows fetching the source code of a registered
     /// component as a string.
-    pub fn get_source(
-        &mut self,
-        name: &str
-    ) -> Option<ComponentSource> {
+    pub fn get_source(&mut self, name: &str) -> Option<ComponentSource> {
         if !self.ready {
             let _ = self.list_components();
             return self.get_source(name);
@@ -388,9 +386,7 @@ impl<T: ComponentTrait > ComponentLoader<T> {
         None
     }
 
-    pub fn get_runtime_languages(
-        &mut self
-    ) -> Result<Vec<String>, String> {
+    pub fn get_runtime_languages(&mut self) -> Result<Vec<String>, String> {
         if !self.ready {
             self.list_components()?;
             return self.get_runtime_languages();
@@ -407,6 +403,11 @@ pub fn get_prefix(name: &str) -> String {
     if name == "zflow" {
         return "".to_owned();
     }
+    if name.starts_with("@") {
+        let re = Regex::new(r"^@[a-z-]+/").unwrap();
+        let result = re.replace_all(name, "");
+        return get_prefix(result.to_string().as_str());
+    }
     let re = Regex::new(r"^zflow-").unwrap();
     let result = re.replace_all(name, "");
     return result.to_string();
@@ -419,4 +420,32 @@ pub fn normalize_name(package_id: &str, name: &str) -> String {
     }
 
     f_name
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::loader::get_prefix;
+    use beady::scenario;
+
+    #[scenario]
+    #[test]
+    fn test_prefix() {
+        'given_normalizing_names: {
+            'then_should_return_simple_module_names_as_is: {
+                assert_eq!(get_prefix("foo"), "foo");
+            }
+            'then_should_return_empty_for_zflow_core: {
+                assert_eq!(get_prefix("zflow"), "");
+            }
+            'then_should_strip_zflow_with_dash: {
+                assert_eq!(get_prefix("zflow-color"), "color");
+            }
+            'then_should_strip_zflow_namespace: {
+                assert_eq!(get_prefix("@zflow/color"), "color");
+            }
+            'then_should_strip_zflow_namespace_and_zflow_with_dash: {
+                assert_eq!(get_prefix("@zflow/zflow-color"), "color");
+            }
+        }
+    }
 }

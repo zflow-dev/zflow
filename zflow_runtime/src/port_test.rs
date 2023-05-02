@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::component::Component;
     use crate::ip::{IPOptions, IPType, IP};
     use crate::port::{
         BasePort, InPort, InPorts, InPortsOptions, OutPort, PortOptions, PortsTrait,

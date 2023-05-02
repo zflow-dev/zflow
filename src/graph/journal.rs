@@ -46,10 +46,8 @@ impl JournalStore for Graph {
     }
 
     fn put_transaction(&mut self, rev_id: i32, entries: Vec<TransactionEntry>) {
-        println!("rev_id {}, last_rev {}, is > {}",rev_id, self.last_revision, rev_id > self.last_revision);
         if rev_id > self.last_revision {
             self.last_revision = rev_id;
-            println!("{}", self.last_revision);
         }
 
         self.transactions.insert(rev_id as usize, entries);
@@ -93,7 +91,6 @@ impl JournalStore for Graph {
             return;
         }
         self.current_revision += 1;
-        println!("cur {}", self.current_revision);
         self.append_command(
             GraphEvents::StartTransaction(json!({
               "id": id,

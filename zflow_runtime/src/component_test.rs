@@ -2,23 +2,21 @@
 mod tests {
     use beady::scenario;
 
-    use futures::executor::block_on;
-    use serde_json::json;
-    use std::collections::HashMap;
-    use std::thread::sleep;
-    use std::time::Duration;
-
     use crate::ip::{IPOptions, IP};
     use crate::sockets::SocketEvent;
     use crate::{
-        component::{
-            BaseComponentTrait, Component, ComponentCallbacks, ComponentEvent, ComponentOptions,
-        },
+        component::{Component, ComponentEvent, ComponentOptions},
         ip::IPType,
         port::{BasePort, InPort, OutPort, PortOptions},
-        process::{ProcessError, ProcessResult},
+        process::{ProcessError, ProcessHandle, ProcessResult},
         sockets::InternalSocket,
     };
+    use futures::executor::block_on;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::thread::sleep;
+    use std::time::Duration;
 
     #[scenario]
     #[test]
@@ -43,26 +41,17 @@ mod tests {
                         ]),
                         ..ComponentOptions::default()
                     });
-                    c.clone()
-                        .try_lock()
-                        .unwrap()
-                        .out_ports
+                    c.out_ports
                         .ports
                         .get_mut("optional_port")
                         .map(|val| val.attach(s, None));
-                    c.clone()
-                        .try_lock()
-                        .unwrap()
-                        .out_ports
-                        .ports
-                        .get_mut("required_port")
-                        .map(|val| {
-                            if let Err(err) = block_on(val.send(&json!("foo"), None)) {
-                                assert!(!err.is_empty());
-                            } else {
-                                assert!(true);
-                            }
-                        });
+                    c.out_ports.ports.get_mut("required_port").map(|val| {
+                        if let Err(err) = block_on(val.send(&json!("foo"), None)) {
+                            assert!(!err.is_empty());
+                        } else {
+                            assert!(true);
+                        }
+                    });
                 }
                 'then_it_should_be_cool_with_attached_port: {
                     let mut s1 = InternalSocket::create(None);
@@ -83,17 +72,11 @@ mod tests {
                         ]),
                         ..ComponentOptions::default()
                     });
-                    c.clone()
-                        .try_lock()
-                        .unwrap()
-                        .in_ports
+                    c.in_ports
                         .ports
                         .get_mut("optional_port")
                         .map(|val| val.attach(s1.clone(), None));
-                    c.clone()
-                        .try_lock()
-                        .unwrap()
-                        .in_ports
+                    c.in_ports
                         .ports
                         .get_mut("required_port")
                         .map(|val| val.attach(s2.clone(), None));
@@ -109,7 +92,7 @@ mod tests {
             }
             'when_with_component_creation_shorthand: {
                 'then_it_should_make_component_creation_easy: {
-                    let mut c = Component::new(ComponentOptions {
+                    let mut c = Component::init(ComponentOptions {
                         in_ports: HashMap::from([
                             (
                                 "in".to_string(),
@@ -123,7 +106,7 @@ mod tests {
                                 InPort::new(PortOptions::default()),
                             ),
                         ]),
-                        process: Box::new(|this| {
+                        process: Some(Box::new(|this: Arc<Mutex<ProcessHandle>>| {
                             if let Ok(handle) = this.try_lock().as_mut() {
                                 if handle.input().has_data("in") {
                                     if let Some(packet) = handle.input().get("in") {
@@ -152,7 +135,7 @@ mod tests {
                             }
 
                             Ok(ProcessResult::default())
-                        }),
+                        })),
                         ..ComponentOptions::default()
                     });
                     let mut s1 = InternalSocket::create(None);
@@ -194,7 +177,7 @@ mod tests {
                     });
                 }
                 'then_it_should_throw_error_if_there_is_no_error_port: {
-                    let mut c = Component::new(ComponentOptions {
+                    let mut c = Component::init(ComponentOptions {
                         in_ports: HashMap::from([(
                             "in".to_string(),
                             InPort::new(PortOptions {
@@ -202,19 +185,22 @@ mod tests {
                                 ..PortOptions::default()
                             }),
                         )]),
-                        process: Box::new(|this| {
-                            if let Ok(handle) = this.try_lock().as_mut() {
-                                if let Some(packet) = handle.input().get_data("in") {
-                                    assert_eq!(packet, json!("some-data"));
-                                    assert!(handle
-                                        .output()
-                                        .error(&ProcessError("".to_string()))
-                                        .is_err());
-                                    return Ok(ProcessResult::default());
+                        process: Some(
+                            // process
+                            Box::new(|this: Arc<Mutex<ProcessHandle>>| {
+                                if let Ok(handle) = this.try_lock().as_mut() {
+                                    if let Some(packet) = handle.input().get_data("in") {
+                                        assert_eq!(packet, json!("some-data"));
+                                        assert!(handle
+                                            .output()
+                                            .error(&ProcessError("".to_string()))
+                                            .is_err());
+                                        return Ok(ProcessResult::default());
+                                    }
                                 }
-                            }
-                            Ok(ProcessResult::default())
-                        }),
+                                Ok(ProcessResult::default())
+                            }),
+                        ),
                         ..ComponentOptions::default()
                     });
                     let mut s1 = InternalSocket::create(None);
@@ -236,7 +222,7 @@ mod tests {
                     );
                 }
                 'then_it_should_not_throw_errors_if_there_is_a_non_required_error_port: {
-                    let c = Component::new(ComponentOptions {
+                    let c = Component::init(ComponentOptions {
                         in_ports: HashMap::from([(
                             "in".to_string(),
                             InPort::new(PortOptions {
@@ -251,7 +237,8 @@ mod tests {
                                 ..PortOptions::default()
                             }),
                         )]),
-                        process: Box::new(|this| {
+                        // process
+                        process: Some(Box::new(|this| {
                             if let Ok(handle) = this.try_lock().as_mut() {
                                 if let Some(packet) = handle.input().get_data("in") {
                                     assert_eq!(packet, json!("some-data"));
@@ -270,7 +257,7 @@ mod tests {
                             }
 
                             Ok(ProcessResult::default())
-                        }),
+                        })),
                         ..ComponentOptions::default()
                     });
 
@@ -307,27 +294,18 @@ mod tests {
                     });
 
                     let mut s1 = InternalSocket::create(None);
-                    c.clone()
-                        .try_lock()
-                        .unwrap()
-                        .in_ports
-                        .ports
-                        .get_mut("in")
-                        .map(|val| {
-                            val.attach(s1.clone(), None);
-                        });
-                    c.clone().try_lock().unwrap().setup(|_| {
+                    c.in_ports.ports.get_mut("in").map(|val| {
+                        val.attach(s1.clone(), None);
+                    });
+                    c.setup(|_| {
                         assert!(true);
                         Ok(())
                     });
-                    c.clone().try_lock().unwrap().teardown(|_| {
+                    c.teardown(|_| {
                         assert!(true);
                         Ok(())
                     });
-                    c.clone()
-                        .try_lock()
-                        .unwrap()
-                        .bus
+                    c.bus
                         .clone()
                         .try_lock()
                         .unwrap()
@@ -337,6 +315,8 @@ mod tests {
                             }
                             _ => {}
                         });
+
+                    let c = std::sync::Arc::new(std::sync::Mutex::new(c));
                     let _ = Component::start(c.clone());
                     assert!(c.clone().try_lock().unwrap().started);
                     let _ = Component::shutdown(c.clone());
@@ -346,17 +326,18 @@ mod tests {
             }
             'when_with_object_based_ips: {
                 'then_it_should_speak_ip_objects: {
-                    let mut c = Component::new(ComponentOptions {
+                    let mut c = Component::init(ComponentOptions {
                         in_ports: HashMap::from([("in".to_string(), InPort::default())]),
                         out_ports: HashMap::from([("out".to_string(), OutPort::default())]),
-                        process: Box::new(|this| {
+                        // process
+                        process: Some(Box::new(|this| {
                             if let Ok(handle) = this.try_lock().as_mut() {
                                 handle.output().send_done(
                                     &handle.input().get("in").expect("expected inport data"),
                                 );
                             }
                             Ok(ProcessResult::default())
-                        }),
+                        })),
                         ..ComponentOptions::default()
                     });
                     let mut s1 = InternalSocket::create(None);
@@ -413,11 +394,12 @@ mod tests {
                 'then_it_should_support_substreams: {
                     let mut str = std::sync::Arc::new(std::sync::Mutex::new("".to_string()));
                     let mut level = 0;
-                    let mut c = Component::new(ComponentOptions {
+                    let mut c = Component::init(ComponentOptions {
                         forward_brackets: HashMap::new(),
                         in_ports: HashMap::from([("tags".to_string(), InPort::default())]),
                         out_ports: HashMap::from([("html".to_string(), OutPort::default())]),
-                        process: Box::new(move |this| {
+                        // process
+                        process: Some(Box::new(move |this| {
                             let mut str = str.clone();
                             if let Ok(handle) = this.try_lock().as_mut() {
                                 let ip_data = handle
@@ -455,33 +437,36 @@ mod tests {
                                 }
                             }
                             Ok(ProcessResult::default())
-                        }),
+                        })),
                         ..ComponentOptions::default()
                     });
 
-                    let mut d = Component::new(ComponentOptions {
-                        in_ports: HashMap::from([("bang".to_string(), InPort::default())]),
-                        out_ports: HashMap::from([("tags".to_string(), OutPort::default())]),
-                        process: Box::new(|this| {
-                            if let Ok(handle) = this.try_lock().as_mut() {
-                                let mut output = handle.output();
-                                if let Some(_bang) = handle.input().get("bang") {
-                                    output.send(&("tags", IPType::OpenBracket(json!("p"))));
-                                    output.send(&("tags", IPType::OpenBracket(json!("em"))));
-                                    output.send(&("tags", IPType::Data(json!("Hello"))));
-                                    output.send(&("tags", IPType::CloseBracket(json!("em"))));
-                                    output.send(&("tags", IPType::Data(json!(", "))));
-                                    output.send(&("tags", IPType::OpenBracket(json!("strong"))));
-                                    output.send(&("tags", IPType::Data(json!("World!"))));
-                                    output.send(&("tags", IPType::CloseBracket(json!("strong"))));
-                                    output.send(&("tags", IPType::CloseBracket(json!("p"))));
+                    let mut d = Component::init(
+                        ComponentOptions {
+                            in_ports: HashMap::from([("bang".to_string(), InPort::default())]),
+                            out_ports: HashMap::from([("tags".to_string(), OutPort::default())]),
+                            process: // process
+                            Some(Box::new(|this| {
+                                if let Ok(handle) = this.try_lock().as_mut() {
+                                    let mut output = handle.output();
+                                    if let Some(_bang) = handle.input().get("bang") {
+                                        output.send(&("tags", IPType::OpenBracket(json!("p"))));
+                                        output.send(&("tags", IPType::OpenBracket(json!("em"))));
+                                        output.send(&("tags", IPType::Data(json!("Hello"))));
+                                        output.send(&("tags", IPType::CloseBracket(json!("em"))));
+                                        output.send(&("tags", IPType::Data(json!(", "))));
+                                        output.send(&("tags", IPType::OpenBracket(json!("strong"))));
+                                        output.send(&("tags", IPType::Data(json!("World!"))));
+                                        output.send(&("tags", IPType::CloseBracket(json!("strong"))));
+                                        output.send(&("tags", IPType::CloseBracket(json!("p"))));
+                                    }
+                                    output.done(None);
                                 }
-                                output.done(None);   
-                            }
-                            Ok(ProcessResult::default())
-                        }),
-                        ..ComponentOptions::default()
-                    });
+                                Ok(ProcessResult::default())
+                            })),
+                            ..ComponentOptions::default()
+                        }
+                    );
 
                     let mut s1 = InternalSocket::create(None);
                     let mut s2 = InternalSocket::create(None);
@@ -539,37 +524,40 @@ mod tests {
                     );
                 }
                 'then_should_be_able_to_send_ips_to_addressable_connections: {
-                    let mut c = Component::new(ComponentOptions {
-                        forward_brackets: HashMap::new(),
-                        in_ports: HashMap::from([("foo".to_string(), InPort::default())]),
-                        out_ports: HashMap::from([(
-                            "baz".to_string(),
-                            OutPort {
-                                options: PortOptions {
-                                    addressable: true,
-                                    ..PortOptions::default()
+                    let mut c = Component::init(
+                        ComponentOptions {
+                            forward_brackets: HashMap::new(),
+                            in_ports: HashMap::from([("foo".to_string(), InPort::default())]),
+                            out_ports: HashMap::from([(
+                                "baz".to_string(),
+                                OutPort {
+                                    options: PortOptions {
+                                        addressable: true,
+                                        ..PortOptions::default()
+                                    },
+                                    sockets: vec![InternalSocket::create(None); 2],
+                                    ..OutPort::default()
                                 },
-                                sockets: vec![InternalSocket::create(None); 2],
-                                ..OutPort::default()
-                            },
-                        )]),
-                        process: Box::new(move |this| {
-                            if let Ok(handle) = this.try_lock().as_mut() {
-                                if let Some(packet) = handle.input().get("foo") {
-                                    let mut ip = packet;
-                                    ip.index = if ip.datatype == IPType::Data(json!("first")) {
-                                        Some(1)
-                                    } else {
-                                        Some(0)
-                                    };
-                                    ip.owner = None;
-                                    handle.output().send_done(&ip);
+                            )]),
+                            process: // process
+                            Some(Box::new(move |this| {
+                                if let Ok(handle) = this.try_lock().as_mut() {
+                                    if let Some(packet) = handle.input().get("foo") {
+                                        let mut ip = packet;
+                                        ip.index = if ip.datatype == IPType::Data(json!("first")) {
+                                            Some(1)
+                                        } else {
+                                            Some(0)
+                                        };
+                                        ip.owner = None;
+                                        handle.output().send_done(&ip);
+                                    }
                                 }
-                            }
-                            Ok(ProcessResult::default())
-                        }),
-                        ..ComponentOptions::default()
-                    });
+                                Ok(ProcessResult::default())
+                            })),
+                            ..ComponentOptions::default()
+                        }
+                    );
                     let mut sin1 = InternalSocket::create(None);
                     let mut sout1 = InternalSocket::create(None);
                     let mut sout2 = InternalSocket::create(None);

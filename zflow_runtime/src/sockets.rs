@@ -11,11 +11,11 @@ use serde_json::{Map, Value};
 use std::fmt::Debug;
 use std::marker::Send;
 
-use crate::ip::{IPOptions, IPType, IP};
+use crate::{ip::{IPOptions, IPType, IP}, network::NetworkProcess};
 
 #[derive(Debug, Clone)]
 pub struct SocketConnection {
-    // pub process: NetworkProcess,
+    pub process: NetworkProcess,
     pub port: String,
     pub index: Option<usize>,
 }
@@ -54,6 +54,7 @@ pub struct InternalSocket {
     pub(crate) bus: Arc<Mutex<Publisher<SocketEvent>>>,
     pub brackets: Vec<Value>,
     pub errors: Vec<String>,
+    debug: bool
 }
 
 impl Debug for InternalSocket {
@@ -68,6 +69,7 @@ impl Debug for InternalSocket {
             .field("brackets", &self.brackets)
             .field("errors", &self.errors)
             .field("listeners", &"[listeners]")
+            .field("debug", &self.debug)
             .finish()
     }
 }
@@ -84,10 +86,15 @@ impl InternalSocket {
             connected: false,
             brackets: Vec::new(),
             errors: Vec::new(),
+            debug: false
         }
     }
     pub fn create(metadata: Option<Map<String, Value>>) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self::new(metadata)))
+    }
+
+    pub fn set_debug(&mut self, active: bool){
+        self.debug = active;
     }
 
     pub fn emit_event(&mut self, event: SocketEvent) {
@@ -114,9 +121,9 @@ impl InternalSocket {
     /// Sockets have the option to receive data from a delegate function
     /// should the `send` method receive undefined for `data`.  This
     ///  helps in the case of defaulting values.
-    pub fn set_data_delegate<T>(&mut self, fun: T)
+    pub fn set_data_delegate<K>(&mut self, fun: K)
     where
-        T: (FnMut() -> IP) + 'static + Sync + Send,
+        K: (FnMut() -> IP) + 'static + Sync + Send,
     {
         self.data_delegate = Some(Arc::new(Mutex::new(fun)))
     }

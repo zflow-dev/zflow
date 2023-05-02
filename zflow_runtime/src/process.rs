@@ -10,7 +10,7 @@ use log::{log, Level};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::component::ComponentTrait;
+use crate::component::Component;
 use crate::ip::{IPOptions, IPType, IP};
 use crate::port::{normalize_port_name, BasePort, InPort, InPorts, OutPorts};
 use std::collections::{HashMap, VecDeque};
@@ -23,48 +23,48 @@ pub struct ProcessError(pub String);
 
 
 #[derive(Clone, Default)]
-pub struct ProcessHandle<T:ComponentTrait> {
-    pub (crate) context:Arc<Mutex<ProcessContext<T>>>,
+pub struct ProcessHandle {
+    pub (crate) context:Arc<Mutex<ProcessContext>>,
     pub (crate) handler_thread:Arc<Mutex<HandlerThread>>,
-    pub (crate) input: ProcessInput<T>,
-    pub (crate) output: ProcessOutput<T>,
+    pub (crate) input: ProcessInput,
+    pub (crate) output: ProcessOutput,
 }
 
-impl<T:ComponentTrait> ProcessHandle<T> {
+impl ProcessHandle {
     pub fn background_thread(&mut self) ->  Arc<Mutex<HandlerThread>> {
         self.handler_thread.clone()
     }
-    pub fn context(&mut self) -> Arc<Mutex<ProcessContext<T>>> {
+    pub fn context(&mut self) -> Arc<Mutex<ProcessContext>> {
         self.context.clone()
     }
 
-    pub fn input(&mut self) -> ProcessInput<T> {
+    pub fn input(&mut self) -> ProcessInput {
         self.input.clone()
     }
 
-    pub fn output(&mut self) -> ProcessOutput<T> {
+    pub fn output(&mut self) -> ProcessOutput {
         self.output.clone()
     }
 }
 
-pub type ProcessFunc<T> = dyn (FnMut(
-    Arc<Mutex<ProcessHandle<T>>>,
-) ->Result<ProcessResult<T>, ProcessError>)
+pub type ProcessFunc = dyn (FnMut(
+    Arc<Mutex<ProcessHandle>>,
+) ->Result<ProcessResult, ProcessError>)
 + Sync + Send;
 
+
+
 #[derive(Clone, Default)]
-pub struct ProcessResult<T: ComponentTrait> {
+pub struct ProcessResult {
     pub resolved: bool,
-    pub bracket_closing_before: Vec<Arc<Mutex<ProcessContext<T>>>>,
-    pub bracket_closing_after: Vec<Arc<Mutex<ProcessContext<T>>>>,
-    pub bracket_context: Option<HashMap<String, Vec<Arc<Mutex<ProcessContext<T>>>>>>,
+    pub bracket_closing_before: Vec<Arc<Mutex<ProcessContext>>>,
+    pub bracket_closing_after: Vec<Arc<Mutex<ProcessContext>>>,
+    pub bracket_context: Option<HashMap<String, Vec<Arc<Mutex<ProcessContext>>>>>,
     pub data: Value,
     pub outputs: HashMap<String, HashMap<String, Vec<IP>>>,
 }
 
-impl<T> Debug for ProcessResult<T>
-where
-    T: ComponentTrait,
+impl Debug for ProcessResult
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessResult")
@@ -79,19 +79,17 @@ where
 }
 
 #[derive(Clone, Default)]
-pub struct ProcessInput<T: ComponentTrait> {
+pub struct ProcessInput {
     pub in_ports: InPorts,
-    pub context: Arc<Mutex<ProcessContext<T>>>,
-    pub component: Arc<Mutex<T>>,
+    pub context: Arc<Mutex<ProcessContext>>,
+    pub component: Arc<Mutex<Component>>,
     pub ip:IP,
-    pub result:Arc<Mutex<ProcessResult<T>>>,
+    pub result:Arc<Mutex<ProcessResult>>,
     pub scope:Option<String>,
     pub port:InPort
 }
 
-impl<T> Debug for ProcessInput<T>
-where
-    T: ComponentTrait,
+impl Debug for ProcessInput
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessInput")
@@ -105,9 +103,7 @@ where
     }
 }
 
-impl<T> ProcessInput<T>
-where
-    T: ComponentTrait,
+impl ProcessInput
 {
     // pub fn new(
     //     in_ports: InPorts,
@@ -420,17 +416,15 @@ where
 }
 
 #[derive(Clone, Default)]
-pub struct ProcessOutput<T: ComponentTrait> {
+pub struct ProcessOutput {
     pub out_ports: OutPorts,
-    pub context: Arc<Mutex<ProcessContext<T>>>,
-    pub component: Arc<Mutex<T>>,
+    pub context: Arc<Mutex<ProcessContext>>,
+    pub component: Arc<Mutex<Component>>,
     pub ip:IP,
-    pub result:Arc<Mutex<ProcessResult<T>>>,
+    pub result:Arc<Mutex<ProcessResult>>,
     pub scope:Option<String>
 }
-impl<T> Debug for ProcessOutput<T>
-where
-    T: ComponentTrait,
+impl Debug for ProcessOutput
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessOutput")
@@ -444,9 +438,7 @@ where
     }
 }
 
-impl<T> ProcessOutput<T>
-where
-    T: ComponentTrait,
+impl ProcessOutput
 {
     // pub fn new(
     //     out_ports: OutPorts,
@@ -515,7 +507,7 @@ where
             } else {
                 IP::new(IPType::Data(data.clone()), IPOptions::default())
             }
-        } else if let Some(res) = packet.downcast_ref::<ProcessResult<T>>() {
+        } else if let Some(res) = packet.downcast_ref::<ProcessResult>() {
             IP::new(IPType::Data(res.clone().data), IPOptions::default())
         } else {
             return;
@@ -648,7 +640,7 @@ where
                         }
                         false
                     })
-                    .collect::<VecDeque<&Arc<Mutex<ProcessResult<T>>>>>();
+                    .collect::<VecDeque<&Arc<Mutex<ProcessResult>>>>();
                 let pos = {
                     let pos = results_only
                         .iter()
@@ -768,22 +760,20 @@ where
 }
 
 #[derive(Clone)]
-pub struct ProcessContext<T: ComponentTrait> {
+pub struct ProcessContext {
     pub close_ip: Option<IP>,
     pub ip: IP,
-    pub component: Arc<Mutex<T>>,
+    pub component: Arc<Mutex<Component>>,
     pub ports: Vec<String>,
     pub source: String,
     pub data: Value,
-    pub result: Arc<Mutex<ProcessResult<T>>>,
+    pub result: Arc<Mutex<ProcessResult>>,
     pub activated: bool,
     pub deactivated: bool,
     pub scope: Option<String>,
 }
 
-impl<T> Default for ProcessContext<T>
-where
-    T: ComponentTrait,
+impl Default for ProcessContext
 {
     fn default() -> Self {
         Self {
@@ -801,9 +791,7 @@ where
     }
 }
 
-impl<T> Debug for ProcessContext<T>
-where
-    T: ComponentTrait,
+impl Debug for ProcessContext
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessContext")
@@ -821,9 +809,7 @@ where
     }
 }
 
-impl<T> ProcessContext<T>
-where
-    T: ComponentTrait,
+impl ProcessContext
 {
     // pub fn new(ip: IP, port: InPort<T>, result: Arc<Mutex<ProcessResult<T>>>) -> Arc<Mutex<Self>> {
     //     Arc::new(Mutex::new(Self {
@@ -840,7 +826,7 @@ where
     //     }))
     // }
 
-    pub fn activate(_context: Arc<Mutex<ProcessContext<T>>>, _component: Arc<Mutex<T>>) {
+    pub fn activate(_context: Arc<Mutex<ProcessContext>>, _component: Arc<Mutex<Component>>) {
         if let Ok(context) = _context.clone().try_lock().as_mut() {
             if let Ok(component) = _component.clone().try_lock().as_mut() {
                 if context.result.clone().try_lock().unwrap().resolved
@@ -857,7 +843,7 @@ where
         }
     }
 
-    pub fn deactivate(_context: Arc<Mutex<ProcessContext<T>>>, _component: Arc<Mutex<T>>) {
+    pub fn deactivate(_context: Arc<Mutex<ProcessContext>>, _component: Arc<Mutex<Component>>) {
         if let Ok(context) = _context.clone().try_lock().as_mut() {
             if let Ok(component) = _component.clone().try_lock().as_mut() {
                 if !context.result.clone().try_lock().unwrap().resolved {

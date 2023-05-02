@@ -54,7 +54,7 @@ impl EventListener for Graph {
     fn connect(
         &mut self,
         name: &'static str,
-        rec: impl FnMut(&mut Self, Value) -> () + 'static,
+        rec: impl FnMut(&mut Self, Value) -> () + Send + Sync +  'static,
         once: bool,
     ) {
         if !self.listeners.contains_key(name) {
@@ -1460,5 +1460,9 @@ impl Graph {
             io::ErrorKind::InvalidData,
             "Can't load file",
         ))
+    }
+
+    pub fn to_static(&self) -> &'static mut Graph {
+        Box::leak(Box::new(self.clone()))
     }
 }

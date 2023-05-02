@@ -21,10 +21,10 @@ use crate::{
     errors::async_transform,
     ip::{IPOptions, IPType, IP},
     process::ValidatorFn,
-    sockets::{InternalSocket, SocketEvent},
+    sockets::{InternalSocket, SocketEvent}, component::Component,
 };
 
-#[dyn_cast(PortTrait, BasePort)]
+// #[dyn_cast(PortTrait, BasePort)]
 pub trait PortTrait {}
 
 pub trait BasePort: PortTrait + Debug {
@@ -90,7 +90,7 @@ impl Default for PortOptions {
 #[derive(Clone, Default)]
 pub struct InPort {
     pub node: String,
-    // pub node_instance: Option<Arc<Mutex<T>>>,
+    pub (crate) node_instance: Option<Arc<Mutex<Component>>>,
     pub name: String,
     pub options: PortOptions,
     pub sockets: Vec<Arc<Mutex<InternalSocket>>>,
@@ -121,7 +121,7 @@ impl Debug for InPort {
     }
 }
 
-#[dyn_cast(PortTrait, BasePort)]
+// #[dyn_cast(PortTrait, BasePort)]
 impl PortTrait for InPort {}
 
 impl BasePort for InPort {
@@ -437,7 +437,7 @@ impl InPort {
     pub fn new(options: PortOptions) -> Self {
         Self {
             node: "".to_string(),
-            // node_instance: None,
+            node_instance: None,
             name: "".to_string(),
             options,
             sockets: Vec::new(),
@@ -451,7 +451,7 @@ impl InPort {
             subscribers: Vec::new(),
         }
     }
-    fn has_default(&self) -> bool {
+    pub fn has_default(&self) -> bool {
         match self.options.data_type.clone() {
             IPType::Data(data) | IPType::All(data) => {
                 if data.is_null() {
@@ -868,7 +868,7 @@ impl PortsTrait for InPorts {
 #[derive(Clone, Default)]
 pub struct OutPort {
     pub node: String,
-    // pub node_instance: Option<Arc<Mutex>>,
+    pub (crate) node_instance: Option<Arc<Mutex<Component>>>,
     pub name: String,
     pub options: PortOptions,
     pub sockets: Vec<Arc<Mutex<InternalSocket>>>,
@@ -892,7 +892,7 @@ impl Debug for OutPort {
     }
 }
 
-#[dyn_cast(PortTrait, BasePort)]
+// #[dyn_cast(PortTrait, BasePort)]
 impl PortTrait for OutPort {}
 impl BasePort for OutPort {
     fn attach(&mut self, socket: Arc<Mutex<InternalSocket>>, index: Option<usize>) {
@@ -1060,7 +1060,7 @@ impl OutPort {
     pub fn new(options: PortOptions) -> Self {
         Self {
             node: "".to_string(),
-            // node_instance: None,
+            node_instance: None,
             name: "".to_string(),
             bus: Arc::new(Mutex::new(Publisher::new())),
             options,
@@ -1161,7 +1161,7 @@ impl OutPort {
         sockets.iter().foreach(|socket, _| {
             let socket = socket.clone();
             futures.push(Box::pin(async move {
-                if let Ok(socket) = socket.try_lock().as_mut().as_mut() {
+                if let Ok(socket) = socket.try_lock().as_mut() {
                     socket.end_group()?;
                 }
                 Ok(())
@@ -1178,7 +1178,7 @@ impl OutPort {
         sockets.iter().for_each(|socket| {
             let socket = socket.clone();
             futures.push(Box::pin(async move {
-                if let Ok(socket) = socket.clone().try_lock().as_mut().as_mut() {
+                if let Ok(socket) = socket.clone().try_lock().as_mut() {
                     socket.disconnect()?;
                 }
                 Ok(())

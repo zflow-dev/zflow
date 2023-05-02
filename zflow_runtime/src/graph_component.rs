@@ -2,10 +2,10 @@ use std::{
     any::Any,
     collections::{HashMap, VecDeque},
     fmt::Debug,
-    sync::{Arc, Mutex}
+    sync::{Arc, Mutex},
 };
 
-use fp_rust::{common::SubscriptionFunc, publisher::Publisher, handler::HandlerThread};
+use fp_rust::{common::SubscriptionFunc, handler::HandlerThread, publisher::Publisher};
 use serde::Deserialize;
 use serde_json::Value;
 use zflow::graph::{graph::Graph, types::GraphJson};
@@ -29,8 +29,8 @@ use crate::{
 /// another network
 #[derive(Clone)]
 pub struct GraphComponent {
-    pub loader: Option<ComponentLoader<Self>>,
-    pub network: Option<Arc<Mutex<dyn BaseNetwork<Self> + Send + Sync>>>,
+    pub loader: Option<ComponentLoader>,
+    pub network: Option<Arc<Mutex<dyn BaseNetwork + Send + Sync + 'static>>>,
     pub metadata: HashMap<String, Value>,
     pub in_ports: InPorts,
     pub out_ports: OutPorts,
@@ -46,27 +46,31 @@ pub struct GraphComponent {
     pub activate_on_input: bool,
     /// Bracket forwarding rules. By default we forward
     pub forward_brackets: HashMap<String, Vec<String>>,
-    pub bracket_context: BracketContext<Self>,
+    pub bracket_context: BracketContext,
     pub component_name: Option<String>,
     pub node_id: String,
     /// Queue for handling ordered output packets
-    pub output_q: VecDeque<Arc<Mutex<ProcessResult<Self>>>>,
+    pub output_q: VecDeque<Arc<Mutex<ProcessResult>>>,
     pub base_dir: String,
     /// Initially the component is not started
     pub started: bool,
     pub starting: bool,
     pub load: usize,
-    pub(crate) handle: Option<Arc<Mutex<ProcessFunc<Self>>>>,
+    pub(crate) handle: Option<Arc<Mutex<ProcessFunc>>>,
     pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
-    pub (crate) internal_thread:  Arc<Mutex<HandlerThread>>,
+    pub(crate) internal_thread: Arc<Mutex<HandlerThread>>,
     pub auto_ordering: bool,
-    setup_fn: Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>,
-    teardown_fn: Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>,
+    pub(crate) setup_fn: Option<
+        Arc<Mutex<dyn FnMut(Arc<Mutex>) -> Result<(), String> + Send + Sync + 'static>>,
+    >,
+    pub(crate) teardown_fn: Option<
+        Arc<Mutex<dyn FnMut(Arc<Mutex>) -> Result<(), String> + Send + Sync + 'static>>,
+    >,
     tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
 }
 
 impl BaseComponentTrait for GraphComponent {
-    type Handle = Arc<Mutex<ProcessFunc<Self>>>;
+    type Handle = Arc<Mutex<ProcessFunc>>;
     type Comp = GraphComponent;
 
     fn set_started(&mut self, started: bool) {
@@ -112,19 +116,19 @@ impl BaseComponentTrait for GraphComponent {
         self.handle = Some(Arc::new(Mutex::new(handle)));
     }
 
-    fn get_inports(&self) -> InPorts {
+    fn get_inports(&self) -> InPorts<Self::Comp> {
         self.in_ports.clone()
     }
 
-    fn get_inports_mut(&mut self) -> &mut InPorts {
+    fn get_inports_mut(&mut self) -> &mut InPorts<Self::Comp> {
         &mut self.in_ports
     }
 
-    fn get_outports(&self) -> OutPorts {
+    fn get_outports(&self) -> OutPorts<Self::Comp> {
         self.out_ports.clone()
     }
 
-    fn get_outports_mut(&mut self) -> &mut OutPorts {
+    fn get_outports_mut(&mut self) -> &mut OutPorts<Self::Comp> {
         &mut self.out_ports
     }
 
@@ -140,11 +144,11 @@ impl BaseComponentTrait for GraphComponent {
         self.ordered
     }
 
-    fn get_output_queue(&self) -> VecDeque<Arc<Mutex<ProcessResult<Self>>>> {
+    fn get_output_queue(&self) -> VecDeque<Arc<Mutex<ProcessResult>>> {
         self.output_q.clone()
     }
 
-    fn get_output_queue_mut(&mut self) -> &mut VecDeque<Arc<Mutex<ProcessResult<Self>>>> {
+    fn get_output_queue_mut(&mut self) -> &mut VecDeque<Arc<Mutex<ProcessResult>>> {
         &mut self.output_q
     }
 
@@ -162,13 +166,15 @@ impl BaseComponentTrait for GraphComponent {
 
     fn get_teardown_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>> {
+    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex>) -> Result<(), String> + Send + Sync + 'static>>>
+    {
         self.teardown_fn.clone()
     }
 
     fn get_setup_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>> {
+    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex>) -> Result<(), String> + Send + Sync + 'static>>>
+    {
         self.setup_fn.clone()
     }
 
@@ -227,10 +233,6 @@ impl BaseComponentTrait for GraphComponent {
             .publish(ComponentEvent::Ready);
     }
 
-    fn set_loader(&mut self, loader: ComponentLoader<Self::Comp>) {
-        self.loader = Some(loader);
-    }
-
     fn set_description(&mut self, desc: String) {
         self.description = desc;
     }
@@ -238,13 +240,20 @@ impl BaseComponentTrait for GraphComponent {
     fn get_handler_thread(&self) -> Arc<Mutex<HandlerThread>> {
         self.internal_thread.clone()
     }
+
+    fn get_network(&self) -> Option<Arc<Mutex<dyn BaseNetwork<Self::Comp> + Send + Sync>>> {
+        self.network.clone()
+    }
 }
 
 impl ComponentCallbacks for GraphComponent {
     /// ### Setup
     /// Provide the setUp function to be called for component-specific initialization.
     /// Called at network start-up.
-    fn setup(&mut self, setup_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static) {
+    fn setup(
+        &mut self,
+        setup_fn: impl FnMut(Arc<Mutex>) -> Result<(), String> + Send + Sync + 'static,
+    ) {
         // self.setup_fn = Some(Arc::new(Mutex::new(setup_fn)));
     }
 
@@ -253,17 +262,15 @@ impl ComponentCallbacks for GraphComponent {
     /// Called at network shutdown.
     fn teardown(
         &mut self,
-        teardown_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static,
+        teardown_fn: impl FnMut(Arc<Mutex>) -> Result<(), String> + Send + Sync + 'static,
     ) {
         // self.teardown_fn = Some(Arc::new(Mutex::new(teardown_fn)));
     }
 
     /// Subscribe to component's events
-    fn on(
-        &mut self,
-        callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static,
-    ) {
-        self.tracked_signals.push(self.bus.clone().try_lock().unwrap().subscribe_fn(callback));
+    fn on(&mut self, callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static) {
+        self.tracked_signals
+            .push(self.bus.clone().try_lock().unwrap().subscribe_fn(callback));
     }
 }
 
@@ -302,7 +309,7 @@ impl Default for GraphComponent {
             load: 0,
             handle: None,
             bus: Default::default(),
-            internal_thread:  Arc::new(Mutex::new(HandlerThread::default())),
+            internal_thread: Arc::new(Mutex::new(HandlerThread::default())),
             auto_ordering: Default::default(),
             setup_fn: Default::default(),
             teardown_fn: Default::default(),
@@ -347,8 +354,8 @@ impl Debug for GraphComponent {
 impl GraphComponent {
     pub fn new(
         metadata: Option<HashMap<String, Value>>,
-        options: Option<ComponentOptions<Self>>,
-    ) -> Arc<Mutex<Self>> {
+        options: Option<ComponentOptions>,
+    ) -> Arc<Mutex> {
         let mut s = Self::default();
 
         if let Some(metadata) = metadata {
@@ -379,16 +386,20 @@ impl GraphComponent {
                     }
                 });
             });
-           
-            s.setup_fn = Some(Arc::new(Mutex::new(move |this:Arc<Mutex<Self>>|{
-                return GraphComponent::set_up(this.clone())
+
+            s.setup_fn = Some(Arc::new(Mutex::new(move |this: Arc<Mutex>| {
+                return GraphComponent::set_up(this.clone());
             })));
-            
-            s.teardown_fn = Some(Arc::new(Mutex::new(move |this:Arc<Mutex<Self>>|{
-                return GraphComponent::tear_down(this.clone())
+
+            s.teardown_fn = Some(Arc::new(Mutex::new(move |this: Arc<Mutex>| {
+                return GraphComponent::tear_down(this.clone());
             })));
         }
         _s.clone()
+    }
+
+    pub fn set_loader(&mut self, loader: ComponentLoader) {
+        self.loader = Some(loader);
     }
 
     pub fn setup_graph(
@@ -461,7 +472,7 @@ impl GraphComponent {
 
     pub fn subscribe_network(
         component: Arc<Mutex<impl ComponentTrait>>,
-        network: Arc<Mutex<dyn BaseNetwork<Self> + Send + Sync>>,
+        network: Arc<Mutex<dyn BaseNetwork + Send + Sync>>,
     ) {
         if let Ok(network) = network.clone().try_lock() {
             network
@@ -471,10 +482,10 @@ impl GraphComponent {
                 .subscribe_fn(move |event| {
                     if let Ok(component) = component.clone().try_lock().as_mut() {
                         match event.as_ref() {
-                            NetworkEvent::Start => {
+                            NetworkEvent::Start(_) => {
                                 // activate
                             }
-                            NetworkEvent::End => {
+                            NetworkEvent::End(_) => {
                                 // deactivate
                             }
                             _ => {}
@@ -495,14 +506,15 @@ impl GraphComponent {
         }
         // First we check disambiguated exported ports
         if let Ok(network) = self.network.clone().unwrap().try_lock().as_mut() {
-            for key in network.get_graph().inports.keys() {
-                if let Some(priv_port) = network.get_graph().inports.get(key) {
-                    if priv_port.process == name && priv_port.port == port_name {
-                        return Some(key.clone());
+            if let Ok(graph) = network.get_graph().try_lock() {
+                for key in graph.inports.keys() {
+                    if let Some(priv_port) = graph.inports.get(key) {
+                        if priv_port.process == name && priv_port.port == port_name {
+                            return Some(key.clone());
+                        }
                     }
                 }
             }
-            
         }
         // Component has exported ports and this isn't one of them
         None
@@ -519,10 +531,12 @@ impl GraphComponent {
         }
         // First we check disambiguated exported ports
         if let Ok(network) = self.network.clone().unwrap().try_lock().as_mut() {
-            for key in network.get_graph().outports.keys() {
-                if let Some(priv_port) = network.get_graph().outports.get(key) {
-                    if priv_port.process == name && priv_port.port == port_name {
-                        return Some(key.clone());
+            if let Ok(graph) = network.get_graph().try_lock() {
+                for key in graph.outports.keys() {
+                    if let Some(priv_port) = graph.outports.get(key) {
+                        if priv_port.process == name && priv_port.port == port_name {
+                            return Some(key.clone());
+                        }
                     }
                 }
             }
@@ -532,11 +546,14 @@ impl GraphComponent {
     }
 
     pub fn find_edge_ports(
-        this_graph: Arc<Mutex<Self>>,
+        this_graph: Arc<Mutex>,
         name: &str,
-        process: NetworkProcess<impl ComponentTrait>,
+        process: NetworkProcess,
     ) -> bool {
-        let binding = process.component.clone();
+        if process.component.is_none() {
+            return false;
+        }
+        let binding = process.component.clone().unwrap();
         let process_component = binding
             .try_lock()
             .expect("expected process component instance");
@@ -618,7 +635,7 @@ impl GraphComponent {
         return true;
     }
 
-    fn set_up(component: Arc<Mutex<Self>>) -> Result<(), String> {
+    pub(crate) fn set_up(component: Arc<Mutex>) -> Result<(), String> {
         let binding = component.clone();
         let mut binding = binding.try_lock();
         let _component = binding.as_mut().unwrap();
@@ -630,19 +647,22 @@ impl GraphComponent {
                     let mut binding = component.try_lock();
                     let _component = binding.as_mut().unwrap();
                     match event.as_ref() {
-                        ComponentEvent::Ready => if !_component.is_ready() {
-                            GraphComponent::set_up(component.clone()).expect("expected graph component to setup");
-                        },
+                        ComponentEvent::Ready => {
+                            if !_component.is_ready() {
+                                GraphComponent::set_up(component.clone())
+                                    .expect("expected graph component to setup");
+                            }
+                        }
                         _ => {}
                     }
                 });
             }
         }
         if _component.network.is_none() {
-            return Ok(())
+            return Ok(());
         }
 
-        if let Ok(network) = _component.network.clone().unwrap().try_lock() {
+        if let Ok(network) = _component.network.clone().unwrap().try_lock().as_mut() {
             network.start()?;
             _component.starting = false;
         }
@@ -650,14 +670,14 @@ impl GraphComponent {
         Ok(())
     }
 
-    pub fn tear_down(component: Arc<Mutex<Self>>)-> Result<(), String> {
+    pub fn tear_down(component: Arc<Mutex>) -> Result<(), String> {
         let binding = component.clone();
         let mut binding = binding.try_lock();
         let _component = binding.as_mut().unwrap();
         if _component.network.is_none() {
-            return Ok(())
+            return Ok(());
         }
-        if let Ok(network) = _component.network.clone().unwrap().try_lock() {
+        if let Ok(network) = _component.network.clone().unwrap().try_lock().as_mut() {
             return network.stop();
         }
 

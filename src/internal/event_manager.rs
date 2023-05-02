@@ -3,7 +3,7 @@ use std::fmt::Debug;
 
 use serde_json::Value;
 
-pub(crate) type TypeFn<T> = Arc<Mutex<(dyn FnMut(&mut T, Value) -> () + 'static)>>;
+pub(crate) type TypeFn<T> = Arc<Mutex<(dyn FnMut(&mut T, Value) -> () + Send + Sync + 'static)>>;
 
 #[derive(Clone)]
 pub struct EventActor<T> {
@@ -32,7 +32,7 @@ pub trait EventListener {
     fn connect(
         &mut self,
         name: &'static str,
-        rec: impl FnMut(&mut Self, Value)->() + 'static,
+        rec: impl FnMut(&mut Self, Value)->() + Send + Sync + 'static,
         once: bool,
     );
 }
