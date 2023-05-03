@@ -41,7 +41,7 @@ mod tests {
                 let graph = Graph::new("my_graph", false);
                 let test_comp: Box<dyn GraphDefinition> =
                     Box::new(Component::new(ComponentOptions {
-                        process: Some(Box::new(|handle| Ok(ProcessResult::default()))),
+                        process: Some(Box::new(|_| Ok(ProcessResult::default()))),
                         ..ComponentOptions::default()
                     }));
                 let graph_comp:Box<dyn GraphDefinition> = Box::new(Component::new(ComponentOptions {
