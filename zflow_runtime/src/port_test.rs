@@ -230,7 +230,7 @@ mod tests {
                     p.attach(s2.clone(), None);
                     p.attach(s3.clone(), None);
 
-                    assert_eq!(p.list_attached(), vec![0, 1, 2]);
+                    assert_eq!(p.list_attached(), vec![0_usize, 1_usize, 2_usize]);
 
                     s1.clone()
                         .try_lock()

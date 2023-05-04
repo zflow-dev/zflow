@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex}, path::{Path, PathBuf}, str::FromStr,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::{Arc, Mutex},
+    thread,
 };
 
 use poll_promise::Promise;
@@ -10,7 +13,7 @@ use zflow::graph::types::GraphJson;
 
 use crate::{
     component::{Component, GraphDefinition},
-    registry::{ComponentSource, DefaultRegistry, RuntimeRegistry},
+    registry::{ComponentSource, DefaultRegistry, RuntimeRegistry}, process,
 };
 
 use is_url::is_url;
@@ -36,7 +39,7 @@ pub struct ComponentLoader {
     pub base_dir: String,
     pub library_icons: HashMap<String, String>,
     pub(crate) processing:
-        Option<Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>>>,
+        Option<Vec<Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>>>>,
     pub ready: bool,
     pub registry: Arc<Mutex<dyn RuntimeRegistry + Send>>,
 }
@@ -81,27 +84,27 @@ impl ComponentLoader {
     pub fn list_components(
         &mut self,
     ) -> Result<Arc<Mutex<HashMap<String, Box<dyn GraphDefinition>>>>, String> {
-        if let Some(processing) = self.processing.as_mut() {
-            let p = processing.block_until_ready();
-            self.ready = true;
-            self.components = Arc::new(Mutex::new(HashMap::new()));
-            let comps = self.components.clone();
-            if let Ok(comp) = comps.clone().try_lock().as_mut() {
-                if let Ok(p) = p {
-                    // comp.extend(p);
-                    for (name, def) in p {
-                        comp.insert(name.clone(), dyn_clone::clone_box(&**def));
+        if let Some(processings) = self.processing.as_mut() {
+            loop {
+                    let processing = processings.remove(0);
+                    let p = processing.block_until_ready();
+                    let comps = self.components.clone();
+                    if let Ok(comp) = comps.clone().try_lock().as_mut() {
+                        if let Ok(p) = p {
+                            for (name, def) in p {
+                                comp.insert(name.clone(), dyn_clone::clone_box(&**def));
+                            }
+                        }
                     }
+                
+                if processings.is_empty() {
+                    self.ready = true;
+                    self.processing = None;
+                    return Ok(self.components.clone());
                 }
             }
-            // loop {
-            //     if let Some(p) = processing.ready() {
-
-            //     }
-            // }
-            self.processing = None;
-            return Ok(self.components.clone());
-        } else if self.ready {
+        }
+        if self.ready {
             let binding = self.components.clone();
             let components = binding
                 .try_lock()
@@ -114,13 +117,12 @@ impl ComponentLoader {
         } else {
             self.components = Arc::new(Mutex::new(HashMap::new()));
             self.ready = false;
-            self.processing = Some(
-                self.registry
-                    .clone()
-                    .try_lock()
-                    .expect("Could not instantiate registry")
-                    .register(self),
-            );
+            self.processing = Some(vec![self
+                .registry
+                .clone()
+                .try_lock()
+                .expect("Could not instantiate registry")
+                .register(self)]);
             return self.list_components();
         }
     }
@@ -234,7 +236,12 @@ impl ComponentLoader {
                 if Path::new(path).extension().is_some() || path.contains(std::path::is_separator) {
                     if let Ok(buf) = PathBuf::from_str(&self.base_dir).as_mut() {
                         buf.push(path);
-                        return registry.dynamic_load(name, buf.as_os_str().to_str().expect("expected valid path string"));
+                        return registry.dynamic_load(
+                            name,
+                            buf.as_os_str()
+                                .to_str()
+                                .expect("expected valid path string"),
+                        );
                     }
                 }
             }
@@ -350,6 +357,22 @@ impl ComponentLoader {
             .as_mut()
             .expect("Expected component list container")
             .insert(f_name, Box::new(component));
+    }
+
+    /// With `register_loader` you can register custom component
+    /// loaders. They will be called immediately and can register
+    /// any components or graphs they wish.
+    pub fn register_loader(
+        &mut self,
+        loader: impl FnOnce(&mut Self) -> Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>>,
+    ) {
+        let loading_components = (loader)(self);
+        if let Some(processing) = self.processing.as_mut() {
+            processing.push(loading_components);
+            return;
+        }
+
+        self.processing = Some(vec![loading_components]);
     }
 
     /// With `set_source` you can register a component by providing

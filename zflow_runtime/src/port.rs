@@ -901,7 +901,7 @@ impl BasePort for OutPort {
             idx = Some(self.sockets.len());
         }
 
-        if let Ok(socket) = socket.clone().try_lock().as_mut().as_mut() {
+        if let Ok(socket) = socket.clone().try_lock().as_mut() {
             socket.index = idx.unwrap();
             let _ = socket.connect().expect("expected to connect");
         }
@@ -1044,6 +1044,7 @@ impl BasePort for OutPort {
         let mut attached = Vec::new();
 
         for socket in self.sockets.clone() {
+            println!("{}", socket.clone().try_lock().unwrap().index);
             attached.push(socket.clone().try_lock().unwrap().index);
         }
 
@@ -1064,7 +1065,7 @@ impl OutPort {
             name: "".to_string(),
             bus: Arc::new(Mutex::new(Publisher::new())),
             options,
-            sockets: vec![InternalSocket::create(None); 1024],
+            sockets: Vec::new(),
             cache: HashMap::new(),
             subscribers: Vec::new(),
         }

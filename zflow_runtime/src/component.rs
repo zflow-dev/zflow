@@ -50,107 +50,6 @@ pub enum ComponentEvent {
     End,
 }
 
-/// Base Component trait that provides a way to instantiate and extend ZFLow components
-// pub trait BaseComponentTrait {
-//     type Handle;
-//     type Comp;
-
-//     // fn set_loader(&mut self, loader: ComponentLoader);
-//     fn get_name(&self) -> Option<String>;
-//     fn set_name(&mut self, name: String);
-//     fn get_node_id(&self) -> String;
-//     fn set_node_id(&mut self, id: String);
-//     fn get_description(&self) -> String;
-//     fn set_description(&mut self, desc: String);
-//     fn get_icon(&self) -> String;
-//     fn set_icon(&mut self, icon: String);
-//     fn get_base_dir(&self) -> String;
-//     fn set_base_dir(&mut self, dir: String);
-//     fn get_handle(&self) -> Option<Self::Handle>;
-//     fn set_handle(&mut self, handle: Box<ProcessFunc>);
-//     fn get_handler_thread(&self) -> Arc<Mutex<HandlerThread>>;
-
-//     fn get_network(&self) -> Option<Arc<Mutex<dyn BaseNetwork + Send + Sync>>>;
-
-//     fn prepare_forwarding(&mut self) {
-//         self.get_forward_brackets().keys().for_each(|inport| {
-//             if let Some(out_ports) = self.get_forward_brackets().get(inport) {
-//                 if !self.get_inports().ports.contains_key(inport) {
-//                     self.get_forward_brackets_mut().remove(inport);
-//                 }
-
-//                 let mut temp: Vec<String> = Vec::new();
-//                 out_ports.iter().for_each(|outport| {
-//                     if self.get_outports().ports.contains_key(outport) {
-//                         temp.push(outport.clone());
-//                     }
-//                 });
-//                 if temp.is_empty() {
-//                     self.get_forward_brackets_mut().remove(inport);
-//                 } else {
-//                     self.get_forward_brackets_mut().insert(inport.clone(), temp);
-//                 }
-//             }
-//         });
-//     }
-//     fn get_inports(&self) -> InPorts;
-//     fn get_inports_mut(&mut self) -> &mut InPorts;
-//     fn get_outports(&self) -> OutPorts;
-//     fn get_outports_mut(&mut self) -> &mut OutPorts;
-//     /// Method for checking whether the component sends packets
-//     /// in the same order they were received.
-//     fn is_ordered(&self) -> bool;
-//     fn get_auto_ordering(&self) -> bool;
-//     fn set_auto_ordering(&mut self, auto_ordering: bool);
-//     fn get_ordered(&self) -> bool;
-
-//     fn get_output_queue(&self) -> VecDeque<Arc<Mutex<ProcessResult>>>;
-//     fn get_output_queue_mut(&mut self) -> &mut VecDeque<Arc<Mutex<ProcessResult>>>;
-//     fn get_load(&self) -> usize;
-//     fn set_load(&mut self, load: usize);
-
-//     fn get_bracket_context_val(&self) -> BracketContext;
-//     fn get_bracket_context_val_mut(&mut self) -> &mut BracketContext;
-
-//     fn get_forward_brackets(&self) -> HashMap<String, Vec<String>>;
-//     fn get_forward_brackets_mut(&mut self) -> &mut HashMap<String, Vec<String>>;
-
-//     fn set_started(&mut self, started: bool);
-//     fn is_started(&self) -> bool;
-//     fn is_subgraph(&self) -> bool;
-//     fn is_ready(&self) -> bool;
-//     fn set_ready(&mut self, ready: bool);
-
-//     fn get_teardown_function(
-//         &self,
-//     ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>;
-
-//     fn get_setup_function(
-//         &self,
-//     ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>;
-
-//     /// Convenience method to find all the event subscribers for this component: Used internally
-//     fn get_subscribers(&self) -> Vec<Arc<SubscriptionFunc<ComponentEvent>>>;
-//     fn get_subscribers_mut(&mut self) -> &mut Vec<Arc<SubscriptionFunc<ComponentEvent>>>;
-//     /// Convenience method to access the internal event publisher for this component: Used internally
-//     fn get_publisher(&self) -> Arc<Mutex<Publisher<ComponentEvent>>>;
-
-//     /// Clear bracket context
-//     fn clear_bracket_context(&mut self);
-// }
-
-// pub trait ComponentTrait:
-//     BaseComponentTrait<Handle = Arc<Mutex<ProcessFunc>>, Comp = Self>
-//     + ComponentCallbacks
-//     // + Sync
-//     + Send
-//     + Clone
-//     + Default
-//     + Debug
-//     + 'static
-// {
-// }
-
 pub trait GraphDefinition: DynClone + Send + Sync + 'static {
     fn to_any(&self) -> &dyn Any;
 }
@@ -1794,9 +1693,7 @@ impl Component {
         graph: Option<&dyn GraphDefinition>,
     ) -> Result<(), String> {
         if let Ok(component) = component.clone().try_lock().as_mut() {
-            // if !component.is_subgraph() {
-            //     return Ok(());
-            // }
+    
             component.set_ready(false);
 
             if let Some(g) = graph {
