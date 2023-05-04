@@ -1,3 +1,5 @@
+[![Rust](https://github.com/darmie/zflow/actions/workflows/rust.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/rust.yml)
+
 # ZFlow - FBP Graph Library for Rust
 
 This library provides a Rust implementation of [Flow-Based Programming graphs](https://flow-based.org/). There are two areas covered:
