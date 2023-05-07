@@ -1,4 +1,13 @@
-use std::{collections::HashMap, path::PathBuf, str::FromStr, rc::Rc, cell::RefCell};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    ffi::{c_char, CStr},
+    io::Bytes,
+    path::PathBuf,
+    ptr::slice_from_raw_parts,
+    rc::Rc,
+    str::FromStr,
+};
 
 use extism::{
     manifest::Wasm, Context, CurrentPlugin, Error, Function, Manifest, Plugin, UserData, Val,
@@ -9,8 +18,9 @@ use serde_json::{json, Value};
 
 use crate::{
     component::{Component, ComponentOptions, ModuleComponent},
+    ip::{IPType, IP},
     port::{InPort, OutPort, PortOptions},
-    process::{ProcessError, ProcessResult}, ip::{IP, IPType},
+    process::{ProcessError, ProcessResult},
 };
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -59,7 +69,6 @@ impl WasmComponent {
             if !meta.base_dir.is_empty() {
                 self.base_dir = meta.base_dir;
             }
-            
         }
         self.clone()
     }
@@ -71,7 +80,6 @@ impl ModuleComponent for WasmComponent {
         let mut code = PathBuf::from(self.base_dir.clone());
         code.push(source);
         let code = code.as_os_str();
-
 
         if let Some(source_code) = code.to_str() {
             let manifest = Manifest::new([Wasm::file(source_code.clone().to_string())]);
@@ -108,11 +116,17 @@ impl ModuleComponent for WasmComponent {
                 process: Some(Box::new(move |handle| {
                     let inputs: Vec<&String> = inports.keys().collect();
                     if let Ok(this) = handle.clone().try_lock().as_mut() {
-                        let available_inputs = this.input().get_many(inports.keys().map(|s| s.as_str()).collect()).iter().filter(|s| **s != None).collect::<Vec<_>>().len();
+                        let available_inputs = this
+                            .input()
+                            .get_many(inports.keys().map(|s| s.as_str()).collect())
+                            .iter()
+                            .filter(|s| **s != None)
+                            .collect::<Vec<_>>()
+                            .len();
                         if inputs.len() > available_inputs {
                             return Ok(ProcessResult::default());
                         }
-              
+
                         let _inputs: HashMap<&String, Value> = HashMap::from_iter(
                             inputs
                                 .clone()
@@ -120,53 +134,75 @@ impl ModuleComponent for WasmComponent {
                                 .map(|port| {
                                     let value = this.input().get(*port);
                                     if let Some(value) = value {
-                                        return (port.clone(), match value.datatype {
-                                            IPType::Data(v) => v,
-                                            _ => Value::Null
-                                        });
+                                        return (
+                                            port.clone(),
+                                            match value.datatype {
+                                                IPType::Data(v) => v,
+                                                _ => Value::Null,
+                                            },
+                                        );
                                     }
                                     return (port.clone(), Value::Null);
                                 })
                                 .collect::<Vec<_>>(),
                         );
-                        
+
                         let data = json!(_inputs);
 
                         let output = this.output();
 
+                        // `send` Host function for use in the wasm binary
                         let send_fn = Function::new(
                             "send",
-                            [ValType::ExternRef],
+                            [ValType::I64],
                             [ValType::I64],
                             None,
                             move |_plugin: &mut CurrentPlugin,
                                   params: &[Val],
-                                  _: &mut [Val],
+                                  returns: &mut [Val],
                                   _: UserData| {
-                                if !params.is_empty() {
-                                    if let Some(Some(payload)) = params[0].externref() {
-                                        output.clone().send(payload.data());
+                                let data = _plugin.memory.get(params[0].unwrap_i64() as usize)?;
+
+                                if let Ok(result) =
+                                    serde_json::from_str::<Value>(std::str::from_utf8(data).expect(
+                                        "expected to decode output value from wasm component",
+                                    ))
+                                {
+                                    if let Some(res) = result.as_object() {
+                                        println!("{:?}", res);
+                                        output.clone().send(res);
                                     }
                                 }
+                                returns[0] = params[0].clone();
+
                                 Ok(())
                             },
                         );
 
                         let output = this.output();
+                        // `send_done` Host function for use in the wasm binary
                         let send_done_fn = Function::new(
-                            "send",
-                            [ValType::ExternRef],
+                            "send_done",
+                            [ValType::I64],
                             [ValType::I64],
                             None,
                             move |_plugin: &mut CurrentPlugin,
                                   params: &[Val],
-                                  _: &mut [Val],
+                                  returns: &mut [Val],
                                   _: UserData| {
-                                if !params.is_empty() {
-                                    if let Some(Some(payload)) = params[0].externref() {
-                                        output.clone().send_done(payload.data());
+                                let data = _plugin.memory.get(params[0].unwrap_i64() as usize)?;
+
+                                if let Ok(result) =
+                                    serde_json::from_str::<Value>(std::str::from_utf8(data).expect(
+                                        "expected to decode output value from wasm component",
+                                    ))
+                                {
+                                    if let Some(res) = result.as_object() {
+                                        output.clone().send_done(res);
                                     }
                                 }
+                                returns[0] = params[0].clone();
+
                                 Ok(())
                             },
                         );
@@ -174,15 +210,15 @@ impl ModuleComponent for WasmComponent {
                         let context = Context::new();
 
                         let plugin =
-                            Plugin::new_with_manifest(&context, &manifest, [], false);
-                        
+                            Plugin::new_with_manifest(&context, &manifest, [&send_fn, &send_done_fn], false);
+
                         if plugin.is_err() {
                             let err = plugin.err().unwrap().to_string();
                             return Err(ProcessError(err));
                         }
 
                         let mut plugin = plugin.unwrap();
-         
+
                         let x = plugin.call("process", serde_json::to_string(&data).unwrap());
                         if x.is_err() {
                             return Err(ProcessError(format!(
@@ -194,9 +230,7 @@ impl ModuleComponent for WasmComponent {
                             std::str::from_utf8(x.unwrap())
                                 .expect("expected to decode return value from wasm component"),
                         ) {
-                           
                             if let Some(res) = result.as_object() {
-                                println!("{:?}", res);
                                 this.output().send(res);
                             }
                         }

@@ -1,9 +1,26 @@
-use extism_pdk::*;
+
+#![no_main]
+
+use extism_pdk::{*, json::Value};
 use serde::{Serialize, Deserialize};
 
-#[derive(Serialize)]
+extern "C" {
+   fn send(output:u64) -> u64;
+   fn send_done(output:u64) -> u64;
+}
+
+
+#[derive(Serialize, Deserialize)]
 pub struct Output {
    pub sum: i64
+}
+
+impl Output {
+   #[inline(always)]
+   pub fn as_ptr(&self) -> u64 {
+      let mem = extism_pdk::Memory::from_bytes(serde_json::to_string(self.clone()).unwrap().as_bytes());
+      mem.keep().offset
+   }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -13,9 +30,15 @@ pub struct Input {
 }
 
 #[plugin_fn]
-pub fn process(input:Json<Input>) -> FnResult<Json<Output>>  {
+pub fn process(input:Json<Input>) -> FnResult<Json<Value>>  {
    let left = input.0.left.as_i64().unwrap();
    let right = input.0.right.as_i64().unwrap();
-   return Ok(Json(Output { sum: left + right }));
+   let data_ptr = Output { sum: left + right }.as_ptr();
+   unsafe {
+      // send output to host
+      send(data_ptr);
+   }
+
+   return Ok(Json(Value::Null));
 }
 
