@@ -4,8 +4,6 @@ use std::{
 };
 
 use fp_rust::publisher::Publisher;
-use futures::executor::block_on;
-use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use std::fmt::Debug;

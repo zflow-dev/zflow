@@ -1,14 +1,12 @@
 use core::panic;
 use std::any::Any;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 
 use fp_rust::handler::HandlerThread;
-use futures::Future;
 use log::{log, Level};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Value, Map};
 
 use crate::component::Component;
 use crate::ip::{IPOptions, IPType, IP};
@@ -571,6 +569,28 @@ impl ProcessOutput
 
         let component_ports = &mut vec![];
         let mut maps_in_ports = false;
+        if let Some(ports) = packet.downcast_ref::<Map<String, Value>>() {
+            let outports = self.out_ports.clone();
+            for port in outports.ports.keys() {
+                if (port != "error") && (port != "ports") {
+                    component_ports.push(port);
+                }
+                if !maps_in_ports && ports.contains_key(port.as_str()) {
+                    maps_in_ports = true;
+                }
+            }
+
+            if (component_ports.len() == 1) && !maps_in_ports {
+                self.send_ip(component_ports.clone()[0], &json!(ports.clone()));
+                return;
+            }
+
+            ports.iter().for_each(|(port, packet)| {
+                self.send_ip(port, packet);
+            });
+
+            return;
+        }
         if let Some(ports) = packet.downcast_ref::<HashMap<&str, Value>>() {
             let outports = self.out_ports.clone();
             for port in outports.ports.keys() {

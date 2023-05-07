@@ -11,3 +11,4 @@ pub mod component_test;
 pub mod loader;
 pub mod loader_test;
 pub mod registry;
+pub mod wasm;

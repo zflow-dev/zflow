@@ -1,6 +1,9 @@
 use std::{
+    borrow::Borrow,
+    cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr,
     sync::{Arc, Mutex},
     thread,
@@ -8,12 +11,15 @@ use std::{
 
 use poll_promise::Promise;
 use regex::Regex;
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Map, Value};
 use zflow::graph::types::GraphJson;
 
 use crate::{
-    component::{Component, GraphDefinition},
-    registry::{ComponentSource, DefaultRegistry, RuntimeRegistry}, process,
+    component::{Component, GraphDefinition, ModuleComponent},
+    process,
+    registry::{ComponentSource, DefaultRegistry, RuntimeRegistry},
+    wasm::WasmComponent,
 };
 
 use is_url::is_url;
@@ -86,17 +92,18 @@ impl ComponentLoader {
     ) -> Result<Arc<Mutex<HashMap<String, Box<dyn GraphDefinition>>>>, String> {
         if let Some(processings) = self.processing.as_mut() {
             loop {
-                    let processing = processings.remove(0);
-                    let p = processing.block_until_ready();
-                    let comps = self.components.clone();
-                    if let Ok(comp) = comps.clone().try_lock().as_mut() {
-                        if let Ok(p) = p {
-                            for (name, def) in p {
-                                comp.insert(name.clone(), dyn_clone::clone_box(&**def));
-                            }
+                let processing = processings.remove(0);
+                let p = processing.block_until_ready();
+                
+                let comps = self.components.clone();
+                if let Ok(comp) = comps.clone().try_lock().as_mut() {
+                    if let Ok(p) = p {
+                        for (name, def) in p {
+                            comp.insert(name.clone(), dyn_clone::clone_box(&**def));
                         }
                     }
-                
+                }
+
                 if processings.is_empty() {
                     self.ready = true;
                     self.processing = None;
@@ -131,11 +138,7 @@ impl ComponentLoader {
     /// registered component is a FBP graph, it will
     /// be loaded as an instance a subgraph
     /// component.
-    pub fn load(
-        &mut self,
-        name: &str,
-        metadata: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<Component>>, String> {
+    pub fn load(&mut self, name: &str, metadata: Value) -> Result<Arc<Mutex<Component>>, String> {
         let mut component = None;
 
         if !self.ready {
@@ -150,6 +153,7 @@ impl ComponentLoader {
         let components = binding
             .try_lock()
             .expect("Expected component list container");
+
         if !components.contains_key(name) {
             for i in 0..components.keys().len() {
                 if let Some(component_name) = components.keys().collect::<Vec<&String>>().get(i) {
@@ -224,13 +228,13 @@ impl ComponentLoader {
         &mut self,
         name: &str,
         component: &dyn GraphDefinition,
-        metadata: Option<HashMap<String, Value>>,
+        metadata: Value,
     ) -> Result<Arc<Mutex<Component>>, String> {
         // If a string was specified, attempt to load it dynamically
         if let Some(path) = component.to_any().downcast_ref::<String>() {
             if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
                 if is_url(path) {
-                    return registry.dynamic_load(name, path);
+                    return registry.dynamic_load(name, path, metadata);
                 }
 
                 if Path::new(path).extension().is_some() || path.contains(std::path::is_separator) {
@@ -241,10 +245,29 @@ impl ComponentLoader {
                             buf.as_os_str()
                                 .to_str()
                                 .expect("expected valid path string"),
+                            metadata,
                         );
                     }
                 }
             }
+        }
+
+        // Load and create a wasm component
+        if let Some(wasm_component) = component.to_any().downcast_ref::<WasmComponent>() {
+            let mut wasm = wasm_component.clone();
+            wasm.base_dir = if wasm.base_dir == "/" {
+                let mut buf = PathBuf::from(self.base_dir.clone());
+                buf.push(wasm.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir.clone()
+            };
+            return Ok(Component::from_instance(
+                wasm_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
         }
 
         // check if it's a component instance
@@ -260,7 +283,7 @@ impl ComponentLoader {
         &mut self,
         name: &str,
         component: &dyn GraphDefinition,
-        metadata: Option<HashMap<String, Value>>,
+        metadata: Value,
     ) -> Result<Arc<Mutex<Component>>, String> {
         if let Ok(components) = self.components.clone().try_lock().as_mut() {
             if let Some(graph_component) = components.get_mut("Graph") {
@@ -364,7 +387,10 @@ impl ComponentLoader {
     /// any components or graphs they wish.
     pub fn register_loader(
         &mut self,
-        loader: impl FnOnce(&mut Self) -> Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>>,
+        loader: impl FnOnce(
+            &mut Self,
+        )
+            -> Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>>,
     ) {
         let loading_components = (loader)(self);
         if let Some(processing) = self.processing.as_mut() {
@@ -437,9 +463,9 @@ pub fn get_prefix(name: &str) -> String {
 }
 pub fn normalize_name(package_id: &str, name: &str) -> String {
     let prefix = get_prefix(name);
-    let mut f_name = format!("{}/{}", prefix, name);
-    if package_id.is_empty() {
-        f_name = name.to_owned();
+    let mut f_name = if prefix == name {name.to_owned()}else{format!("{}/{}", prefix, name)};
+    if !package_id.is_empty() {
+        f_name = format!("{}/{}", package_id, name);
     }
 
     f_name

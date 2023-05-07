@@ -32,7 +32,9 @@ use crate::{
         ProcessContext, ProcessError, ProcessFunc, ProcessHandle, ProcessInput, ProcessOutput,
         ProcessResult,
     },
+    registry::RemoteComponent,
     sockets::SocketEvent,
+    wasm::WasmComponent,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -50,11 +52,27 @@ pub enum ComponentEvent {
     End,
 }
 
-pub trait GraphDefinition: DynClone + Send + Sync + 'static {
+pub trait ModuleComponent: DynClone + Send + Sync + 'static {
+    fn as_component(&self) -> Result<Component, String>;
+}
+
+pub trait GraphDefinition: DynClone + Send + Sync + Debug + 'static {
     fn to_any(&self) -> &dyn Any;
 }
 
 impl GraphDefinition for Component {
+    fn to_any(&self) -> &dyn Any {
+        Box::leak(Box::new(self.clone())) as &dyn Any
+    }
+}
+
+impl GraphDefinition for WasmComponent {
+    fn to_any(&self) -> &dyn Any {
+        Box::leak(Box::new(self.clone())) as &dyn Any
+    }
+}
+
+impl GraphDefinition for RemoteComponent {
     fn to_any(&self) -> &dyn Any {
         Box::leak(Box::new(self.clone())) as &dyn Any
     }
@@ -436,32 +454,38 @@ impl Component {
 
     /// Sets process handler function
     pub(crate) fn link_process(component: Arc<Mutex<Component>>) {
-        if let Ok(_component) = component.clone().try_lock().as_mut() {
-            _component.prepare_forwarding();
-            _component.get_inports().ports.keys().for_each(move |name| {
-                let mut port = _component.get_inports_mut().ports.get_mut(name).unwrap();
-                if port.name.is_empty() {
-                    (*port).name = name.to_string();
-                }
+        let binding = component
+            .clone();
+        let mut binding = binding
+            .try_lock();
+        let _component = binding
+            .as_mut()
+            .expect("expected component instance");
 
-                let name = name.clone();
-                let port = port.clone();
-                let component = component.clone();
-                _component
-                    .get_inports_mut()
-                    .ports
-                    .get_mut(&name)
-                    .map(|inport| {
-                        let component = component.clone();
-                        inport.on(move |event| match event.as_ref() {
-                            SocketEvent::IP(ip, None) => {
-                                Component::handle_ip(component.clone(), ip.clone(), port.clone());
-                            }
-                            _ => {}
-                        });
+        _component.prepare_forwarding();
+        _component.get_inports().ports.keys().for_each(move |name| {
+            let mut port = _component.get_inports_mut().ports.get_mut(name).unwrap();
+            if port.name.is_empty() {
+                (*port).name = name.to_string();
+            }
+
+            let name = name.clone();
+            let port = port.clone();
+            let component = component.clone();
+            _component
+                .get_inports_mut()
+                .ports
+                .get_mut(&name)
+                .map(|inport| {
+                    let component = component.clone();
+                    inport.on(move |event| match event.as_ref() {
+                        SocketEvent::IP(ip, None) => {
+                            Component::handle_ip(component.clone(), ip.clone(), port.clone());
+                        }
+                        _ => {}
                     });
-            });
-        }
+                });
+        });
     }
 
     /// ### Handling IP objects
@@ -478,7 +502,9 @@ impl Component {
         let mut handle = None;
         let mut handler_thread = None;
 
+        
         if let Ok(component) = _component.clone().try_lock().as_mut() {
+            
             if !port.options.triggering {
                 // If port is non-triggering, we can skip the process function call
                 return;
@@ -1693,7 +1719,6 @@ impl Component {
         graph: Option<&dyn GraphDefinition>,
     ) -> Result<(), String> {
         if let Ok(component) = component.clone().try_lock().as_mut() {
-    
             component.set_ready(false);
 
             if let Some(g) = graph {

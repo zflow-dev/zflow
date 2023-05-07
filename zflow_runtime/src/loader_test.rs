@@ -7,6 +7,7 @@ mod tests {
 
     use beady::scenario;
     use poll_promise::Promise;
+    use serde_json::{Map, Value};
     use zflow::graph::graph::Graph;
 
     use crate::component::{Component, ComponentOptions, GraphDefinition};
@@ -65,6 +66,7 @@ mod tests {
             &mut self,
             component_name: &str,
             path: &str,
+            options:Value 
         ) -> Result<Arc<Mutex<Component>>, String> {
             todo!()
         }
@@ -116,7 +118,7 @@ mod tests {
             }
             'then_when_loading_the_graph_component: {
                 'and_then_it_should_be_able_to_load_the_component: {
-                    let loaded = l.load("Graph", None);
+                    let loaded = l.load("Graph", Value::Null);
                     assert!(loaded.is_ok());
 
                     if let Ok(inst) = loaded.unwrap().clone().try_lock() {
@@ -124,26 +126,26 @@ mod tests {
                     }
                 }
                 'and_then_it_should_contain_input_ports: {
-                    let loaded = l.load("Graph", None);
+                    let loaded = l.load("Graph", Value::Null);
                     if let Ok(inst) = loaded.unwrap().clone().try_lock() {
                         assert!(!inst.in_ports.ports.is_empty());
                         assert!(inst.in_ports.ports.contains_key("graph"));
                     }
                 }
                 'and_then_it_should_know_that_graph_is_a_subgraph: {
-                    let loaded = l.load("Graph", None);
+                    let loaded = l.load("Graph", Value::Null);
                     if let Ok(inst) = loaded.unwrap().clone().try_lock() {
                         assert!(inst.is_subgraph());
                     }
                 }
                 'and_then_it_should_know_the_description_for_the_graph: {
-                    let loaded = l.load("Graph", None);
+                    let loaded = l.load("Graph", Value::Null);
                     if let Ok(inst) = loaded.unwrap().clone().try_lock() {
                         assert!(!inst.get_description().is_empty());
                     }
                 }
                 'and_then_it_should_be_able_to_provide_an_icon_for_the_graph: {
-                    let loaded = l.load("Graph", None);
+                    let loaded = l.load("Graph", Value::Null);
                     if let Ok(inst) = loaded.unwrap().clone().try_lock() {
                         assert!(!inst.get_icon().is_empty());
                         assert_eq!(inst.get_icon(), "჻".to_owned());

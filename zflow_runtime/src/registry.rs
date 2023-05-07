@@ -1,21 +1,26 @@
 use std::{
     collections::HashMap,
-    path::{PathBuf, Path},
+    fs::{File, DirEntry, self},
+    io::{BufReader, self},
+    path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 
 use poll_promise::Promise;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
 
 use crate::{
-    component::{Component, GraphDefinition},
-    loader::ComponentLoader,
+    component::{Component, GraphDefinition, ModuleComponent},
+    loader::{normalize_name, ComponentLoader},
     port::PortOptions,
+    wasm::WasmComponent,
 };
 
 use is_url::is_url;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RemoteComponent {
     pub inports: HashMap<String, PortOptions>,
     pub outports: HashMap<String, PortOptions>,
@@ -33,8 +38,6 @@ pub struct RemoteComponent {
     pub base_dir: String,
     pub process: ComponentSource,
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentSource {
@@ -63,6 +66,7 @@ pub trait RuntimeRegistry {
         &mut self,
         component_name: &str,
         path: &str,
+        options: Value,
     ) -> Result<Arc<Mutex<Component>>, String>;
 }
 
@@ -89,6 +93,27 @@ impl Default for DefaultRegistry {
 }
 
 unsafe impl Send for DefaultRegistry {}
+
+fn visit_dirs(dir: &Path, cb: &dyn Fn(&DirEntry) -> Option<(String, Box<dyn GraphDefinition>)>) -> io::Result<HashMap<String, Box<dyn GraphDefinition>>> {
+    let mut components = HashMap::new();
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let comps = visit_dirs(&path, cb)?;
+                components.extend(comps);
+            } else {
+                if let Some(comp) = cb(&entry) {
+                    components.insert(comp.0, comp.1);
+                }
+               
+            }
+        }
+    }
+    Ok(components)
+}
+
 
 impl RuntimeRegistry for DefaultRegistry {
     fn set_source(
@@ -118,20 +143,66 @@ impl RuntimeRegistry for DefaultRegistry {
         &mut self,
         loader: &mut ComponentLoader,
     ) -> Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>> {
-        let base_dir = &loader.base_dir;
+        let dir = loader.base_dir.clone();
 
-        todo!()
+        Promise::spawn_thread("register_components", move || {
+            let base_dir = PathBuf::from_str(dir.as_str()).unwrap();
+            let components = visit_dirs(&base_dir, &|entry| {
+                if entry.path().is_file() && entry.path().file_name().unwrap() == "zflow.json" {
+                    let file =
+                        File::open(entry.path()).expect("expected to open zflow.json manifest");
+                    let reader = BufReader::new(file);
+                    // Read wasm
+                    let mut de = serde_json::Deserializer::from_reader(reader);
+                    if let Ok(metadata) = Value::deserialize(&mut de) {
+                        if let Some(metadata) = metadata.as_object() {
+                            if metadata.contains_key("language")
+                                && metadata.get("language") == Some(&json!("wasm"))
+                            {
+                                let mut wasm_metadata = metadata.clone();
+                                wasm_metadata.remove("language");
+                                let json_string = serde_json::to_string(&wasm_metadata).unwrap();
+                                let mut de = serde_json::Deserializer::from_str(json_string.as_str());
+                                let wasm_component = Value::deserialize(&mut de).expect("expected to decode wasm component metadata from zflow.json");
+                                let mut wasm_component = WasmComponent::deserialize(wasm_component).expect("expected to decode wasm component metadata from zflow.json");
+                                wasm_component.base_dir = entry.path().parent().unwrap().as_os_str().to_str().unwrap().to_owned();
+                                let definition: Box<dyn GraphDefinition> =
+                                    Box::new(wasm_component.clone());
+                              
+                                return Some((
+                                    normalize_name(
+                                        &wasm_component.package_id,
+                                        &wasm_component.source,
+                                    ),
+                                    definition,
+                                ));
+                            }
+                        }
+                    }
+                }
+                None
+            });
+            if components.is_err() {
+                return Err(format!("{}", components.err().unwrap().to_string()));
+            }
+            Ok(components.ok().unwrap())
+        })
     }
 
     fn dynamic_load(
         &mut self,
         component_name: &str,
         path: &str,
+        _options: Value,
     ) -> Result<Arc<Mutex<Component>>, String> {
+        let options: Option<&Map<String, Value>> = _options.as_object();
         if is_url(path) {
             // fetch remote component and instantiate it
-        } 
+        }
 
+        if !Path::new(path).exists() {
+            return Err(format!("Could not find component at {}", path));
+        }
         if path.contains(std::path::is_separator) {
             // fetch local component and instantiate
             if Path::new(path).is_file() {
@@ -142,6 +213,13 @@ impl RuntimeRegistry for DefaultRegistry {
                         }
                         Some("wasm") => {
                             // build wasm component
+                            if let Some(wasm) = WasmComponent::from_metadata(_options).as_mut() {
+                                let path = Path::new(path);
+                                wasm.base_dir = path.parent().unwrap().to_str().unwrap().to_owned();
+                                wasm.source =
+                                    path.file_name().unwrap().to_str().unwrap().to_owned();
+                                return Ok(Component::from_instance(wasm.as_component()?));
+                            }
                         }
                         Some("wren") => {
                             // build wren component
@@ -149,12 +227,8 @@ impl RuntimeRegistry for DefaultRegistry {
                         Some("lua") => {
                             // build lua component
                         }
-                        Some(&_) =>{
-                            return Err(format!("Unsupported component source"))
-                        }
-                        None => {
-                            return Err(format!("Could not detect resource type"))
-                        },
+                        Some(&_) => return Err(format!("Unsupported component source")),
+                        None => return Err(format!("Could not detect resource type")),
                     }
                 }
             }

@@ -29,7 +29,7 @@ use super::types::{
 /// connected to each other with edges.
 /// These graphs can be used for visualization and sketching, but
 /// also are the way to start an FBP network.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Graph {
     pub name: String,
     pub nodes: Vec<GraphNode>,

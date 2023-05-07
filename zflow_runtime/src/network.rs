@@ -131,14 +131,7 @@ pub trait BaseNetwork {
     fn load(
         &mut self,
         component: &str,
-        metadata: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<Component>>, String>;
-    /// ## Loading components
-    /// from path
-    fn load_from_path(
-        &mut self,
-        component: &Path,
-        metadata: Option<HashMap<String, Value>>,
+        metadata: Value,
     ) -> Result<Arc<Mutex<Component>>, String>;
 
     // fn add_defaults(&mut self, node: GraphNode) -> Result<(), String>;
@@ -520,7 +513,7 @@ impl Network {
                 .clone());
         }
         // Load the component for the process.
-        let _instance = _network.load_from_path(Path::new(&node.component), options.clone())?;
+        let _instance = _network.load(&node.component, json!(options.clone()))?;
         if let Ok(instance) = _instance.clone().try_lock().as_mut() {
             instance.set_node_id(node.id.clone());
             process.component = Some(_instance.clone());
@@ -714,21 +707,10 @@ impl BaseNetwork for Network
     fn load(
         &mut self,
         component: &str,
-        metadata: Option<HashMap<String, Value>>,
+        metadata: Value,
     ) -> Result<Arc<Mutex<Component>>, String> {
         if let Some(loader) = self.loader.as_mut() {
             return loader.load(component, metadata);
-        }
-        Err("failed to load component".to_string())
-    }
-
-    fn load_from_path(
-        &mut self,
-        component: &Path,
-        metadata: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<Component>>, String> {
-        if let Some(loader) = self.loader.as_mut() {
-            return loader.load(component.to_str().expect("expected component Path"), metadata.clone());
         }
         Err("failed to load component".to_string())
     }

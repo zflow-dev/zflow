@@ -54,18 +54,31 @@ pub trait PortsTrait {
     fn remove(&mut self, name: &str);
 }
 
+const fn _default_true() -> bool { true }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PortOptions {
+    #[serde(default)]
     pub addressable: bool,
+    #[serde(default)]
     pub buffered: bool,
+    #[serde(default)]
     pub required: bool,
+    #[serde(default)]
     pub schema: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub caching: bool,
+    #[serde(default)]
     pub data_type: IPType,
+    #[serde(default)]
     pub user_data: Value,
+    #[serde(default)]
     pub control: bool,
+    #[serde(default = "_default_true")]
     pub triggering: bool,
+    #[serde(default)]
     pub scoped: bool,
 }
 
@@ -719,7 +732,7 @@ impl InPort {
         let buf = self.get_buffer(scope, index, initial);
         if let Some(buf) = buf.clone() {
             if let Ok(buf) = buf.clone().try_lock().as_mut() {
-                if self.options.control {
+                if self.options.control && buf.len() > 0 {
                     return buf.get(buf.len() - 1).cloned();
                 }
                 if buf.len() > 0 {

@@ -28,7 +28,8 @@ doctest = false
 members = [
     "zflow_editor",
     "zflow_runtime",
+    "zflow_runtime/test_components/add_wasm"
 ]
 
 [tests]
-path = "zflow_runtime/src/port.rs"
+path = "zflow_runtime/src/port_test.rs"

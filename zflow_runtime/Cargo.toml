@@ -7,6 +7,7 @@ license = "MIT"
 description = "An FBP Graph Runtime"
 keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming"]
 
+
 [dependencies]
 zflow = {path = "../"}
 serde_json = "1.0"
@@ -29,7 +30,13 @@ rjdebounce = {git="https://github.com/darmie/rjdebounce"}
 array_tool = "1.0.3"
 dyn-clone = "1.0.11"
 is-url = "1.0.4"
+extism = "0.3.0"
+wasmtime = "6.0.2"
+anyhow = "1.0.71"
 
 
 [lib]
 doctest = false
+
+
+
