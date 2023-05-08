@@ -1,16 +1,10 @@
 use std::{
-    cell::RefCell,
     collections::HashMap,
-    ffi::{c_char, CStr},
-    io::Bytes,
     path::PathBuf,
-    ptr::slice_from_raw_parts,
-    rc::Rc,
-    str::FromStr,
 };
 
 use extism::{
-    manifest::Wasm, Context, CurrentPlugin, Error, Function, Manifest, Plugin, UserData, Val,
+    manifest::Wasm, Context, CurrentPlugin, Function, Manifest, Plugin, UserData, Val,
     ValType,
 };
 use serde::{Deserialize, Serialize};
@@ -18,13 +12,14 @@ use serde_json::{json, Value};
 
 use crate::{
     component::{Component, ComponentOptions, ModuleComponent},
-    ip::{IPType, IP},
+    ip::IPType,
     port::{InPort, OutPort, PortOptions},
     process::{ProcessError, ProcessResult},
 };
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct WasmComponent {
+    pub name: String,
     pub inports: HashMap<String, PortOptions>,
     pub outports: HashMap<String, PortOptions>,
     #[serde(default)]
@@ -47,6 +42,7 @@ pub struct WasmComponent {
     pub base_dir: String,
     /// Path to wasm source
     pub source: String,
+    #[serde(default)]
     pub package_id: String,
 }
 
@@ -116,16 +112,6 @@ impl ModuleComponent for WasmComponent {
                 process: Some(Box::new(move |handle| {
                     let inputs: Vec<&String> = inports.keys().collect();
                     if let Ok(this) = handle.clone().try_lock().as_mut() {
-                        let available_inputs = this
-                            .input()
-                            .get_many(inports.keys().map(|s| s.as_str()).collect())
-                            .iter()
-                            .filter(|s| **s != None)
-                            .collect::<Vec<_>>()
-                            .len();
-                        if inputs.len() > available_inputs {
-                            return Ok(ProcessResult::default());
-                        }
 
                         let _inputs: HashMap<&String, Value> = HashMap::from_iter(
                             inputs
@@ -147,7 +133,7 @@ impl ModuleComponent for WasmComponent {
                                 .collect::<Vec<_>>(),
                         );
 
-                        let data = json!(_inputs);
+                        let mapped_inputs = json!(_inputs);
 
                         let output = this.output();
 
@@ -169,7 +155,6 @@ impl ModuleComponent for WasmComponent {
                                     ))
                                 {
                                     if let Some(res) = result.as_object() {
-                                        println!("{:?}", res);
                                         output.clone().send(res);
                                     }
                                 }
@@ -208,7 +193,6 @@ impl ModuleComponent for WasmComponent {
                         );
 
                         let context = Context::new();
-
                         let plugin =
                             Plugin::new_with_manifest(&context, &manifest, [&send_fn, &send_done_fn], false);
 
@@ -219,7 +203,7 @@ impl ModuleComponent for WasmComponent {
 
                         let mut plugin = plugin.unwrap();
 
-                        let x = plugin.call("process", serde_json::to_string(&data).unwrap());
+                        let x = plugin.call("process", serde_json::to_string(&mapped_inputs).unwrap());
                         if x.is_err() {
                             return Err(ProcessError(format!(
                                 "Failed to call main function from wasm component: {}",
@@ -271,11 +255,10 @@ mod tests {
             Some(registry.clone()),
         );
 
-        let wasm_component = loader.load("zflow/add_wasm.wasm", Value::Null);
-
+        let wasm_component = loader.load("zflow/add_wasm", Value::Null);
         assert!(wasm_component.is_ok());
 
-        // Todo: test process execution
+ 
         let s_left = InternalSocket::create(None);
         let s_right = InternalSocket::create(None);
         let s_sum = InternalSocket::create(None);

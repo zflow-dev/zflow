@@ -1,15 +1,20 @@
 {
-    "inports": {
-        "left":{"trigerring": true, "control":true},
-        "right":{"trigerring":true, "control":true}
-    },
-    "outports": {
-        "sum":{}
-    },
-    "base_dir": "/",
-    "source": "add_wasm.wasm",
-    "description": "sum of two numbers",
-    "language": "wasm",
-    "package_id": "zflow",
-    "ordered": true
+    "package_name": "zflow",
+    "components": [
+        {
+            "name": "add_wasm",
+            "inports": {
+                "left":{"trigerring": true, "control":true},
+                "right":{"trigerring":true, "control":true}
+            },
+            "outports": {
+                "sum":{}
+            },
+            "base_dir": "/",
+            "source": "add_wasm.wasm",
+            "description": "sum of two numbers",
+            "language": "wasm",
+            "ordered": true
+        }
+    ]
 }

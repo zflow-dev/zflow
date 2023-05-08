@@ -18,7 +18,7 @@ pub struct Output {
 impl Output {
    #[inline(always)]
    pub fn as_ptr(&self) -> u64 {
-      let mem = extism_pdk::Memory::from_bytes(serde_json::to_string(self.clone()).unwrap().as_bytes());
+      let mem = extism_pdk::Memory::from_bytes(json::to_string(self.clone()).unwrap().as_bytes());
       mem.keep().offset
    }
 }
@@ -31,8 +31,13 @@ pub struct Input {
 
 #[plugin_fn]
 pub fn process(input:Json<Input>) -> FnResult<Json<Value>>  {
+   // because inputs are controlled, we wait for all of them
+   if input.0.left == Value::Null && input.0.right == Value::Null {
+      return Ok(Json(Value::Null));
+   }
    let left = input.0.left.as_i64().unwrap();
    let right = input.0.right.as_i64().unwrap();
+
    let data_ptr = Output { sum: left + right }.as_ptr();
    unsafe {
       // send output to host

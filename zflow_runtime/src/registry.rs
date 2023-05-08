@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
-    fs::{File, DirEntry, self},
-    io::{BufReader, self},
+    fs::{self, DirEntry, File},
+    io::{self, BufReader},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, Mutex},
@@ -37,6 +37,7 @@ pub struct RemoteComponent {
     pub forward_brackets: HashMap<String, Vec<String>>,
     pub base_dir: String,
     pub process: ComponentSource,
+    pub package_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,7 +95,10 @@ impl Default for DefaultRegistry {
 
 unsafe impl Send for DefaultRegistry {}
 
-fn visit_dirs(dir: &Path, cb: &dyn Fn(&DirEntry) -> Option<(String, Box<dyn GraphDefinition>)>) -> io::Result<HashMap<String, Box<dyn GraphDefinition>>> {
+fn visit_dirs(
+    dir: &Path,
+    cb: &dyn Fn(&DirEntry) -> Option<HashMap<String, Box<dyn GraphDefinition>>>,
+) -> io::Result<HashMap<String, Box<dyn GraphDefinition>>> {
     let mut components = HashMap::new();
     if dir.is_dir() {
         for entry in fs::read_dir(dir)? {
@@ -105,15 +109,13 @@ fn visit_dirs(dir: &Path, cb: &dyn Fn(&DirEntry) -> Option<(String, Box<dyn Grap
                 components.extend(comps);
             } else {
                 if let Some(comp) = cb(&entry) {
-                    components.insert(comp.0, comp.1);
+                    components.extend(comp);
                 }
-               
             }
         }
     }
     Ok(components)
 }
-
 
 impl RuntimeRegistry for DefaultRegistry {
     fn set_source(
@@ -147,37 +149,70 @@ impl RuntimeRegistry for DefaultRegistry {
 
         Promise::spawn_thread("register_components", move || {
             let base_dir = PathBuf::from_str(dir.as_str()).unwrap();
+            // Recursively look up all component directories
             let components = visit_dirs(&base_dir, &|entry| {
                 if entry.path().is_file() && entry.path().file_name().unwrap() == "zflow.json" {
                     let file =
                         File::open(entry.path()).expect("expected to open zflow.json manifest");
                     let reader = BufReader::new(file);
-                    // Read wasm
+                    
                     let mut de = serde_json::Deserializer::from_reader(reader);
-                    if let Ok(metadata) = Value::deserialize(&mut de) {
-                        if let Some(metadata) = metadata.as_object() {
-                            if metadata.contains_key("language")
-                                && metadata.get("language") == Some(&json!("wasm"))
-                            {
-                                let mut wasm_metadata = metadata.clone();
-                                wasm_metadata.remove("language");
-                                let json_string = serde_json::to_string(&wasm_metadata).unwrap();
-                                let mut de = serde_json::Deserializer::from_str(json_string.as_str());
-                                let wasm_component = Value::deserialize(&mut de).expect("expected to decode wasm component metadata from zflow.json");
-                                let mut wasm_component = WasmComponent::deserialize(wasm_component).expect("expected to decode wasm component metadata from zflow.json");
-                                wasm_component.base_dir = entry.path().parent().unwrap().as_os_str().to_str().unwrap().to_owned();
-                                let definition: Box<dyn GraphDefinition> =
-                                    Box::new(wasm_component.clone());
-                              
-                                return Some((
-                                    normalize_name(
-                                        &wasm_component.package_id,
-                                        &wasm_component.source,
-                                    ),
-                                    definition,
-                                ));
+                    if let Ok(metadata) = Value::deserialize(&mut de).as_mut() {
+                        let  wasm_metadata = metadata.clone();
+                        let package_id = wasm_metadata
+                            .get("package_name")
+                            .expect("Invalid metadata, zflow.js should have package name")
+                            .as_str()
+                            .expect("Package name should be string");
+
+                        let mut wasm_metadata = metadata.clone();
+                        let components = wasm_metadata
+                            .get_mut("components")
+                            .expect("Invalid metadata, zflow.js should have components fiekd")
+                            .as_array_mut()
+                            .expect("Components should be array");
+
+                        let components = components.iter_mut().map(|meta| {
+                            let meta_str = serde_json::to_string(meta).unwrap();
+                            let mut de = serde_json::Deserializer::from_str(meta_str.as_str());
+                            let component_meta = Value::deserialize(&mut de).expect(
+                                "expected to decode component metadata from zflow.json",
+                            );
+                            if let Some(metadata) = meta.as_object_mut() {
+                                let copy_meta = metadata.clone();
+                                let language = copy_meta.get("language").expect("component metadata must specify a language");
+                                metadata.remove("language");
+                                if language == &json!("wasm")
+                                {
+                                    // Read wasm
+                                    
+                                    let mut wasm_component = WasmComponent::deserialize(component_meta)
+                                    .expect(
+                                        "expected to decode wasm component metadata from zflow.json",
+                                    );
+                                    wasm_component.base_dir = entry
+                                        .path()
+                                        .parent()
+                                        .unwrap()
+                                        .as_os_str()
+                                        .to_str()
+                                        .unwrap()
+                                        .to_owned();
+                                    wasm_component.package_id = package_id.to_owned();
+                                    let definition: Box<dyn GraphDefinition> =
+                                        Box::new(wasm_component.clone());
+        
+                                    return Some((
+                                        normalize_name(&wasm_component.package_id, &wasm_component.name),
+                                        definition,
+                                    ));
+                                }
+                               
                             }
-                        }
+                            None 
+                        }).filter(|component| component.is_some()).map(|component| component.unwrap());
+
+                        return Some(HashMap::from_iter(components));
                     }
                 }
                 None

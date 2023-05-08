@@ -1,13 +1,11 @@
 use std::{
     any::Any,
     collections::HashMap,
-    fmt::Pointer,
     pin::Pin,
     sync::{Arc, Mutex},
 };
 
 use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
-use cast_trait_object::dyn_cast;
 
 use foreach::ForEach;
 use fp_rust::{common::SubscriptionFunc, publisher::Publisher};
