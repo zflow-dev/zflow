@@ -1,4 +1,4 @@
-[![FBP](https://github.com/darmie/zflow/actions/workflows/fbp.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/fbp.yml)
+![FBP](https://github.com/darmie/zflow/actions/workflows/fbp.yml/badge.svg)
 
 # The FBP Flow Definition Language Specification
 The fbp library provides a parser for a domain-specific language for flow-based-programming (FBP), used for defining graphs for FBP programming environments like [ZFlow](https://github.com/darmie/zflow)
