@@ -1,4 +1,4 @@
-[![Rust](https://github.com/darmie/zflow/actions/workflows/rust.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/rust.yml)
+[![Graph](https://github.com/darmie/zflow/actions/workflows/graph.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/graph.yml)
 
 # The FBP Graph Specification
 An implementation of the  [Flow-Based Programming](https://flow-based.org/) graph specification.

@@ -1,4 +1,4 @@
-[![Rust](https://github.com/darmie/zflow/actions/workflows/rust.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/rust.yml)
+[![Runtime](https://github.com/darmie/zflow/actions/workflows/runtime.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/runtime.yml)
 
 # ZFlow Process Runtime
 
