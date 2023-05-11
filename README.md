@@ -1,7 +1,7 @@
-![Build](https://github.com/darmie/zflow/actions/workflows/build.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/build.yml) 
-![Graph](https://github.com/darmie/zflow/actions/workflows/graph.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/graph.yml) 
-![Runtime](https://github.com/darmie/zflow/actions/workflows/runtime.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/runtime.yml)
-![FBP Spec](https://github.com/darmie/zflow/actions/workflows/fbp.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/fbp.yml)
+![Build](https://github.com/darmie/zflow/actions/workflows/build.yml/badge.svg)
+![Graph](https://github.com/darmie/zflow/actions/workflows/graph.yml/badge.svg) 
+![Runtime](https://github.com/darmie/zflow/actions/workflows/runtime.yml/badge.svg)
+![FBP Spec](https://github.com/darmie/zflow/actions/workflows/fbp.yml/badge.svg)
 
 # ZFlow - Flow-Based Programming Library
 
