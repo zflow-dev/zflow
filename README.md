@@ -1,11 +1,11 @@
 [![Rust](https://github.com/darmie/zflow/actions/workflows/rust.yml/badge.svg)](https://github.com/darmie/zflow/actions/workflows/rust.yml)
 
-# ZFlow - FBP Graph Library for Rust
+# ZFlow - Flow-Based Programming Library
 
-This library provides a Rust implementation of [Flow-Based Programming graphs](https://flow-based.org/). There are two areas covered:
+This library provides a Rust implementation of a [Flow-Based Programming graphs](https://flow-based.org/) and a runtime for executing the graph. There are two areas covered:
 
-* [Graph](https://github.com/darmie/zflow/blob/main/src/graph/graph.rs) - the actual graph library
-* [Journal trait](https://github.com/darmie/zflow/blob/main/src/graph/journal.rs) - journal system for keeping track of graph changes and undo history
+* [Graph](https://github.com/darmie/zflow/blob/main/zflow_graph) - the actual graph library
+* [Journal trait](https://github.com/darmie/zflow/blob/main/zflow_graph/src/journal.rs) - journal system for keeping track of graph changes and undo history
 * [Graph Runtime](https://github.com/darmie/zflow/blob/main/zflow_runtime) - the process runtime to execute graph components
 
 ## Graph Usage 
@@ -36,7 +36,7 @@ g.add_node("Bar", "bar", None);
 // add a connection between `Foo` and `Bar` by their output port and input ports respectively.
 g.add_edge("Foo", "Out", "Bar", "In", None);
 ```
-See [graph_test.rs](https://github.com/darmie/zflow/blob/main/src/graph/graph_test.rs) for more usage examples
+See [graph_test.rs](https://github.com/darmie/zflow/blob/main/zflow_graph/src/graph_test.rs) for more usage examples
 
 ## Journal Usage
 ```rs
@@ -56,7 +56,7 @@ graph.move_to_revision(2);
 // move to fifth revision in journal history
 graph.move_to_revision(5);
 ```
-See [journal.rs](https://github.com/darmie/zflow/blob/main/src/graph/journal.rs#L1013) for more usage examples
+See [journal.rs](https://github.com/darmie/zflow/blob/main/zflow_graph/src/journal.rs#L1013) for more usage examples
 
 ## Graph Runtime example 
 Some details may be hidden for brevity

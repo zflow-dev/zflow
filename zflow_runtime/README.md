@@ -2,9 +2,9 @@
 
 # ZFlow Process Runtime
 
-The main runtime for the execution of the directed graph
+The main runtime for the execution of the directed acyclic graph
 
-## Graph Runtime example
+## Runtime example
 
 Some details may be hidden for brevity
 
