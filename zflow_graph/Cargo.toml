@@ -20,3 +20,6 @@ assert-json-diff = "2.0.2"
 # may = "0.3.31"
 cast_trait_object = "0.1.3"
 async-trait = "0.1.60"
+
+[lib]
+doctest = false

@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod tests {
 
-    use crate::graph::{
-        Graph,
-    };
+    use crate::Graph;
     use crate::types::{GraphEdge, GraphGroup, GraphIIP, GraphJson, GraphNode};
     use crate::internal::event_manager::EventListener;
     use assert_json_diff::assert_json_eq;

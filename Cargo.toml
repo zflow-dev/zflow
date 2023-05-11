@@ -12,9 +12,6 @@ keywords = ["fbp", "DAG", "flowbased", "low-code", "no-code", "visual-programmin
 zflow_graph = {path = "./zflow_graph"}
 zflow_runtime = {path  ="./zflow_runtime"}
 
-# [build-dependencies]
-# lalrpop = { version = "0.20.0"}
-
 [lib]
 doctest = false
 
