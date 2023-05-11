@@ -1,4 +1,4 @@
-name: Runtime
+name: zflow_runtime
 
 on:
   push:
