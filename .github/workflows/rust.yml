@@ -19,6 +19,8 @@ jobs:
     - name: Build
       run: cargo build --verbose
     - name: Run graph tests
-      run: cargo test --verbose
+      run: cd zflow_graph && cargo test --verbose
+    - name: Run .fbp specification tests
+      run: cd fbp && cargo test --verbose
     - name: Run runtime tests
       run: cd zflow_runtime && cargo test --verbose
