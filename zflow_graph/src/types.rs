@@ -1,34 +1,33 @@
-use std::{collections::HashMap, path::Path};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, Map};
+use serde_json::{Map, Value};
+use std::{collections::HashMap, path::Path};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphNode {
-    pub id:String,
-    pub uid:String,
-    pub component:String,
-    pub metadata:Option<Map<String, Value>>
+    pub id: String,
+    pub uid: String,
+    pub component: String,
+    pub metadata: Option<Map<String, Value>>,
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphNodeJson {
-    pub component:String,
-    pub metadata:Option<Map<String, Value>>
+    pub component: String,
+    pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphLeaf {
-    pub port:String,
-    pub node_id:String,
-    pub index:Option<usize>
+    pub port: String,
+    pub node_id: String,
+    pub index: Option<usize>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphLeafJson {
-    pub port:String,
-    pub process:String,
-    pub index:Option<usize>
+    pub port: String,
+    pub process: String,
+    pub index: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -36,61 +35,54 @@ pub enum StubData {
     Number(f32),
     String(String),
     Path(&'static Path),
-    Bytes(Vec<u8>)
+    Bytes(Vec<u8>),
 }
-
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphStub {
-    pub data:Value
+    pub data: Value,
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphEdge {
-    pub from:GraphLeaf,
+    pub from: GraphLeaf,
     pub to: GraphLeaf,
-    pub metadata:Option<Map<String, Value>>
+    pub metadata: Option<Map<String, Value>>,
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphEdgeJson {
-    pub src:Option<GraphLeafJson>,
+    pub src: Option<GraphLeafJson>,
     pub tgt: Option<GraphLeafJson>,
-    pub data:Option<Value>,
-    pub metadata:Option<Map<String, Value>>
+    pub data: Option<Value>,
+    pub metadata: Option<Map<String, Value>>,
 }
 
-
-#[derive(Clone,Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphIIP {
     pub to: Option<GraphLeaf>,
     pub from: Option<GraphStub>,
-    pub metadata:Option<Map<String, Value>>
+    pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphGroup {
-    pub name:String,
+    pub name: String,
     pub nodes: Vec<String>,
-    pub metadata:Option<Map<String, Value>>
+    pub metadata: Option<Map<String, Value>>,
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GraphExportedPort {
-    pub process:String,
-    pub port:String,
-    pub metadata:Option<Map<String, Value>>
+    pub process: String,
+    pub port: String,
+    pub metadata: Option<Map<String, Value>>,
 }
-
 
 #[derive(Clone, Debug)]
 pub struct GraphTransaction {
-    pub id:Option<String>,
-    pub depth: i32
+    pub id: Option<String>,
+    pub depth: i32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -102,7 +94,7 @@ pub struct GraphJson {
     pub outports: HashMap<String, GraphExportedPort>,
     pub groups: Vec<GraphGroup>,
     pub processes: HashMap<String, GraphNodeJson>,
-    pub connections: Vec<GraphEdgeJson>
+    pub connections: Vec<GraphEdgeJson>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -132,7 +124,7 @@ pub enum GraphEvents {
     ChangeOutport(Value),
     StartTransaction(Value),
     EndTransaction(Value),
-    Transaction(Value)
+    Transaction(Value),
 }
 
 impl GraphEvents {
@@ -166,7 +158,7 @@ impl GraphEvents {
         }
     }
 
-    pub fn new(name:&str, value:Value) -> GraphEvents {
+    pub fn new(name: &str, value: Value) -> GraphEvents {
         match name {
             "add_node" => GraphEvents::AddNode(value),
             "remove_node" => GraphEvents::RemoveNode(value),
@@ -193,7 +185,7 @@ impl GraphEvents {
             "start_transaction" => GraphEvents::StartTransaction(value),
             "end_transaction" => GraphEvents::EndTransaction(value),
             // "transaction" => GraphEvents::Transaction(value),
-            _ => panic!("Unknown Graph event {}", name)
+            _ => panic!("Unknown Graph event {}", name),
         }
     }
 }

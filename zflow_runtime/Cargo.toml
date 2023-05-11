@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Damilare Akinlaja <dreakinlaja@gmail.com>"]
 license = "MIT"
-description = "An FBP Graph Runtime"
+description = "ZFlow FBP Graph Runtime"
 keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming"]
 
 
 [dependencies]
-zflow = {path = "../"}
+zflow_graph = {path = "../zflow_graph"}
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 cast_trait_object = "0.1.3"

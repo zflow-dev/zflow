@@ -8,12 +8,12 @@ mod tests {
     use beady::scenario;
     use poll_promise::Promise;
     use serde_json::{Map, Value};
-    use zflow::graph::graph::Graph;
+    use zflow_graph::Graph;
 
     use crate::component::{Component, ComponentOptions, GraphDefinition};
     use crate::loader::{ComponentLoader, ComponentLoaderOptions};
     use crate::process::ProcessResult;
-    use crate::registry::{RuntimeRegistry, ComponentSource};
+    use crate::registry::{ComponentSource, RuntimeRegistry};
 
     pub struct TestLoaderRegistry;
     impl RuntimeRegistry for TestLoaderRegistry {
@@ -45,18 +45,16 @@ mod tests {
                         process: Some(Box::new(|_| Ok(ProcessResult::default()))),
                         ..ComponentOptions::default()
                     }));
-                let graph_comp:Box<dyn GraphDefinition> = Box::new(Component::new(ComponentOptions {
-                    graph: Some(Box::new(graph)),
-                    process: None,
-                    ..ComponentOptions::default()
-                }));
+                let graph_comp: Box<dyn GraphDefinition> =
+                    Box::new(Component::new(ComponentOptions {
+                        graph: Some(Box::new(graph)),
+                        process: None,
+                        ..ComponentOptions::default()
+                    }));
 
                 let comp_map = HashMap::from([
                     ("test_component".to_owned(), test_comp),
-                    (
-                        "Graph".to_owned(),
-                        graph_comp,
-                    ),
+                    ("Graph".to_owned(), graph_comp),
                 ]);
                 Ok(comp_map)
             });
@@ -66,7 +64,7 @@ mod tests {
             &mut self,
             component_name: &str,
             path: &str,
-            options:Value 
+            options: Value,
         ) -> Result<Arc<Mutex<Component>>, String> {
             todo!()
         }

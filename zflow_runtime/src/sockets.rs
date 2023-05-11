@@ -9,7 +9,10 @@ use serde_json::{Map, Value};
 use std::fmt::Debug;
 use std::marker::Send;
 
-use crate::{ip::{IPOptions, IPType, IP}, network::NetworkProcess};
+use crate::{
+    ip::{IPOptions, IPType, IP},
+    network::NetworkProcess,
+};
 
 #[derive(Debug, Clone)]
 pub struct SocketConnection {
@@ -52,7 +55,7 @@ pub struct InternalSocket {
     pub(crate) bus: Arc<Mutex<Publisher<SocketEvent>>>,
     pub brackets: Vec<Value>,
     pub errors: Vec<String>,
-    debug: bool
+    debug: bool,
 }
 
 impl Debug for InternalSocket {
@@ -84,14 +87,14 @@ impl InternalSocket {
             connected: false,
             brackets: Vec::new(),
             errors: Vec::new(),
-            debug: false
+            debug: false,
         }
     }
     pub fn create(metadata: Option<Map<String, Value>>) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self::new(metadata)))
     }
 
-    pub fn set_debug(&mut self, active: bool){
+    pub fn set_debug(&mut self, active: bool) {
         self.debug = active;
     }
 

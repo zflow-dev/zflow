@@ -1,8 +1,7 @@
-use core::panic;
+
 use std::{
     collections::HashMap,
-    path::Path,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, SystemTime},
 };
@@ -11,16 +10,12 @@ use array_tool::vec::Shift;
 use fp_rust::{handler::Handler, publisher::Publisher};
 use rayon::prelude::*;
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
-use zflow::{
-    graph::{
-        graph::Graph,
-        types::{GraphEdge, GraphIIP, GraphNode},
-    },
-};
+use serde_json::{json, Value};
+use zflow_graph::Graph;
+use zflow_graph::types::{GraphEdge, GraphIIP, GraphNode};
 
 use crate::{
-    component::{Component, ComponentEvent, GraphDefinition},
+    component::{Component, ComponentEvent},
     ip::{IPOptions, IPType, IP},
     loader::ComponentLoader,
     port::BasePort,
@@ -28,7 +23,7 @@ use crate::{
 };
 
 #[derive(Default, Clone, Debug)]
-pub struct NetworkProcess{
+pub struct NetworkProcess {
     pub id: String,
     pub component_name: String,
     pub component: Option<Arc<Mutex<Component>>>,
@@ -128,11 +123,7 @@ pub trait BaseNetwork {
     }
 
     /// ## Loading components
-    fn load(
-        &mut self,
-        component: &str,
-        metadata: Value,
-    ) -> Result<Arc<Mutex<Component>>, String>;
+    fn load(&mut self, component: &str, metadata: Value) -> Result<Arc<Mutex<Component>>, String>;
 
     // fn add_defaults(&mut self, node: GraphNode) -> Result<(), String>;
 
@@ -259,10 +250,7 @@ impl Network {
         });
     }
 
-    fn subscribe_subgraph<Net>(
-        network: Arc<Mutex<Net>>,
-        node: NetworkProcess,
-    ) -> Result<(), String>
+    fn subscribe_subgraph<Net>(network: Arc<Mutex<Net>>, node: NetworkProcess) -> Result<(), String>
     where
         Net: BaseNetwork + Send + Sync + 'static,
     {
@@ -327,7 +315,7 @@ impl Network {
                             }
                             NetworkEvent::Error(err) => {
                                 this.buffered_emit(NetworkEvent::Error(err.clone()));
-                            },
+                            }
                             _ => {}
                         }
                     }
@@ -598,7 +586,13 @@ impl Network {
             } else {
                 None
             };
-            graph.add_edge(&edge.to.node_id, &edge.to.port, &edge.from.node_id, &edge.from.port, op);
+            graph.add_edge(
+                &edge.to.node_id,
+                &edge.to.port,
+                &edge.from.node_id,
+                &edge.from.port,
+                op,
+            );
         }
         Ok(socket.clone())
     }
@@ -644,7 +638,13 @@ impl Network {
                 } else {
                     None
                 };
-                graph.add_initial_index(initializer.from.unwrap().data, &leaf.node_id, &leaf.port, leaf.index, op);
+                graph.add_initial_index(
+                    initializer.from.unwrap().data,
+                    &leaf.node_id,
+                    &leaf.port,
+                    leaf.index,
+                    op,
+                );
             }
             return Ok(socket.clone());
         }
@@ -694,8 +694,7 @@ impl Network {
     }
 }
 
-impl BaseNetwork for Network
-{
+impl BaseNetwork for Network {
     fn get_loader(&mut self) -> &mut Option<ComponentLoader> {
         &mut self.loader
     }
@@ -704,11 +703,7 @@ impl BaseNetwork for Network
         self.get_active_processes().len() > 0
     }
 
-    fn load(
-        &mut self,
-        component: &str,
-        metadata: Value,
-    ) -> Result<Arc<Mutex<Component>>, String> {
+    fn load(&mut self, component: &str, metadata: Value) -> Result<Arc<Mutex<Component>>, String> {
         if let Some(loader) = self.loader.as_mut() {
             return loader.load(component, metadata);
         }
@@ -927,7 +922,12 @@ impl BaseNetwork for Network
             }
         });
         if let Ok(graph) = self.get_graph().try_lock().as_mut() {
-            graph.remove_edge(&edge.from.node_id, &edge.from.port, Some(&edge.to.node_id), Some(&edge.to.port));
+            graph.remove_edge(
+                &edge.from.node_id,
+                &edge.from.port,
+                Some(&edge.to.node_id),
+                Some(&edge.to.port),
+            );
         }
         Ok(())
     }
@@ -1006,7 +1006,10 @@ impl BaseNetwork for Network
             }
         });
         if let Ok(graph) = self.get_graph().try_lock().as_mut() {
-            graph.remove_initial(&initializer.to.clone().unwrap().node_id, &initializer.to.clone().unwrap().port);
+            graph.remove_initial(
+                &initializer.to.clone().unwrap().node_id,
+                &initializer.to.clone().unwrap().port,
+            );
         }
         Ok(())
     }
@@ -1237,49 +1240,69 @@ impl BaseNetwork for Network
             NetworkEvent::End(_) | NetworkEvent::Error(_) => {
                 self.publisher.clone().try_lock().unwrap().publish(event);
                 return;
-            },
-            _ =>{}
+            }
+            _ => {}
         }
         if !self.is_started() {
             match event {
-                NetworkEvent::End(_) =>{}
-                _ =>{
+                NetworkEvent::End(_) => {}
+                _ => {
                     self.event_buffer.push(event);
                     return;
                 }
             }
         }
-        self.publisher.clone().try_lock().unwrap().publish(event.clone());
+        self.publisher
+            .clone()
+            .try_lock()
+            .unwrap()
+            .publish(event.clone());
         match event {
-            NetworkEvent::Start(_) =>{
+            NetworkEvent::Start(_) => {
                 // Once network has started we can send the IP-related events
-                self.event_buffer.clone().par_iter().for_each(|ev|{
-                    self.publisher.clone().try_lock().unwrap().publish(ev.clone());
+                self.event_buffer.clone().par_iter().for_each(|ev| {
+                    self.publisher
+                        .clone()
+                        .try_lock()
+                        .unwrap()
+                        .publish(ev.clone());
                 });
                 self.event_buffer = Vec::new();
             }
-            NetworkEvent::IP(ip) =>{
+            NetworkEvent::IP(ip) => {
                 // Emit also the legacy events from IP
                 // We don't really support legacy NoFlo stuff but just incase...
                 if let Ok(ip) = IP::deserialize(ip) {
                     match ip.datatype {
                         IPType::OpenBracket(data) => {
-                            self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::OpenBracket(data));
+                            self.publisher
+                                .clone()
+                                .try_lock()
+                                .unwrap()
+                                .publish(NetworkEvent::OpenBracket(data));
                             return;
-                        },
+                        }
                         IPType::CloseBracket(data) => {
-                            self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::CloseBracket(data));
+                            self.publisher
+                                .clone()
+                                .try_lock()
+                                .unwrap()
+                                .publish(NetworkEvent::CloseBracket(data));
                             return;
-                        },
+                        }
                         IPType::Data(data) => {
-                            self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::IP(data));
+                            self.publisher
+                                .clone()
+                                .try_lock()
+                                .unwrap()
+                                .publish(NetworkEvent::IP(data));
                             return;
-                        },
-                        _ =>{}
+                        }
+                        _ => {}
                     }
                 }
             }
-            _ =>{}
+            _ => {}
         }
     }
 }

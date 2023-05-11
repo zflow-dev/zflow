@@ -16,7 +16,7 @@ use super::{
     graph::Graph,
     types::{GraphEdge, GraphEvents, GraphExportedPort, GraphGroup, GraphIIP},
 };
-use crate::graph::types::GraphNode;
+use crate::types::GraphNode;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TransactionEntry {
@@ -54,7 +54,11 @@ impl JournalStore for Graph {
     }
 
     fn fetch_transaction(&mut self, rev_id: i32) -> Vec<TransactionEntry> {
-        if let Some(tx) =  self.transactions.iter().find(|entry| entry.iter().find(|tx| tx.rev == Some(rev_id)).is_some()) {
+        if let Some(tx) = self
+            .transactions
+            .iter()
+            .find(|entry| entry.iter().find(|tx| tx.rev == Some(rev_id)).is_some())
+        {
             return tx.to_vec();
         }
         Vec::new()
@@ -660,7 +664,6 @@ impl Journal for Graph {
         if rev_id == cur {
             return;
         }
-     
 
         self.set_subscribed(false);
         if rev_id > self.get_current_rev() {
@@ -674,10 +677,13 @@ impl Journal for Graph {
             };
 
             while if asc { r <= end } else { r >= end } {
-                self.fetch_transaction(r).clone().iter().foreach(|entry, _|{
-                    self.execute_entry(entry.clone());
-                });
-            
+                self.fetch_transaction(r)
+                    .clone()
+                    .iter()
+                    .foreach(|entry, _| {
+                        self.execute_entry(entry.clone());
+                    });
+
                 if asc {
                     r += 1;
                 } else {
@@ -692,7 +698,7 @@ impl Journal for Graph {
                 // Apply entries in reverse order
                 let mut tx = self.fetch_transaction(r).clone();
                 tx.reverse();
-                tx.iter().foreach(|entry, _|{
+                tx.iter().foreach(|entry, _| {
                     self.execute_entry_inversed(entry.clone());
                 });
                 r -= 1;
@@ -726,7 +732,7 @@ impl Journal for Graph {
     fn can_redo(&self) -> bool {
         let cur = self.current_revision;
         let last = self.last_revision;
-        
+
         return cur < last;
     }
 
@@ -1008,8 +1014,8 @@ fn calculate_meta(old: Map<String, Value>, new: Map<String, Value>) -> Map<Strin
 
 #[cfg(test)]
 mod tests {
-    use crate::graph::graph::Graph;
-    use crate::graph::journal::Journal;
+    use crate::graph::Graph;
+    use crate::journal::Journal;
     use assert_json_diff::assert_json_eq;
     use beady::scenario;
     use serde_json::json;
@@ -1068,7 +1074,7 @@ mod tests {
                     .add_edge("Foo", "out", "Baz", "in", None)
                     .add_initial(json!(42), "Foo", "in", None);
                 let graph_before_error = graph.to_json();
-              
+
                 'then_undo_should_restore_previous_revision: {
                     assert_eq!(graph.nodes.len(), 2);
                     graph.remove_node("Foo");
@@ -1084,10 +1090,7 @@ mod tests {
                             graph.undo();
                             graph.undo();
                             assert_eq!(graph.nodes.len(), 2);
-                            assert_json_eq!(
-                                graph.to_json(),
-                                graph_before_error
-                            );
+                            assert_json_eq!(graph.to_json(), graph_before_error);
                         }
                     }
                 }
@@ -1100,20 +1103,20 @@ mod tests {
                     .add_node("Foo", "Bar", None)
                     .add_node("Baz", "Foo", None)
                     .add_edge("Foo", "out", "Baz", "in", None);
-                    
+
                 'then_when_adding_group: {
                     graph.add_group(
                         "all",
                         ["Foo".to_owned(), "Bax".to_owned()].to_vec(),
                         Some(json!({"label": "all nodes"}).as_object().unwrap().clone()),
                     );
-                    
+
                     assert_eq!(graph.groups.len(), 1);
                     assert_eq!(graph.groups[0].name, "all");
 
                     'and_then_when_undoing_group_add: {
                         graph.undo();
-                        
+
                         assert_eq!(graph.groups.len(), 0);
 
                         'and_then_when_redoing_group_add: {
@@ -1124,9 +1127,12 @@ mod tests {
                                 let r = graph.last_revision;
                                 graph.set_group_metadata(
                                     "all",
-                                    json!({"label": "ALL NODES!"}).as_object().unwrap().to_owned(),
+                                    json!({"label": "ALL NODES!"})
+                                        .as_object()
+                                        .unwrap()
+                                        .to_owned(),
                                 );
-                                
+
                                 assert_eq!(graph.last_revision, r + 1);
 
                                 'and_then_when_undoing_group_metadata_change: {
@@ -1153,7 +1159,8 @@ mod tests {
                                             );
 
                                             assert_eq!(
-                                                graph.get_node("Foo")
+                                                graph
+                                                    .get_node("Foo")
                                                     .unwrap()
                                                     .metadata
                                                     .as_ref()
@@ -1167,7 +1174,8 @@ mod tests {
                                                 graph.undo();
 
                                                 assert_eq!(
-                                                    graph.get_node("Foo")
+                                                    graph
+                                                        .get_node("Foo")
                                                         .unwrap()
                                                         .metadata
                                                         .as_ref()
@@ -1180,7 +1188,10 @@ mod tests {
                                                 'and_then_when_redoing_node_metadata_change: {
                                                     graph.redo();
                                                     assert_eq!(
-                                                        graph.get_node("Foo").unwrap().metadata
+                                                        graph
+                                                            .get_node("Foo")
+                                                            .unwrap()
+                                                            .metadata
                                                             .as_ref()
                                                             .unwrap()
                                                             .get("oneone"),

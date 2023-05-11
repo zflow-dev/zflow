@@ -2,11 +2,10 @@ use core::panic;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
-
 use fp_rust::handler::HandlerThread;
 use log::{log, Level};
 use serde::Deserialize;
-use serde_json::{json, Value, Map};
+use serde_json::{json, Map, Value};
 
 use crate::component::Component;
 use crate::ip::{IPOptions, IPType, IP};
@@ -19,17 +18,16 @@ pub type ValidatorFn = Box<dyn (FnMut(IP) -> bool) + Send + Sync>;
 #[derive(Debug, Clone, Default)]
 pub struct ProcessError(pub String);
 
-
 #[derive(Clone, Default)]
 pub struct ProcessHandle {
-    pub (crate) context:Arc<Mutex<ProcessContext>>,
-    pub (crate) handler_thread:Arc<Mutex<HandlerThread>>,
-    pub (crate) input: ProcessInput,
-    pub (crate) output: ProcessOutput,
+    pub(crate) context: Arc<Mutex<ProcessContext>>,
+    pub(crate) handler_thread: Arc<Mutex<HandlerThread>>,
+    pub(crate) input: ProcessInput,
+    pub(crate) output: ProcessOutput,
 }
 
 impl ProcessHandle {
-    pub fn background_thread(&mut self) ->  Arc<Mutex<HandlerThread>> {
+    pub fn background_thread(&mut self) -> Arc<Mutex<HandlerThread>> {
         self.handler_thread.clone()
     }
     pub fn context(&mut self) -> Arc<Mutex<ProcessContext>> {
@@ -45,12 +43,8 @@ impl ProcessHandle {
     }
 }
 
-pub type ProcessFunc = dyn (FnMut(
-    Arc<Mutex<ProcessHandle>>,
-) ->Result<ProcessResult, ProcessError>)
-+ Sync + Send;
-
-
+pub type ProcessFunc =
+    dyn (FnMut(Arc<Mutex<ProcessHandle>>) -> Result<ProcessResult, ProcessError>) + Sync + Send;
 
 #[derive(Clone, Default)]
 pub struct ProcessResult {
@@ -62,8 +56,7 @@ pub struct ProcessResult {
     pub outputs: HashMap<String, HashMap<String, Vec<IP>>>,
 }
 
-impl Debug for ProcessResult
-{
+impl Debug for ProcessResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessResult")
             .field("resolved", &self.resolved)
@@ -81,14 +74,13 @@ pub struct ProcessInput {
     pub in_ports: InPorts,
     pub context: Arc<Mutex<ProcessContext>>,
     pub component: Arc<Mutex<Component>>,
-    pub ip:IP,
-    pub result:Arc<Mutex<ProcessResult>>,
-    pub scope:Option<String>,
-    pub port:InPort
+    pub ip: IP,
+    pub result: Arc<Mutex<ProcessResult>>,
+    pub scope: Option<String>,
+    pub port: InPort,
 }
 
-impl Debug for ProcessInput
-{
+impl Debug for ProcessInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessInput")
             .field("in_ports", &self.in_ports)
@@ -101,8 +93,7 @@ impl Debug for ProcessInput
     }
 }
 
-impl ProcessInput
-{
+impl ProcessInput {
     // pub fn new(
     //     in_ports: InPorts,
     //     context: Arc<Mutex<ProcessContext<T>>>,
@@ -124,39 +115,36 @@ impl ProcessInput
         }
 
         if let Ok(component) = self.component.clone().try_lock().as_mut() {
-                if component.is_ordered() {
-                    // We're handling packets in order. Set the result as non-resolved
-                    // so that it can be send when the order comes up
-                    self.result.clone().try_lock().unwrap().resolved = false;
-                }
-                component.activate(self.context.clone());
+            if component.is_ordered() {
+                // We're handling packets in order. Set the result as non-resolved
+                // so that it can be send when the order comes up
+                self.result.clone().try_lock().unwrap().resolved = false;
+            }
+            component.activate(self.context.clone());
 
-                
-                    if self.port.is_addressable() {
-                        log!(
-                            Level::Debug,
-                            "zflow::component => {} packet on '{}[{}]' caused activation {}: {:?}",
-                            component.get_node_id(),
-                            self.port.name,
-                            self
-                                .ip
-                                .clone()
-                                .index
-                                .expect("expected port index for addressable port"),
-                            component.get_load(),
-                            self.ip.clone().datatype
-                        );
-                    } else {
-                        log!(
-                            Level::Debug,
-                            "zflow::component => {} packet on '{}' caused activation {}: {:?}",
-                            component.get_node_id(),
-                            self.port.name,
-                            component.get_load(),
-                            self.ip.clone().datatype
-                        );
-                    }
-            
+            if self.port.is_addressable() {
+                log!(
+                    Level::Debug,
+                    "zflow::component => {} packet on '{}[{}]' caused activation {}: {:?}",
+                    component.get_node_id(),
+                    self.port.name,
+                    self.ip
+                        .clone()
+                        .index
+                        .expect("expected port index for addressable port"),
+                    component.get_load(),
+                    self.ip.clone().datatype
+                );
+            } else {
+                log!(
+                    Level::Debug,
+                    "zflow::component => {} packet on '{}' caused activation {}: {:?}",
+                    component.get_node_id(),
+                    self.port.name,
+                    component.get_load(),
+                    self.ip.clone().datatype
+                );
+            }
         }
     }
 
@@ -182,11 +170,7 @@ impl ProcessInput
     /// Returns true if a port has a new IP
     /// Passing a validation callback as a last argument allows more selective
     /// checking of packets.
-    pub fn has(
-        &mut self,
-        port: &str,
-        validator: Option<ValidatorFn>,
-    ) -> bool {
+    pub fn has(&mut self, port: &str, validator: Option<ValidatorFn>) -> bool {
         let normalize = normalize_port_name(port.to_string());
         let name = normalize.name;
         let idx = normalize.index;
@@ -205,10 +189,7 @@ impl ProcessInput
                 return port_impl.has(self.scope.clone(), None, validator);
             }
         } else {
-            log!(
-                Level::Error,
-                "zflow::component => Unknown port"
-            );
+            log!(Level::Error, "zflow::component => Unknown port");
         }
         false
     }
@@ -272,13 +253,12 @@ impl ProcessInput
             }
         }
         return self
-                .in_ports
-                .clone()
-                .ports
-                .get_mut(port)
-                .map(|p| p.get(self.scope.clone(), None))
-                .unwrap();
-
+            .in_ports
+            .clone()
+            .ports
+            .get_mut(port)
+            .map(|p| p.get(self.scope.clone(), None))
+            .unwrap();
     }
 
     /// Fetches Data object for port
@@ -319,33 +299,52 @@ impl ProcessInput
         let mut prefix: Vec<IP> = vec![];
         let mut data_ip = None;
         // Read IPs until we hit data
-        
-            loop {
-                if let Some(port_impl) = self.in_ports.ports.get_mut(&name) {
-                    let ip = port_impl.get(self.scope.clone(), idx);
-                    // Stop at the end of the buffer
-                    if ip.is_none() {
+
+        loop {
+            if let Some(port_impl) = self.in_ports.ports.get_mut(&name) {
+                let ip = port_impl.get(self.scope.clone(), idx);
+                // Stop at the end of the buffer
+                if ip.is_none() {
+                    break;
+                }
+                match ip.clone().unwrap().datatype {
+                    IPType::Data(_) => {
+                        // Hit the data IP, stop here
+                        data_ip = ip;
                         break;
                     }
-                    match ip.clone().unwrap().datatype {
-                        IPType::Data(_) => {
-                            // Hit the data IP, stop here
-                            data_ip = ip;
-                            break;
-                        }
-                        _ => {}
-                    }
-                    // Keep track of bracket closings and openings before
-                    prefix.push(ip.unwrap());
+                    _ => {}
                 }
+                // Keep track of bracket closings and openings before
+                prefix.push(ip.unwrap());
             }
-            // Forwarding brackets that came before data packet need to manipulate context
-            // and be added to result so they can be forwarded correctly to ports that
-            // need them
-            prefix.iter().for_each(|ip| {
-                match ip.clone().datatype {
-                    IPType::OpenBracket(_) => {
-                        // Bracket openings need to go to bracket context
+        }
+        // Forwarding brackets that came before data packet need to manipulate context
+        // and be added to result so they can be forwarded correctly to ports that
+        // need them
+        prefix.iter().for_each(|ip| {
+            match ip.clone().datatype {
+                IPType::OpenBracket(_) => {
+                    // Bracket openings need to go to bracket context
+                    if let Ok(component) = self.component.clone().try_lock().as_mut() {
+                        if let Some(contexts) = component.get_bracket_context(
+                            "in",
+                            name.clone(),
+                            self.scope.clone().unwrap(),
+                            idx,
+                        ) {
+                            contexts.push(Arc::new(Mutex::new(ProcessContext {
+                                ip: ip.clone(),
+                                ports: vec![],
+                                source: name.clone(),
+                                ..ProcessContext::default()
+                            })))
+                        }
+                    }
+                }
+                IPType::CloseBracket(_) => {
+                    // Bracket closings before data should remove bracket context
+                    if let Ok(res) = self.result.clone().try_lock().as_mut() {
                         if let Ok(component) = self.component.clone().try_lock().as_mut() {
                             if let Some(contexts) = component.get_bracket_context(
                                 "in",
@@ -353,60 +352,39 @@ impl ProcessInput
                                 self.scope.clone().unwrap(),
                                 idx,
                             ) {
-                                contexts.push(Arc::new(Mutex::new(ProcessContext {
-                                    ip: ip.clone(),
-                                    ports: vec![],
-                                    source: name.clone(),
-                                    ..ProcessContext::default()
-                                })))
-                            }
-                        }
-                    }
-                    IPType::CloseBracket(_) => {
-                        // Bracket closings before data should remove bracket context
-                        if let Ok(res) = self.result.clone().try_lock().as_mut() {
-                            if let Ok(component) = self.component.clone().try_lock().as_mut()
-                            {
-                                if let Some(contexts) = component.get_bracket_context(
-                                    "in",
-                                    name.clone(),
-                                    self.scope.clone().unwrap(),
-                                    idx,
-                                ) {
-                                    if let Some(context) = contexts.pop() {
-                                        context.clone().try_lock().unwrap().close_ip =
-                                            Some(ip.clone());
-                                        res.bracket_closing_before.push(context.clone());
-                                    }
+                                if let Some(context) = contexts.pop() {
+                                    context.clone().try_lock().unwrap().close_ip = Some(ip.clone());
+                                    res.bracket_closing_before.push(context.clone());
                                 }
                             }
                         }
                     }
-                    _ => {}
                 }
-            });
-            // Add current bracket context to the result so that when we send
-            // to ports we can also add the surrounding brackets
-            if let Ok(res) = self.result.clone().try_lock().as_mut() {
-                if let Ok(component) = self.component.clone().try_lock().as_mut() {
-                    if let Some(contexts) = component.get_bracket_context(
-                        "in",
-                        name.clone(),
-                        self.scope.clone().unwrap(),
-                        idx,
-                    ) {
-                        if res.bracket_context.is_none() {
-                            res.bracket_context = Some(HashMap::new());
-                        }
-
-                        let contexts = contexts.clone();
-                        res.bracket_context
-                            .as_mut()
-                            .unwrap()
-                            .insert(name.clone(), contexts);
+                _ => {}
+            }
+        });
+        // Add current bracket context to the result so that when we send
+        // to ports we can also add the surrounding brackets
+        if let Ok(res) = self.result.clone().try_lock().as_mut() {
+            if let Ok(component) = self.component.clone().try_lock().as_mut() {
+                if let Some(contexts) = component.get_bracket_context(
+                    "in",
+                    name.clone(),
+                    self.scope.clone().unwrap(),
+                    idx,
+                ) {
+                    if res.bracket_context.is_none() {
+                        res.bracket_context = Some(HashMap::new());
                     }
+
+                    let contexts = contexts.clone();
+                    res.bracket_context
+                        .as_mut()
+                        .unwrap()
+                        .insert(name.clone(), contexts);
                 }
             }
+        }
         // Bracket closings that were in buffer after the data packet need to
         // be added to result for done() to read them from
         data_ip
@@ -418,12 +396,11 @@ pub struct ProcessOutput {
     pub out_ports: OutPorts,
     pub context: Arc<Mutex<ProcessContext>>,
     pub component: Arc<Mutex<Component>>,
-    pub ip:IP,
-    pub result:Arc<Mutex<ProcessResult>>,
-    pub scope:Option<String>
+    pub ip: IP,
+    pub result: Arc<Mutex<ProcessResult>>,
+    pub scope: Option<String>,
 }
-impl Debug for ProcessOutput
-{
+impl Debug for ProcessOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessOutput")
             .field("out_ports", &self.out_ports)
@@ -436,8 +413,7 @@ impl Debug for ProcessOutput
     }
 }
 
-impl ProcessOutput
-{
+impl ProcessOutput {
     // pub fn new(
     //     out_ports: OutPorts,
     //     context: Arc<Mutex<ProcessContext<T>>>,
@@ -497,7 +473,7 @@ impl ProcessOutput
     pub fn send_ip(&mut self, port: &str, packet: &dyn Any) {
         let mut ip = if let Some(ip) = packet.downcast_ref::<IP>() {
             ip.clone()
-        }  else if let Some(data) = packet.downcast_ref::<IPType>() {
+        } else if let Some(data) = packet.downcast_ref::<IPType>() {
             IP::new(data.clone(), IPOptions::default())
         } else if let Some(data) = packet.downcast_ref::<Value>() {
             if let Ok(ip) = IP::deserialize(data) {
@@ -532,12 +508,7 @@ impl ProcessOutput
                     );
                 }
                 if component.is_ordered() {
-                    component.add_to_result(
-                        self.result.clone(),
-                        port.to_string(),
-                        &mut ip,
-                        false,
-                    );
+                    component.add_to_result(self.result.clone(), port.to_string(), &mut ip, false);
                     return;
                 }
                 if !port_impl.options.scoped {
@@ -554,7 +525,7 @@ impl ProcessOutput
         self.send(packet);
         self.done(None);
     }
-    /// Sends packets for each port as a key in a map, tupple, 
+    /// Sends packets for each port as a key in a map, tupple,
     /// or sends Error or a list of Errors if passed such
     ///
     /// Accepts either `ProcessError`, `Vec<ProcessError>`, tupple `(&str, Value)`, tupple `(&str, IPType)`  or an output map `Map<String, Value>`
@@ -672,7 +643,7 @@ impl ProcessOutput
                         -1
                     }
                 };
-                
+
                 let len = results_only.len();
 
                 let load = _component.get_load();
@@ -752,7 +723,6 @@ impl ProcessOutput
                                                         ) {
                                                             if let Some(ctx) = node_context.clone().pop() {
                                                                 let _ = ctx.clone().try_lock().as_mut().map(|ctx| ctx.close_ip = Some(ip.clone())).unwrap();
-                                                                
                                                                 if let Ok(result) = self.result.clone().try_lock().as_mut() {
                                                                     if result.bracket_closing_after.is_empty() {
                                                                         result.bracket_closing_after = vec![];
@@ -772,8 +742,13 @@ impl ProcessOutput
                         }
                     });
             }
-            
-            log!(Level::Debug, "zflow::component {} finished processing {}", component.get_node_id(), component.get_load());
+
+            log!(
+                Level::Debug,
+                "zflow::component {} finished processing {}",
+                component.get_node_id(),
+                component.get_load()
+            );
             component.deactivate(self.context.clone());
         }
     }
@@ -793,8 +768,7 @@ pub struct ProcessContext {
     pub scope: Option<String>,
 }
 
-impl Default for ProcessContext
-{
+impl Default for ProcessContext {
     fn default() -> Self {
         Self {
             close_ip: Default::default(),
@@ -811,8 +785,7 @@ impl Default for ProcessContext
     }
 }
 
-impl Debug for ProcessContext
-{
+impl Debug for ProcessContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessContext")
             .field("close_ip", &self.close_ip)
@@ -829,8 +802,7 @@ impl Debug for ProcessContext
     }
 }
 
-impl ProcessContext
-{
+impl ProcessContext {
     // pub fn new(ip: IP, port: InPort<T>, result: Arc<Mutex<ProcessResult<T>>>) -> Arc<Mutex<Self>> {
     //     Arc::new(Mutex::new(Self {
     //         ip,

@@ -155,10 +155,10 @@ impl RuntimeRegistry for DefaultRegistry {
                     let file =
                         File::open(entry.path()).expect("expected to open zflow.json manifest");
                     let reader = BufReader::new(file);
-                    
+
                     let mut de = serde_json::Deserializer::from_reader(reader);
                     if let Ok(metadata) = Value::deserialize(&mut de).as_mut() {
-                        let  wasm_metadata = metadata.clone();
+                        let wasm_metadata = metadata.clone();
                         let package_id = wasm_metadata
                             .get("package_name")
                             .expect("Invalid metadata, zflow.js should have package name")
@@ -185,7 +185,6 @@ impl RuntimeRegistry for DefaultRegistry {
                                 if language == &json!("wasm")
                                 {
                                     // Read wasm
-                                    
                                     let mut wasm_component = WasmComponent::deserialize(component_meta)
                                     .expect(
                                         "expected to decode wasm component metadata from zflow.json",
@@ -201,15 +200,13 @@ impl RuntimeRegistry for DefaultRegistry {
                                     wasm_component.package_id = package_id.to_owned();
                                     let definition: Box<dyn GraphDefinition> =
                                         Box::new(wasm_component.clone());
-        
                                     return Some((
                                         normalize_name(&wasm_component.package_id, &wasm_component.name),
                                         definition,
                                     ));
                                 }
-                               
                             }
-                            None 
+                            None
                         }).filter(|component| component.is_some()).map(|component| component.unwrap());
 
                         return Some(HashMap::from_iter(components));

@@ -18,7 +18,8 @@ use fp_rust::{
 use log::{log, Level};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use zflow::graph::{graph::Graph, types::GraphJson};
+use zflow_graph::types::GraphJson;
+use zflow_graph::Graph;
 
 use crate::{
     ip::{IPOptions, IPType, IP},
@@ -454,13 +455,9 @@ impl Component {
 
     /// Sets process handler function
     pub(crate) fn link_process(component: Arc<Mutex<Component>>) {
-        let binding = component
-            .clone();
-        let mut binding = binding
-            .try_lock();
-        let _component = binding
-            .as_mut()
-            .expect("expected component instance");
+        let binding = component.clone();
+        let mut binding = binding.try_lock();
+        let _component = binding.as_mut().expect("expected component instance");
 
         _component.prepare_forwarding();
         _component.get_inports().ports.keys().for_each(move |name| {
@@ -502,9 +499,7 @@ impl Component {
         let mut handle = None;
         let mut handler_thread = None;
 
-        
         if let Ok(component) = _component.clone().try_lock().as_mut() {
-            
             if !port.options.triggering {
                 // If port is non-triggering, we can skip the process function call
                 return;

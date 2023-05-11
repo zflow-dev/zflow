@@ -13,14 +13,14 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::iter::FromIterator;
-use std::sync::{Arc, Mutex};
 use std::process::exit;
+use std::sync::{Arc, Mutex};
 // use z_macros::{event_handler_attributes, EventHandler};
 
-use super::journal::{TransactionEntry};
+use super::journal::TransactionEntry;
 use super::types::{
-    GraphEdge, GraphEdgeJson, GraphExportedPort, GraphGroup, GraphIIP, GraphJson,
-    GraphLeaf, GraphLeafJson, GraphNode, GraphNodeJson, GraphStub, GraphTransaction,
+    GraphEdge, GraphEdgeJson, GraphExportedPort, GraphGroup, GraphIIP, GraphJson, GraphLeaf,
+    GraphLeafJson, GraphNode, GraphNodeJson, GraphStub, GraphTransaction,
 };
 
 // pub static mut GRAPH_PUBLISHER: Publisher<GraphEvents> = Publisher::new(1024);
@@ -54,7 +54,7 @@ impl EventListener for Graph {
     fn connect(
         &mut self,
         name: &'static str,
-        rec: impl FnMut(&mut Self, Value) -> () + Send + Sync +  'static,
+        rec: impl FnMut(&mut Self, Value) -> () + Send + Sync + 'static,
         once: bool,
     ) {
         if !self.listeners.contains_key(name) {
@@ -72,16 +72,20 @@ impl EventListener for Graph {
 impl EventManager for Graph {
     /// Send event
     fn emit(&mut self, name: &'static str, data: Value) {
-        self.listeners.clone().get_mut(name).iter().for_each(|actions|{
-            (*actions).iter().enumerate().foreach(|actor, _|{
-                if actor.1.once {
-                    self.listeners.get_mut(name).unwrap().remove(actor.0);
-                }
-                if let Ok(mut callback) = actor.1.callback.lock() {
-                    callback(self, data.clone());
-                }
-            })
-        });
+        self.listeners
+            .clone()
+            .get_mut(name)
+            .iter()
+            .for_each(|actions| {
+                (*actions).iter().enumerate().foreach(|actor, _| {
+                    if actor.1.once {
+                        self.listeners.get_mut(name).unwrap().remove(actor.0);
+                    }
+                    if let Ok(mut callback) = actor.1.callback.lock() {
+                        callback(self, data.clone());
+                    }
+                })
+            });
     }
     /// Remove listeners from event
     fn disconnect(&mut self, name: &str) {
@@ -111,7 +115,7 @@ impl Graph {
             transactions: Vec::new(),
             subscribed: true,
             current_revision: -1,
-            entries: Vec::new()
+            entries: Vec::new(),
         }
     }
 
@@ -449,7 +453,7 @@ impl Graph {
                     "port": p.clone(),
                     "old_metadata": before,
                     "new_metadata": metadata
-                })
+                }),
             );
         }
 
@@ -537,10 +541,13 @@ impl Graph {
             let mut group = &mut self.groups[i];
             if group.name == old_name {
                 (*group).name = new_name.to_owned();
-                self.emit("rename_group", json!({
-                    "old": old_name.clone(),
-                    "new": new_name.clone()
-                }));
+                self.emit(
+                    "rename_group",
+                    json!({
+                        "old": old_name.clone(),
+                        "new": new_name.clone()
+                    }),
+                );
             }
         }
         self.check_transaction_end();
@@ -588,11 +595,14 @@ impl Graph {
                 }
             }
             self.groups[i] = group.clone();
-            self.emit("change_group",json!({
-                "group": group.clone(),
-                "old_metadata": before,
-                "new_metadata": metadata
-            }));
+            self.emit(
+                "change_group",
+                json!({
+                    "group": group.clone(),
+                    "old_metadata": before,
+                    "new_metadata": metadata
+                }),
+            );
         }
 
         self.check_transaction_end();
@@ -680,7 +690,6 @@ impl Graph {
                     }
                 }
             }
-           
         }
 
         self.set_node_metadata(id, Map::new());
@@ -688,7 +697,7 @@ impl Graph {
             let node = self.nodes.remove(index);
             self.emit("remove_node", json!(node));
         }
-    
+
         self.check_transaction_end();
 
         self
@@ -750,11 +759,14 @@ impl Graph {
                     group.nodes[index] = new_id.to_owned();
                 }
             });
-      
-            self.emit("rename_node", json!({
-                "old": old_id.clone(),
-                "new": new_id.clone(),
-            }));
+
+            self.emit(
+                "rename_node",
+                json!({
+                    "old": old_id.clone(),
+                    "new": new_id.clone(),
+                }),
+            );
             self.check_transaction_end();
         }
         self
@@ -787,11 +799,14 @@ impl Graph {
                 }
             });
 
-            self.emit("change_node", json!({
-                "node": node.clone(),
-                "old_metadata": before,
-                "new_metadata": metadata
-            }));
+            self.emit(
+                "change_node",
+                json!({
+                    "node": node.clone(),
+                    "old_metadata": before,
+                    "new_metadata": metadata
+                }),
+            );
             let node_index = self
                 .nodes
                 .iter()
@@ -825,15 +840,12 @@ impl Graph {
         }
         let out_port_name = self.get_port_name(out_port);
         let in_port_name = self.get_port_name(in_port);
-        let some = self
-            .edges
-            .iter()
-            .find(|edge| {
-                (edge.from.node_id == out_node.to_owned())
-                    && (edge.from.port == out_port_name.to_owned())
-                    && (edge.to.node_id == in_node.to_owned())
-                    && (edge.to.port == in_port_name.to_owned())
-            });
+        let some = self.edges.iter().find(|edge| {
+            (edge.from.node_id == out_node.to_owned())
+                && (edge.from.port == out_port_name.to_owned())
+                && (edge.to.node_id == in_node.to_owned())
+                && (edge.to.port == in_port_name.to_owned())
+        });
         if some.is_some() {
             return self;
         }
@@ -878,19 +890,25 @@ impl Graph {
         }
         let out_port_name = self.get_port_name(out_port);
         let in_port_name = self.get_port_name(in_port);
-        if self.edges.clone().iter().find(|edge| {
-            // don't add a duplicate edge
-            if (edge.from.node_id == out_node.to_owned())
-                && (edge.from.port == out_port_name.to_owned())
-                && (edge.to.node_id == in_node.to_owned())
-                && (edge.to.port == in_port_name.to_owned())
-            {
-                if index_1 == edge.from.index && index_2 == edge.to.index {
-                    return true;
+        if self
+            .edges
+            .clone()
+            .iter()
+            .find(|edge| {
+                // don't add a duplicate edge
+                if (edge.from.node_id == out_node.to_owned())
+                    && (edge.from.port == out_port_name.to_owned())
+                    && (edge.to.node_id == in_node.to_owned())
+                    && (edge.to.port == in_port_name.to_owned())
+                {
+                    if index_1 == edge.from.index && index_2 == edge.to.index {
+                        return true;
+                    }
                 }
-            }
-            return false;
-        }).is_some() {
+                return false;
+            })
+            .is_some()
+        {
             return self;
         }
 
@@ -986,7 +1004,7 @@ impl Graph {
                         edge.to.port.as_str(),
                         Map::new(),
                     );
-                  
+
                     self.emit("remove_edge", json!(edge.clone()));
                     return false;
                 }
@@ -1045,11 +1063,14 @@ impl Graph {
                     }
                 }
             }
-            self.emit("change_edge", json!({
-                "edge": edge.clone(),
-                "old_metadata": before,
-                "new_metadata": metadata
-            }));
+            self.emit(
+                "change_edge",
+                json!({
+                    "edge": edge.clone(),
+                    "old_metadata": before,
+                    "new_metadata": metadata
+                }),
+            );
             let edge_index = self
                 .edges
                 .iter()

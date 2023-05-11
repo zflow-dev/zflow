@@ -19,7 +19,7 @@
 //             Value::Bool(v) => {
 //                 if v {
 //                     return egui::Color32::LIGHT_GREEN;
-//                 } 
+//                 }
 //                 return egui::Color32::LIGHT_RED;
 //             },
 //             Value::Number(_) => egui::Color32::GOLD,
@@ -34,7 +34,7 @@
 //             Value::Bool(v) => {
 //                 if v {
 //                     return Cow::Borrowed("True");
-//                 } 
+//                 }
 //                 return Cow::Borrowed("False");
 //             },
 //             Value::Number(_) => Cow::Borrowed("Number"),
@@ -45,8 +45,6 @@
 //     }
 // }
 
-
-
 // impl NodeTemplateTrait for GraphNode {
 //     type NodeData = Metadata;
 //     type DataType = Value;
@@ -56,7 +54,7 @@
 //     fn node_finder_label(&self, _user_state: &mut Self::UserState) -> Cow<'_, str> {
 //         Cow::Borrowed(&self.id)
 //     }
-    
+
 //     fn node_graph_label(&self, user_state: &mut Self::UserState) -> String {
 //         self.node_finder_label(user_state).into()
 //     }
@@ -81,28 +79,35 @@
 //                 true,
 //             );
 //         }
-       
+
 //     }
 
 // }
 
 // pub type EditorState = GraphEditorState<Metadata, Value, Value, GraphNode, GraphUIState>;
 
-use std::{io, path::{PathBuf, Path}};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Map, Value};
-use zflow::graph::{graph::Graph, types::GraphNode, journal::Journal};
-
-
+use zflow::GraphNode;
+use zflow::Graph;
+use zflow::Journal;
 
 pub struct EditorWidget<'a> {
     pub graph: &'a mut Graph,
-    pub working_dir:String
+    pub working_dir: String,
 }
 
 impl<'a> EditorWidget<'a> {
-    pub fn search_nodes(&self, node_id:&str) -> Vec<&GraphNode> {
-        let data = self.graph.nodes.iter().filter(|node| (*node).id.contains(node_id));
+    pub fn search_nodes(&self, node_id: &str) -> Vec<&GraphNode> {
+        let data = self
+            .graph
+            .nodes
+            .iter()
+            .filter(|node| (*node).id.contains(node_id));
         return Vec::from_iter(data);
     }
     pub fn undo(&mut self) {
@@ -111,10 +116,13 @@ impl<'a> EditorWidget<'a> {
     pub fn redo(&mut self) {
         self.graph.undo();
     }
-    pub fn save(&self) -> Result<(), io::Error>{
-        let mut path = PathBuf::new().join(Path::new(&self.working_dir)).join(Path::new(&self.graph.name));
+    pub fn save(&self) -> Result<(), io::Error> {
+        let mut path = PathBuf::new()
+            .join(Path::new(&self.working_dir))
+            .join(Path::new(&self.graph.name));
         path.set_extension("json");
-        self.graph.save(path.as_path().to_str().expect("expect file path"))
+        self.graph
+            .save(path.as_path().to_str().expect("expect file path"))
     }
 
     pub fn new_project(&mut self) {
@@ -124,14 +132,14 @@ impl<'a> EditorWidget<'a> {
         self.graph.start_journal(None);
     }
 
-    pub fn import_graph(&mut self, path:&str) {
+    pub fn import_graph(&mut self, path: &str) {
         if let Ok(graph) = Graph::load_file(path, None) {
             *self.graph = graph;
             self.graph.start_journal(None);
         }
     }
 
-    pub fn run(&mut self, metadata:Option<Map<String, Value>>) {
+    pub fn run(&mut self, metadata: Option<Map<String, Value>>) {
         (*self.graph).start_journal(None);
     }
 }

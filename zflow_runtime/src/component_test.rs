@@ -441,8 +441,7 @@ mod tests {
                         ..ComponentOptions::default()
                     });
 
-                    let mut d = Component::init(
-                        ComponentOptions {
+                    let mut d = Component::init(ComponentOptions {
                             in_ports: HashMap::from([("bang".to_string(), InPort::default())]),
                             out_ports: HashMap::from([("tags".to_string(), OutPort::default())]),
                             process: // process
@@ -465,8 +464,7 @@ mod tests {
                                 Ok(ProcessResult::default())
                             })),
                             ..ComponentOptions::default()
-                        }
-                    );
+                        });
 
                     let mut s1 = InternalSocket::create(None);
                     let mut s2 = InternalSocket::create(None);
@@ -524,8 +522,7 @@ mod tests {
                     );
                 }
                 'then_should_be_able_to_send_ips_to_addressable_connections: {
-                    let mut c = Component::init(
-                        ComponentOptions {
+                    let mut c = Component::init(ComponentOptions {
                             forward_brackets: HashMap::new(),
                             in_ports: HashMap::from([("foo".to_string(), InPort::default())]),
                             out_ports: HashMap::from([(
@@ -556,8 +553,7 @@ mod tests {
                                 Ok(ProcessResult::default())
                             })),
                             ..ComponentOptions::default()
-                        }
-                    );
+                        });
                     let mut sin1 = InternalSocket::create(None);
                     let mut sout1 = InternalSocket::create(None);
                     let mut sout2 = InternalSocket::create(None);

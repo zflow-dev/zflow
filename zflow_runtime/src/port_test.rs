@@ -62,16 +62,14 @@ mod tests {
                     let socket = InternalSocket::create(None);
                     let mut p = InPort::new(PortOptions::default());
 
-                    p.on(|event| {
-                        match event.as_ref() {
-                            SocketEvent::IP(data, None) => match &data.datatype {
-                                IPType::Data(data) => {
-                                    assert_eq!(*data, json!("some-data"));
-                                }
-                                _ => {}
-                            },
+                    p.on(|event| match event.as_ref() {
+                        SocketEvent::IP(data, None) => match &data.datatype {
+                            IPType::Data(data) => {
+                                assert_eq!(*data, json!("some-data"));
+                            }
                             _ => {}
-                        }
+                        },
+                        _ => {}
                     });
                     p.attach(socket.clone(), None);
                     let _ = block_on(
@@ -91,16 +89,14 @@ mod tests {
                         ..PortOptions::default()
                     });
                     p.attach(socket.clone(), None);
-                    p.on(|event| {
-                        match event.as_ref() {
-                            SocketEvent::IP(data, None) => match &data.datatype {
-                                IPType::Data(data) => {
-                                    assert_eq!(*data, json!("default-value"));
-                                }
-                                _ => {}
-                            },
+                    p.on(|event| match event.as_ref() {
+                        SocketEvent::IP(data, None) => match &data.datatype {
+                            IPType::Data(data) => {
+                                assert_eq!(*data, json!("default-value"));
+                            }
                             _ => {}
-                        }
+                        },
+                        _ => {}
                     });
 
                     let _ = block_on(socket.clone().lock().unwrap().send_defaults());
@@ -528,11 +524,12 @@ mod tests {
 
                     p.send_ip(
                         &IP::new(
-                        IPType::Data(json!("Hello")),
-                        IPOptions {
-                            schema: "text/plain".to_string(),
-                            ..IPOptions::default()
-                        }),
+                            IPType::Data(json!("Hello")),
+                            IPOptions {
+                                schema: "text/plain".to_string(),
+                                ..IPOptions::default()
+                            },
+                        ),
                         None,
                         true,
                     );

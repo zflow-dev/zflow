@@ -1,5 +1,5 @@
-use std::{sync::{Arc, Mutex}};
 use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
@@ -8,12 +8,15 @@ pub(crate) type TypeFn<T> = Arc<Mutex<(dyn FnMut(&mut T, Value) -> () + Send + S
 #[derive(Clone)]
 pub struct EventActor<T> {
     pub once: bool,
-    pub callback: TypeFn<T>
+    pub callback: TypeFn<T>,
 }
 
 impl<T> Debug for EventActor<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventActor").field("once", &self.once).field("callback", &"[CallbackFn]").finish()
+        f.debug_struct("EventActor")
+            .field("once", &self.once)
+            .field("callback", &"[CallbackFn]")
+            .finish()
     }
 }
 
@@ -32,7 +35,7 @@ pub trait EventListener {
     fn connect(
         &mut self,
         name: &'static str,
-        rec: impl FnMut(&mut Self, Value)->() + Send + Sync + 'static,
+        rec: impl FnMut(&mut Self, Value) -> () + Send + Sync + 'static,
         once: bool,
     );
 }

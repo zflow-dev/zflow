@@ -1,11 +1,7 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use extism::{
-    manifest::Wasm, Context, CurrentPlugin, Function, Manifest, Plugin, UserData, Val,
-    ValType,
+    manifest::Wasm, Context, CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -112,7 +108,6 @@ impl ModuleComponent for WasmComponent {
                 process: Some(Box::new(move |handle| {
                     let inputs: Vec<&String> = inports.keys().collect();
                     if let Ok(this) = handle.clone().try_lock().as_mut() {
-
                         let _inputs: HashMap<&String, Value> = HashMap::from_iter(
                             inputs
                                 .clone()
@@ -193,8 +188,12 @@ impl ModuleComponent for WasmComponent {
                         );
 
                         let context = Context::new();
-                        let plugin =
-                            Plugin::new_with_manifest(&context, &manifest, [&send_fn, &send_done_fn], false);
+                        let plugin = Plugin::new_with_manifest(
+                            &context,
+                            &manifest,
+                            [&send_fn, &send_done_fn],
+                            false,
+                        );
 
                         if plugin.is_err() {
                             let err = plugin.err().unwrap().to_string();
@@ -203,7 +202,8 @@ impl ModuleComponent for WasmComponent {
 
                         let mut plugin = plugin.unwrap();
 
-                        let x = plugin.call("process", serde_json::to_string(&mapped_inputs).unwrap());
+                        let x =
+                            plugin.call("process", serde_json::to_string(&mapped_inputs).unwrap());
                         if x.is_err() {
                             return Err(ProcessError(format!(
                                 "Failed to call main function from wasm component: {}",
@@ -258,7 +258,6 @@ mod tests {
         let wasm_component = loader.load("zflow/add_wasm", Value::Null);
         assert!(wasm_component.is_ok());
 
- 
         let s_left = InternalSocket::create(None);
         let s_right = InternalSocket::create(None);
         let s_sum = InternalSocket::create(None);

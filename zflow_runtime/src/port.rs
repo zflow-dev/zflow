@@ -16,10 +16,11 @@ use serde_json::{json, Value};
 use std::fmt::Debug;
 
 use crate::{
+    component::Component,
     errors::async_transform,
     ip::{IPOptions, IPType, IP},
     process::ValidatorFn,
-    sockets::{InternalSocket, SocketEvent}, component::Component,
+    sockets::{InternalSocket, SocketEvent},
 };
 
 // #[dyn_cast(PortTrait, BasePort)]
@@ -52,7 +53,9 @@ pub trait PortsTrait {
     fn remove(&mut self, name: &str);
 }
 
-const fn _default_true() -> bool { true }
+const fn _default_true() -> bool {
+    true
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PortOptions {
@@ -101,7 +104,7 @@ impl Default for PortOptions {
 #[derive(Clone, Default)]
 pub struct InPort {
     pub node: String,
-    pub (crate) node_instance: Option<Arc<Mutex<Component>>>,
+    pub(crate) node_instance: Option<Arc<Mutex<Component>>>,
     pub name: String,
     pub options: PortOptions,
     pub sockets: Vec<Arc<Mutex<InternalSocket>>>,
@@ -879,7 +882,7 @@ impl PortsTrait for InPorts {
 #[derive(Clone, Default)]
 pub struct OutPort {
     pub node: String,
-    pub (crate) node_instance: Option<Arc<Mutex<Component>>>,
+    pub(crate) node_instance: Option<Arc<Mutex<Component>>>,
     pub name: String,
     pub options: PortOptions,
     pub sockets: Vec<Arc<Mutex<InternalSocket>>>,
@@ -1356,7 +1359,7 @@ impl OutPorts {
         });
         Self {
             ports: options.ports,
-            bus: Arc::new(Mutex::new(Publisher::new()))
+            bus: Arc::new(Mutex::new(Publisher::new())),
         }
     }
 

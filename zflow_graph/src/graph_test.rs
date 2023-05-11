@@ -2,9 +2,9 @@
 mod tests {
 
     use crate::graph::{
-        graph::Graph,
-        types::{GraphEdge, GraphGroup, GraphIIP, GraphJson, GraphNode},
+        Graph,
     };
+    use crate::types::{GraphEdge, GraphGroup, GraphIIP, GraphJson, GraphNode};
     use crate::internal::event_manager::EventListener;
     use assert_json_diff::assert_json_eq;
     use beady::scenario;
@@ -44,12 +44,16 @@ mod tests {
                 }
                 'and_when_given_a_new_node: {
                     'then_it_should_emit_an_event: {
-                        g.connect("add_node", |this, data|{
-                            if let Ok(node) = GraphNode::deserialize(data){
-                                assert_eq!(node.id, "Foo");
-                                assert_eq!(node.component, "Bar");
-                            }
-                        }, true);
+                        g.connect(
+                            "add_node",
+                            |this, data| {
+                                if let Ok(node) = GraphNode::deserialize(data) {
+                                    assert_eq!(node.id, "Foo");
+                                    assert_eq!(node.component, "Bar");
+                                }
+                            },
+                            true,
+                        );
                         g.add_node("Foo", "Bar", None);
                         'and_then_it_should_be_graph_list_of_nodes: {
                             assert_eq!(g.nodes.len(), 1);
@@ -76,20 +80,21 @@ mod tests {
                             }
                         }
                         'and_then_removing_a_node_should_emit_event: {
-                            g.connect("remove_node", |this, data|{
-                                if let Ok(node) = GraphNode::deserialize(data){
-                                    assert_eq!(
-                                        node.id, "Foo",
-                                        "GraphNode.id should be 'Foo'"
-                                    );
-                                    assert_eq!(
-                                        node.component, "Bar",
-                                        "GraphNode.component should be 'Bar'"
-                                    );
-                                }
-                            }, true);
+                            g.connect(
+                                "remove_node",
+                                |this, data| {
+                                    if let Ok(node) = GraphNode::deserialize(data) {
+                                        assert_eq!(node.id, "Foo", "GraphNode.id should be 'Foo'");
+                                        assert_eq!(
+                                            node.component, "Bar",
+                                            "GraphNode.component should be 'Bar'"
+                                        );
+                                    }
+                                },
+                                true,
+                            );
                             g.remove_node("Foo");
-                            
+
                             'and_then_node_should_not_be_available_after_removal: {
                                 assert_eq!(g.get_node("Foo").is_none(), true);
                                 assert_eq!(g.nodes.len(), 0);
@@ -98,14 +103,17 @@ mod tests {
                     }
                 }
                 'and_when_given_a_new_edge: {
-                    
                     'then_it_should_emit_an_event: {
-                        g.connect("add_edge", |this, data|{
-                            if let Ok(edge) = GraphEdge::deserialize(data){
-                                assert_eq!(edge.from.node_id, "Foo");
-                                assert_eq!(edge.to.port, "In");
-                            }
-                        }, true);
+                        g.connect(
+                            "add_edge",
+                            |this, data| {
+                                if let Ok(edge) = GraphEdge::deserialize(data) {
+                                    assert_eq!(edge.from.node_id, "Foo");
+                                    assert_eq!(edge.to.port, "In");
+                                }
+                            },
+                            true,
+                        );
                         g.add_node("Foo", "foo", None);
                         g.add_node("Bar", "bar", None);
                         g.add_edge("Foo", "Out", "Bar", "In", None);
@@ -129,14 +137,18 @@ mod tests {
 
                             'and_then_when_a_new_edge_with_index: {
                                 'and_then_it_should_emit_an_event: {
-                                    g.connect("add_edge", |this, data|{
-                                        if let Ok(edge) = GraphEdge::deserialize(data){
-                                            assert_eq!(edge.from.node_id, "Foo");
-                                            assert_eq!(edge.to.port, "in");
-                                            assert_eq!(edge.to.index, Some(1));
-                                            assert_eq!(edge.from.index, None);
-                                        }
-                                    }, true);
+                                    g.connect(
+                                        "add_edge",
+                                        |this, data| {
+                                            if let Ok(edge) = GraphEdge::deserialize(data) {
+                                                assert_eq!(edge.from.node_id, "Foo");
+                                                assert_eq!(edge.to.port, "in");
+                                                assert_eq!(edge.to.index, Some(1));
+                                                assert_eq!(edge.from.index, None);
+                                            }
+                                        },
+                                        true,
+                                    );
                                     g.add_edge_index(
                                         "Foo",
                                         "out",
@@ -198,27 +210,31 @@ mod tests {
                             assert_json_diff::assert_json_eq!(a, b);
                         }
                         'and_then_it_should_allow_modifying_graph_metadata: {
-                            g.connect("change_properties", |this, data|{
-                                if let Some(payload) = data.as_object() {
-                                    let new_metadata = &payload["new"];
-                                    let old_metadata = &payload["before"];
+                            g.connect(
+                                "change_properties",
+                                |this, data| {
+                                    if let Some(payload) = data.as_object() {
+                                        let new_metadata = &payload["new"];
+                                        let old_metadata = &payload["before"];
 
-                                    assert_json_diff::assert_json_eq!(
-                                        json!(this.properties),
-                                        json!(new_metadata)
-                                    );
+                                        assert_json_diff::assert_json_eq!(
+                                            json!(this.properties),
+                                            json!(new_metadata)
+                                        );
 
-                                    let want = json!({
-                                        "foo": "Baz",
-                                        "bar": "Bar",
-                                        "hello": "World"
-                                    });
+                                        let want = json!({
+                                            "foo": "Baz",
+                                            "bar": "Bar",
+                                            "hello": "World"
+                                        });
 
-                                    for key in this.properties.keys() {
-                                        assert_eq!(this.properties[key], want[key]);
+                                        for key in this.properties.keys() {
+                                            assert_eq!(this.properties[key], want[key]);
+                                        }
                                     }
-                                }
-                            }, true);
+                                },
+                                true,
+                            );
                             let props = json!({
                                 "hello": "World",
                                 "bar": "Bar"
@@ -255,30 +271,34 @@ mod tests {
                             }
                         }
                         'and_then_it_should_allow_modifying_node_metadata: {
-                            g.connect("change_node", |this, value|{
-                                if let Some(payload) = value.as_object() {
-                                    let node = GraphNode::deserialize(&payload["node"])
-                                        .unwrap();
-                               
-                                    assert_ne!(node.metadata.is_none(), true);
-                                    if let Some(metadata) = node.metadata.clone() {
-                                        assert_eq!(
-                                            metadata.get("routes").unwrap().is_array(),
-                                            true
-                                        );
-                                        if let Some(routes) =
-                                            metadata.get("routes").unwrap().as_array()
-                                        {
-                                            assert!(routes.contains(&json!("one")));
-                                            assert!(routes.contains(&json!("two")));
+                            g.connect(
+                                "change_node",
+                                |this, value| {
+                                    if let Some(payload) = value.as_object() {
+                                        let node =
+                                            GraphNode::deserialize(&payload["node"]).unwrap();
+
+                                        assert_ne!(node.metadata.is_none(), true);
+                                        if let Some(metadata) = node.metadata.clone() {
+                                            assert_eq!(
+                                                metadata.get("routes").unwrap().is_array(),
+                                                true
+                                            );
+                                            if let Some(routes) =
+                                                metadata.get("routes").unwrap().as_array()
+                                            {
+                                                assert!(routes.contains(&json!("one")));
+                                                assert!(routes.contains(&json!("two")));
+                                            }
+                                            assert_eq!(
+                                                *metadata.get("hello").unwrap(),
+                                                json!("world")
+                                            );
                                         }
-                                        assert_eq!(
-                                            *metadata.get("hello").unwrap(),
-                                            json!("world")
-                                        );
                                     }
-                                }
-                            }, true);
+                                },
+                                true,
+                            );
                             g.set_node_metadata(
                                 "Foo",
                                 json!({
@@ -301,24 +321,27 @@ mod tests {
                             }
                         }
                         'and_then_it_should_allow_modifying_edge_metadata: {
-                            g.connect("change_edge", |this, value|{
-                                if let Some(payload) = value.as_object() {
-                                    let edge =
-                                        GraphEdge::deserialize(&payload["edge"])
-                                            .unwrap();
+                            g.connect(
+                                "change_edge",
+                                |this, value| {
+                                    if let Some(payload) = value.as_object() {
+                                        let edge =
+                                            GraphEdge::deserialize(&payload["edge"]).unwrap();
 
-                                    if let Some(metadata) = edge.metadata.clone() {
-                                        assert_eq!(
-                                            *metadata.get("route").unwrap(),
-                                            json!("foo")
-                                        );
-                                        assert_eq!(
-                                            *metadata.get("hello").unwrap(),
-                                            json!("World")
-                                        );
+                                        if let Some(metadata) = edge.metadata.clone() {
+                                            assert_eq!(
+                                                *metadata.get("route").unwrap(),
+                                                json!("foo")
+                                            );
+                                            assert_eq!(
+                                                *metadata.get("hello").unwrap(),
+                                                json!("World")
+                                            );
+                                        }
                                     }
-                                }
-                            }, true);
+                                },
+                                true,
+                            );
                             if let Some(edge) = g.edges.clone().get(0) {
                                 g.set_edge_metadata(
                                     &edge.from.node_id,
@@ -350,24 +373,24 @@ mod tests {
                             assert!(g.groups.len() == 2);
                         }
                         'and_then_it_should_allow_modifying_group_metadata: {
-                            g.connect("change_group", |this, value|{
-                                if let Some(payload) = value.as_object() {
-                                    let group =
-                                        GraphGroup::deserialize(&payload["group"])
-                                            .unwrap();
+                            g.connect(
+                                "change_group",
+                                |this, value| {
+                                    if let Some(payload) = value.as_object() {
+                                        let group =
+                                            GraphGroup::deserialize(&payload["group"]).unwrap();
 
-                                    if let Some(metadata) = group.metadata.clone() {
-                                        assert_eq!(
-                                            *metadata.get("label").unwrap(),
-                                            json!("Main")
-                                        );
-                                        assert_eq!(
-                                            *metadata.get("foo").unwrap(),
-                                            json!("Bar")
-                                        );
+                                        if let Some(metadata) = group.metadata.clone() {
+                                            assert_eq!(
+                                                *metadata.get("label").unwrap(),
+                                                json!("Main")
+                                            );
+                                            assert_eq!(*metadata.get("foo").unwrap(), json!("Bar"));
+                                        }
                                     }
-                                }
-                            }, true);
+                                },
+                                true,
+                            );
                             g.set_group_metadata(
                                 "first",
                                 json!({"foo": "Bar"}).as_object().unwrap().clone(),
@@ -379,33 +402,40 @@ mod tests {
                             }
                         }
                         'and_then_it_should_allow_renaming_groups: {
-        
                             if let Some(_) = g.groups.clone().get(0) {
-                                g.connect("rename_group", |this, value|{
-                                    if let Some(payload) = value.as_object() {
-                                        let old_name = payload["old"].as_str().unwrap();
-                                        let new_name = payload["new"].as_str().unwrap();
+                                g.connect(
+                                    "rename_group",
+                                    |this, value| {
+                                        if let Some(payload) = value.as_object() {
+                                            let old_name = payload["old"].as_str().unwrap();
+                                            let new_name = payload["new"].as_str().unwrap();
 
-                                        assert_eq!(old_name, "first".to_string());
-                                        assert_eq!(new_name, "renamed".to_string());
+                                            assert_eq!(old_name, "first".to_string());
+                                            assert_eq!(new_name, "renamed".to_string());
 
-                                        assert_eq!((&this.groups[0]).name, new_name);
-                                    }
-                                }, true);
+                                            assert_eq!((&this.groups[0]).name, new_name);
+                                        }
+                                    },
+                                    true,
+                                );
                                 g.rename_group("first", "renamed");
                             }
                         }
                         'and_then_it_should_allow_renaming_a_node: {
                             'and_then_it_should_emit_an_event: {
-                                g.connect("rename_node", |this, value|{
-                                    if let Some(payload) = value.as_object() {
-                                        let old_name = payload["old"].as_str().unwrap();
-                                        let new_name = payload["new"].as_str().unwrap();
+                                g.connect(
+                                    "rename_node",
+                                    |this, value| {
+                                        if let Some(payload) = value.as_object() {
+                                            let old_name = payload["old"].as_str().unwrap();
+                                            let new_name = payload["new"].as_str().unwrap();
 
-                                        assert_eq!(old_name, "Foo".to_string());
-                                        assert_eq!(new_name, "Baz".to_string());
-                                    }
-                                }, true);
+                                            assert_eq!(old_name, "Foo".to_string());
+                                            assert_eq!(new_name, "Baz".to_string());
+                                        }
+                                    },
+                                    true,
+                                );
                                 g.rename_node("Foo", "Baz");
 
                                 'and_then_it_should_be_available_with_the_new_name: {
@@ -461,73 +491,73 @@ mod tests {
 
                                 'and_then_it_should_allow_renaming_an_inport: {
                                     'and_then_it_should_emit_an_event: {
-                                        g.connect("rename_inport", |this, value|{
-                                            if let Some(payload) = value.as_object() {
-                                                let old_name =
-                                                    payload["old"].as_str().unwrap();
-                                                let new_name =
-                                                    payload["new"].as_str().unwrap();
+                                        g.connect(
+                                            "rename_inport",
+                                            |this, value| {
+                                                if let Some(payload) = value.as_object() {
+                                                    let old_name = payload["old"].as_str().unwrap();
+                                                    let new_name = payload["new"].as_str().unwrap();
 
-                                                assert_eq!(
-                                                    old_name,
-                                                    "inPut".to_string()
-                                                );
-                                                assert_eq!(new_name, "opt".to_string());
+                                                    assert_eq!(old_name, "inPut".to_string());
+                                                    assert_eq!(new_name, "opt".to_string());
 
-                                                assert!(this.inports.contains_key(
-                                                    &String::from("opt")
-                                                ));
-                                                if let Some(opt) =
-                                                    this.inports.get(&String::from("opt"))
-                                                {
-                                                    assert_eq!(
-                                                        opt.process,
-                                                        "Baz".to_string()
-                                                    );
-                                                    assert_eq!(
-                                                        opt.port,
-                                                        "inPut".to_string()
-                                                    );
+                                                    assert!(this
+                                                        .inports
+                                                        .contains_key(&String::from("opt")));
+                                                    if let Some(opt) =
+                                                        this.inports.get(&String::from("opt"))
+                                                    {
+                                                        assert_eq!(opt.process, "Baz".to_string());
+                                                        assert_eq!(opt.port, "inPut".to_string());
+                                                    }
                                                 }
-                                            }
-                                        }, true);
+                                            },
+                                            true,
+                                        );
                                         g.rename_inport("inPut", "opt");
-                                       
                                     }
                                 }
                                 'and_then_it_should_allow_renaming_an_outport: {
                                     'and_then_it_should_emit_an_event: {
-                                        g.connect("rename_outport", |this, value|{
-                                            if let Some(payload) = value.as_object() {
-                                                let old_name = payload["old"].as_str().unwrap();
-                                                let new_name = payload["new"].as_str().unwrap();
-                                                assert_eq!(old_name, "outPut".to_string());
-                                                assert_eq!(new_name, "foo".to_string());
+                                        g.connect(
+                                            "rename_outport",
+                                            |this, value| {
+                                                if let Some(payload) = value.as_object() {
+                                                    let old_name = payload["old"].as_str().unwrap();
+                                                    let new_name = payload["new"].as_str().unwrap();
+                                                    assert_eq!(old_name, "outPut".to_string());
+                                                    assert_eq!(new_name, "foo".to_string());
 
-                                                assert!(this
-                                                    .outports
-                                                    .contains_key(&String::from("foo")));
-                                                if let Some(opt) =
-                                                    this.outports.get(&String::from("foo"))
-                                                {
-                                                    assert_eq!(opt.process, "Bar".to_string());
-                                                    assert_eq!(opt.port, "outPut".to_string());
+                                                    assert!(this
+                                                        .outports
+                                                        .contains_key(&String::from("foo")));
+                                                    if let Some(opt) =
+                                                        this.outports.get(&String::from("foo"))
+                                                    {
+                                                        assert_eq!(opt.process, "Bar".to_string());
+                                                        assert_eq!(opt.port, "outPut".to_string());
+                                                    }
                                                 }
-                                            }
-                                        }, true);
+                                            },
+                                            true,
+                                        );
                                         g.rename_outport("outPut", "foo");
                                     }
                                 }
 
                                 'and_then_it_should_allow_removing_a_node: {
                                     'and_then_it_should_emit_an_event: {
-                                        g.connect("rename_outport", |this, value|{
-                                            if let Ok(node) = GraphNode::deserialize(value) {
-                                                assert_eq!(node.id, String::from("Baz"));
-                                            }
-                                        }, true);
+                                        g.connect(
+                                            "rename_outport",
+                                            |this, value| {
+                                                if let Ok(node) = GraphNode::deserialize(value) {
+                                                    assert_eq!(node.id, String::from("Baz"));
+                                                }
+                                            },
+                                            true,
+                                        );
                                         g.remove_node("Baz");
-                                        
+
                                         'and_then_it_should_not_have_edges_behind: {
                                             let has_connection = g.edges.iter().any(|edge| {
                                                 edge.from.node_id == "Baz"
@@ -618,17 +648,21 @@ mod tests {
 
                 'then_when_removing_that_iip: {
                     'and_then_it_should_emit_an_event: {
-                        g.connect("remove_initial", |this, value|{
-                            if let Ok(iip) = GraphIIP::deserialize(value) {
-                                if let Some(from) = &iip.from {
-                                    assert_eq!(from.data, Value::String("Foo".to_string()));
+                        g.connect(
+                            "remove_initial",
+                            |this, value| {
+                                if let Ok(iip) = GraphIIP::deserialize(value) {
+                                    if let Some(from) = &iip.from {
+                                        assert_eq!(from.data, Value::String("Foo".to_string()));
+                                    }
+                                    if let Some(to) = &iip.to {
+                                        assert_eq!(to.node_id, "Split");
+                                        assert_eq!(to.port, "in");
+                                    }
                                 }
-                                if let Some(to) = &iip.to {
-                                    assert_eq!(to.node_id, "Split");
-                                    assert_eq!(to.port, "in");
-                                }
-                            }
-                        }, true);
+                            },
+                            true,
+                        );
                         g.remove_initial("Split", "in");
                         'and_then_it_should_contain_no_iips: {
                             assert_eq!(g.initializers.len(), 0);
@@ -666,17 +700,21 @@ mod tests {
 
                 'then_when_removing_that_iip: {
                     'and_then_it_should_emit_an_event: {
-                        g.connect("remove_initial", |this, value|{
-                            if let Ok(iip) = GraphIIP::deserialize(value) {
-                                if let Some(from) = &iip.from {
-                                    assert_eq!(from.data, Value::String("Foo".to_string()));
+                        g.connect(
+                            "remove_initial",
+                            |this, value| {
+                                if let Ok(iip) = GraphIIP::deserialize(value) {
+                                    if let Some(from) = &iip.from {
+                                        assert_eq!(from.data, Value::String("Foo".to_string()));
+                                    }
+                                    if let Some(to) = &iip.to {
+                                        assert_eq!(to.node_id, "Split");
+                                        assert_eq!(to.port, "in");
+                                    }
                                 }
-                                if let Some(to) = &iip.to {
-                                    assert_eq!(to.node_id, "Split");
-                                    assert_eq!(to.port, "in");
-                                }
-                            }
-                        }, true);
+                            },
+                            true,
+                        );
                         g.remove_graph_initial("testinport");
 
                         'and_then_it_should_contain_no_iips: {
@@ -698,46 +736,48 @@ mod tests {
                 }
             }
 
-                'when_given_an_indexed_inport_initial_information_packet: {
-                    let mut g = Graph::new("", true);
-                    g.add_node("Split", "Split", None);
-                    g.add_inport("testinport", "Split", "in", None);
-                    g.add_graph_initial_index(
-                        Value::String("Foo".to_string()),
-                        "testinport",
-                        Some(1),
-                        None,
+            'when_given_an_indexed_inport_initial_information_packet: {
+                let mut g = Graph::new("", true);
+                g.add_node("Split", "Split", None);
+                g.add_inport("testinport", "Split", "in", None);
+                g.add_graph_initial_index(
+                    Value::String("Foo".to_string()),
+                    "testinport",
+                    Some(1),
+                    None,
+                );
+
+                'then_it_should_contain_one_node: {
+                    assert_eq!(g.nodes.len(), 1);
+                }
+                'then_it_should_contain_no_edges: {
+                    assert_eq!(g.edges.len(), 0);
+                }
+                'then_it_should_contain_one_iip_for_the_correct_node: {
+                    assert_eq!(g.initializers.len(), 1);
+                    assert_eq!(
+                        g.initializers.first().unwrap().from.as_ref().unwrap().data,
+                        Value::String("Foo".to_string())
                     );
+                    assert_eq!(
+                        g.initializers.first().unwrap().to.as_ref().unwrap().node_id,
+                        "Split"
+                    );
+                    assert_eq!(
+                        g.initializers.first().unwrap().to.as_ref().unwrap().port,
+                        "in"
+                    );
+                    assert_eq!(
+                        g.initializers.first().unwrap().to.as_ref().unwrap().index,
+                        Some(1)
+                    );
+                }
 
-                    'then_it_should_contain_one_node: {
-                        assert_eq!(g.nodes.len(), 1);
-                    }
-                    'then_it_should_contain_no_edges: {
-                        assert_eq!(g.edges.len(), 0);
-                    }
-                    'then_it_should_contain_one_iip_for_the_correct_node: {
-                        assert_eq!(g.initializers.len(), 1);
-                        assert_eq!(
-                            g.initializers.first().unwrap().from.as_ref().unwrap().data,
-                            Value::String("Foo".to_string())
-                        );
-                        assert_eq!(
-                            g.initializers.first().unwrap().to.as_ref().unwrap().node_id,
-                            "Split"
-                        );
-                        assert_eq!(
-                            g.initializers.first().unwrap().to.as_ref().unwrap().port,
-                            "in"
-                        );
-                        assert_eq!(
-                            g.initializers.first().unwrap().to.as_ref().unwrap().index,
-                            Some(1)
-                        );
-                    }
-
-                    'then_when_removing_that_iip: {
-                        'and_then_it_should_emit_an_event: {
-                            g.connect("remove_initial", |this, value|{
+                'then_when_removing_that_iip: {
+                    'and_then_it_should_emit_an_event: {
+                        g.connect(
+                            "remove_initial",
+                            |this, value| {
                                 if let Ok(iip) = GraphIIP::deserialize(value) {
                                     if let Some(from) = &iip.from {
                                         assert_eq!(from.data, Value::String("Foo".to_string()));
@@ -747,69 +787,68 @@ mod tests {
                                         assert_eq!(to.port, "in");
                                     }
                                 }
-                            }, true);
-                            g.remove_graph_initial("testinport");
-                           
-                            'and_then_it_should_contain_no_iips: {
+                            },
+                            true,
+                        );
+                        g.remove_graph_initial("testinport");
+
+                        'and_then_it_should_contain_no_iips: {
+                            assert_eq!(g.initializers.len(), 0);
+                        }
+
+                        'and_then_when_adding_iip_for_a_non_existent_inport: {
+                            g.add_graph_initial_index(
+                                Value::String("Bar".to_string()),
+                                "nonexistent",
+                                Some(1),
+                                None,
+                            );
+
+                            'and_then_it_should_not_add_any_iip: {
                                 assert_eq!(g.initializers.len(), 0);
                             }
-
-                            'and_then_when_adding_iip_for_a_non_existent_inport: {
-                                g.add_graph_initial_index(
-                                    Value::String("Bar".to_string()),
-                                    "nonexistent",
-                                    Some(1),
-                                    None,
-                                );
-
-                                'and_then_it_should_not_add_any_iip: {
-                                    assert_eq!(g.initializers.len(), 0);
-                                }
-                            }
                         }
                     }
                 }
-                'when_given_no_nodes: {
-                    let mut g = Graph::new("", true);
-                    'then_it_should_not_allow_adding_edges: {
-                        g.add_edge("Foo", "out", "Bar", "in", None);
-                        assert_eq!(g.edges.len(), 0);
-                    }
-                    'then_it_should_not_allow_adding_iips: {
-                        g.add_initial(Value::String("Hello".to_string()), "Bar", "in", None);
-                        assert_eq!(g.initializers.len(), 0);
-                    }
+            }
+            'when_given_no_nodes: {
+                let mut g = Graph::new("", true);
+                'then_it_should_not_allow_adding_edges: {
+                    g.add_edge("Foo", "out", "Bar", "in", None);
+                    assert_eq!(g.edges.len(), 0);
                 }
-                'when_saving_and_loading_files: {
-                    'then_when_saving_with_json_file_extension: {
-                        let current_dir = std::env::current_dir()
-                            .expect("Failed to get current dir")
-                            .join("foo.json");
-                        let graph_path = current_dir.to_str().unwrap();
+                'then_it_should_not_allow_adding_iips: {
+                    g.add_initial(Value::String("Hello".to_string()), "Bar", "in", None);
+                    assert_eq!(g.initializers.len(), 0);
+                }
+            }
+            'when_saving_and_loading_files: {
+                'then_when_saving_with_json_file_extension: {
+                    let current_dir = std::env::current_dir()
+                        .expect("Failed to get current dir")
+                        .join("foo.json");
+                    let graph_path = current_dir.to_str().unwrap();
 
-                        'and_then_it_should_be_able_save_file: {
-                            let mut g = Graph::new("", true);
-                            g.add_node("Foo", "Bar", None);
+                    'and_then_it_should_be_able_save_file: {
+                        let mut g = Graph::new("", true);
+                        g.add_node("Foo", "Bar", None);
 
-                            assert_eq!(g.save(graph_path).is_err(), false);
-                            assert_eq!(std::fs::File::open(graph_path).is_err(), false);
+                        assert_eq!(g.save(graph_path).is_err(), false);
+                        assert_eq!(std::fs::File::open(graph_path).is_err(), false);
 
-                            'and_then_it_should_be_possible_to_load_a_graph_from_file: {
-                                if let Ok(result) = Graph::load_file(graph_path, None) {
-                                    let original_graph = g.to_json();
-                                    assert_json_eq!(
-                                        json!(result.to_json()),
-                                        json!(original_graph)
-                                    );
-                                } else {
-                                    panic!("It did not load file")
-                                }
-
-                                let _ = std::fs::remove_file(graph_path);
+                        'and_then_it_should_be_possible_to_load_a_graph_from_file: {
+                            if let Ok(result) = Graph::load_file(graph_path, None) {
+                                let original_graph = g.to_json();
+                                assert_json_eq!(json!(result.to_json()), json!(original_graph));
+                            } else {
+                                panic!("It did not load file")
                             }
+
+                            let _ = std::fs::remove_file(graph_path);
                         }
                     }
                 }
+            }
         }
         'given_without_case_sensitivity: {
             'then_graph_operations_should_convert_port_names_to_lowercase: {
@@ -817,17 +856,20 @@ mod tests {
                 assert!(g.case_sensitive == false);
 
                 'and_then_it_should_have_case_insensitive_ports_on_the_edges: {
-                    g.connect("add_edge", |this, value|{
-                        if let Ok(edge) = GraphEdge::deserialize(value) {
-                            assert_eq!(edge.from.node_id, "Foo");
-                            assert_eq!(edge.to.port, "input");
-                            assert_eq!(edge.from.port, "output");
-                        }
-                    }, true);
+                    g.connect(
+                        "add_edge",
+                        |this, value| {
+                            if let Ok(edge) = GraphEdge::deserialize(value) {
+                                assert_eq!(edge.from.node_id, "Foo");
+                                assert_eq!(edge.to.port, "input");
+                                assert_eq!(edge.from.port, "output");
+                            }
+                        },
+                        true,
+                    );
                     g.add_node("Foo", "foo", None)
                         .add_node("Bar", "bar", None)
                         .add_edge("Foo", "outPut", "Bar", "inPut", None);
-
                 }
             }
         }

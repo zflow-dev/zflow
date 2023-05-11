@@ -1,8 +1,5 @@
-
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub enum IPType {
@@ -11,7 +8,7 @@ pub enum IPType {
     Data(Value),
     All(Value),
     #[default]
-    Unknown
+    Unknown,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
@@ -34,12 +31,11 @@ pub struct IP {
     // the node
     pub owner: Option<String>,
     pub clonable: bool,
-    pub userdata: Value
+    pub userdata: Value,
 }
 
 impl IP {
     pub fn new(datatype: IPType, options: IPOptions) -> Self {
-        
         IP {
             index: options.index,
             datatype,
@@ -48,7 +44,7 @@ impl IP {
             initial: options.initial,
             clonable: options.clonable,
             owner: None,
-            userdata:  options.userdata,
+            userdata: options.userdata,
         }
     }
 

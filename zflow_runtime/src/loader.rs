@@ -13,7 +13,7 @@ use poll_promise::Promise;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use zflow::graph::types::GraphJson;
+use zflow_graph::types::GraphJson;
 
 use crate::{
     component::{Component, GraphDefinition, ModuleComponent},
@@ -94,7 +94,7 @@ impl ComponentLoader {
             loop {
                 let processing = processings.remove(0);
                 let p = processing.block_until_ready();
-                
+
                 let comps = self.components.clone();
                 if let Ok(comp) = comps.clone().try_lock().as_mut() {
                     if let Ok(p) = p {
@@ -463,7 +463,11 @@ pub fn get_prefix(name: &str) -> String {
 }
 pub fn normalize_name(package_id: &str, name: &str) -> String {
     let prefix = get_prefix(name);
-    let mut f_name = if prefix == name {name.to_owned()}else{format!("{}/{}", prefix, name)};
+    let mut f_name = if prefix == name {
+        name.to_owned()
+    } else {
+        format!("{}/{}", prefix, name)
+    };
     if !package_id.is_empty() {
         f_name = format!("{}/{}", package_id, name);
     }
