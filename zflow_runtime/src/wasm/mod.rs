@@ -150,8 +150,32 @@ impl ModuleComponent for WasmComponent {
                                     ))
                                 {
                                     if let Some(res) = result.as_object() {
-                                        output.clone().send(res);
+                                        println!("wasm-output => {:?}", res);
+                                        output.clone().send(res).expect("expected output value");
                                     }
+                                }
+                                returns[0] = params[0].clone();
+
+                                Ok(())
+                            },
+                        );
+
+                        let output = this.output();
+                        let send_buffer_fn = Function::new(
+                            "send_buffer",
+                            [ValType::I64],
+                            [ValType::I64],
+                            None,
+                            move |_plugin: &mut CurrentPlugin,
+                                  params: &[Val],
+                                  returns: &mut [Val],
+                                  _: UserData| {
+                                    let port = _plugin.memory.get(params[0].unwrap_i64() as usize)?;
+                                let data = _plugin.memory.get(params[1].unwrap_i64() as usize)?;
+                                
+                                if let Ok(port) = std::str::from_utf8(port)
+                                {
+                                    output.clone().send_buffer(port, data).expect("expected output value");
                                 }
                                 returns[0] = params[0].clone();
 
@@ -178,7 +202,9 @@ impl ModuleComponent for WasmComponent {
                                     ))
                                 {
                                     if let Some(res) = result.as_object() {
-                                        output.clone().send_done(res);
+                                        if let Err(x) = output.clone().send_done(res) {
+                                            output.clone().send_done(&x).expect("expected to send error");
+                                        }
                                     }
                                 }
                                 returns[0] = params[0].clone();
@@ -215,7 +241,7 @@ impl ModuleComponent for WasmComponent {
                                 .expect("expected to decode return value from wasm component"),
                         ) {
                             if let Some(res) = result.as_object() {
-                                this.output().send(res);
+                                this.output().send(res)?;
                             }
                         }
                     }

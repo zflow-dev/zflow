@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use fp_rust::handler::HandlerThread;
 use log::{log, Level};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::component::Component;
@@ -427,13 +427,13 @@ impl ProcessOutput {
     // }
 
     /// Sends an error object
-    pub fn error(&mut self, err: &dyn Any) -> Result<(), String> {
+    pub fn error(&mut self, err: &dyn Any) -> Result<(), ProcessError> {
         let errors = if let Some(err) = err.downcast_ref::<ProcessError>() {
             vec![err.clone()]
         } else if let Some(err) = err.downcast_ref::<Vec<ProcessError>>() {
             err.clone()
         } else {
-            return Err(format!("Invalid error value"));
+            return Err(ProcessError(format!("Invalid error value")));
         };
 
         if self.out_ports.ports.contains_key("error") {
@@ -443,34 +443,35 @@ impl ProcessOutput {
                         self.send_ip(
                             "error",
                             &IP::new(IPType::OpenBracket(Value::Null), IPOptions::default()),
-                        );
+                        )?;
                     }
                     errors
                         .iter()
-                        .for_each(|err| self.send_ip("error", &Value::String(err.0.clone())));
+                        .for_each(|err| { self.send_ip("error", &Value::String(err.0.clone())).expect("expected process to send value"); });
                     if errors.len() > 1 {
                         self.send_ip(
                             "error",
                             &IP::new(IPType::CloseBracket(Value::Null), IPOptions::default()),
-                        );
+                        )?;
                     }
                 }
             }
         }
 
-        Err(format!(
+        Err(ProcessError(format!(
             "errors {}",
             errors
                 .iter()
                 .map(|e| e.0.clone())
                 .collect::<Vec<String>>()
                 .join(",\n")
-        ))
+        )))
     }
     /// Sends a single IP object to a port.
     ///
     /// `packet` can be type of `IP` or `Value`
-    pub fn send_ip(&mut self, port: &str, packet: &dyn Any) {
+    pub fn send_ip(&mut self, port: &str, packet: &dyn Any) -> Result<(), ProcessError> {
+        
         let mut ip = if let Some(ip) = packet.downcast_ref::<IP>() {
             ip.clone()
         } else if let Some(data) = packet.downcast_ref::<IPType>() {
@@ -484,84 +485,78 @@ impl ProcessOutput {
         } else if let Some(res) = packet.downcast_ref::<ProcessResult>() {
             IP::new(IPType::Data(res.clone().data), IPOptions::default())
         } else {
-            return;
+                return Ok(());
         };
 
         if self.scope.is_some() && ip.scope.is_empty() {
             ip.scope = self.scope.clone().unwrap();
         }
-
+        
+       
         if let Ok(component) = self.component.clone().try_lock().as_mut() {
             if !component.get_outports().ports.contains_key(port) {
-                panic!(
+                return Err(ProcessError(format!(
                     "Node {} does not have outport {}",
                     component.get_node_id(),
                     port
-                );
+                )));
             }
             if let Some(port_impl) = self.out_ports.ports.get_mut(port) {
                 if port_impl.is_addressable() && ip.index.is_none() {
-                    panic!(
+                    return Err(ProcessError(format!(
                         "Sending packets to addressable port {} {} requires specifying index",
                         component.get_node_id(),
                         port
-                    );
+                    )));
                 }
                 if component.is_ordered() {
                     component.add_to_result(self.result.clone(), port.to_string(), &mut ip, false);
-                    return;
+                    return Ok(());
                 }
                 if !port_impl.options.scoped {
                     ip.scope = "".to_string();
                 }
-
-                port_impl.send_ip(&ip, ip.index, true);
+                _ = port_impl.send_ip(&ip, ip.index, true);
             }
         }
+        Ok(())
     }
 
     /// Sends the argument via `send()` and marks activation as `done()`
-    pub fn send_done(&mut self, packet: &dyn Any) {
-        self.send(packet);
+    pub fn send_done(&mut self, packet: &dyn Any)-> Result<(), ProcessError> {
+        self.send(packet)?;
         self.done(None);
+        Ok(())
     }
     /// Sends packets for each port as a key in a map, tupple,
     /// or sends Error or a list of Errors if passed such
     ///
     /// Accepts either `ProcessError`, `Vec<ProcessError>`, tupple `(&str, Value)`, tupple `(&str, IPType)`  or an output map `Map<String, Value>`
-    pub fn send(&mut self, packet: &dyn Any) {
+    pub fn send(&mut self, packet: &dyn Any) -> Result<(), ProcessError>  {
         if let Some(err) = packet.downcast_ref::<ProcessError>() {
-            let _ = self.error(err);
-            return;
+            return self.error(err);
         } else if let Some(err) = packet.downcast_ref::<Vec<ProcessError>>() {
-            let _ = self.error(err);
-            return;
+            return self.error(err);
         }
 
         let component_ports = &mut vec![];
         let mut maps_in_ports = false;
+        let out_ports = self.out_ports.clone();
         if let Some(ports) = packet.downcast_ref::<Map<String, Value>>() {
-            let outports = self.out_ports.clone();
-            for port in outports.ports.keys() {
+            out_ports.ports.keys().for_each(|port| {
                 if (port != "error") && (port != "ports") {
                     component_ports.push(port);
                 }
-                if !maps_in_ports && ports.contains_key(port.as_str()) {
+                if !maps_in_ports && ports.contains_key(port.clone().as_str()) {
                     maps_in_ports = true;
                 }
-            }
-
-            if (component_ports.len() == 1) && !maps_in_ports {
-                self.send_ip(component_ports.clone()[0], &json!(ports.clone()));
-                return;
-            }
-
-            ports.iter().for_each(|(port, packet)| {
-                self.send_ip(port, packet);
             });
 
-            return;
+            if (component_ports.len() == 1) && !maps_in_ports {
+                return self.send_ip(component_ports.clone()[0], &json!(ports.clone()));
+            }
         }
+        
         if let Some(ports) = packet.downcast_ref::<HashMap<&str, Value>>() {
             let outports = self.out_ports.clone();
             for port in outports.ports.keys() {
@@ -574,45 +569,58 @@ impl ProcessOutput {
             }
 
             if (component_ports.len() == 1) && !maps_in_ports {
-                self.send_ip(component_ports.clone()[0], &json!(ports.clone()));
-                return;
+                return self.send_ip(component_ports.clone()[0], &json!(ports.clone()));
             }
-
-            ports.iter().for_each(|(port, packet)| {
-                self.send_ip(port, packet);
-            });
-
-            return;
+            if (component_ports.len() > 1) && !maps_in_ports {
+                return Err(ProcessError(format!("Port must be specified for sending output")));
+            }
         }
+        
         if let Some((port, data)) = packet.downcast_ref::<(&str, Value)>() {
-            self.send_ip(*port, data);
-            return;
+            return self.send_ip(*port, data);
+        }
+        if let Some((port, data)) = packet.downcast_ref::<(&str, _)>() {
+            return self.send_ip(*port, *data);
         }
         if let Some((port, data)) = packet.downcast_ref::<(&str, IPType)>() {
-            self.send_ip(*port, &IP::new(data.clone(), IPOptions::default()));
-            return;
+            return self.send_ip(*port, &IP::new(data.clone(), IPOptions::default()));
         }
         for port in self.out_ports.clone().ports.keys() {
-            self.send_ip(port, packet);
+            self.send_ip(port, packet)?;
+        }
+        Ok(())
+    }
+
+    /// Sends data you don't want to serialize as JSON values. Uses Bincode to encode data
+    pub fn send_buffer<T>(&mut self, port:&str, packet: T) -> Result<(), ProcessError> where T:Serialize {
+        match bincode::serialize(&packet) {
+            Ok(v) => {
+                let ip = IP::new(IPType::Buffer(v), IPOptions::default());
+                self.send_ip(port, &ip)
+            }
+            Err(x) =>{
+                Err(ProcessError(format!("{:?}", x)))
+            }
         }
     }
 
     /// Finishes process activation gracefully
     pub fn done(&mut self, err: Option<&dyn Any>) {
+        self.result.clone().try_lock().unwrap().resolved = true;
+        if let Ok(component) = self.component.clone().try_lock().as_mut() {
+            component.activate(self.context.clone());
+        }
         if let Some(err) = err {
             if let Some(err) = err.downcast_ref::<ProcessError>() {
                 let _ = self.error(err);
-                return;
             } else if let Some(err) = err.downcast_ref::<Vec<ProcessError>>() {
                 let _ = self.error(err);
-                return;
             }
         }
 
-        self.result.clone().try_lock().unwrap().resolved = true;
+      
 
         if let Ok(component) = self.component.clone().try_lock().as_mut() {
-            component.activate(self.context.clone());
             let mut _component = component.clone();
             let mut is_last = || {
                 // We only care about real output sets with processing data

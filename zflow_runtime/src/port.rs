@@ -721,6 +721,7 @@ impl InPort {
         if initial {
             return Some(self.iip_buffer.clone());
         }
+
         Some(self.buffer.clone())
     }
 
@@ -1058,7 +1059,6 @@ impl BasePort for OutPort {
         let mut attached = Vec::new();
 
         for socket in self.sockets.clone() {
-            println!("{}", socket.clone().try_lock().unwrap().index);
             attached.push(socket.clone().try_lock().unwrap().index);
         }
 
@@ -1102,7 +1102,9 @@ impl OutPort {
         async_transform(futures).await
     }
 
-    pub async fn send(&mut self, data: &dyn Any, index: Option<usize>) -> Result<(), String> {
+    /// Send data from outport
+    pub async fn send(&mut self, data: &dyn Any, index: Option<usize>) -> Result<(), String>
+    {
         let ip = if let Some(ip) = data.downcast_ref::<IP>() {
             ip.clone()
         } else if let Some(data) = data.downcast_ref::<IPType>() {
@@ -1150,6 +1152,55 @@ impl OutPort {
         });
 
         async_transform(futures).await
+    }
+
+    /// Send data you don't want to serialize as JSON values. Uses Bincode to encode data
+    pub async fn send_buffer<T>(&mut self, data: T, index: Option<usize>) -> Result<(), String>
+    where
+        T: Serialize,
+    {
+        match bincode::serialize(&data) {
+            Ok(v) => {
+                let ip = IP::new(IPType::Buffer(v), IPOptions::default());
+                let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(), String>>>>> = Vec::new();
+                let sockets = if let Ok(sockets) = self.get_sockets(index) {
+                    sockets
+                } else {
+                    return Err("No sockets attached to this port".to_string());
+                };
+                self.check_required()?;
+                if self.is_caching() {
+                    if let Some(_data) = self.cache.get(&format!("{:?}", index)) {
+                        if !assert_json_matches_no_panic(&ip, _data, Config::new(CompareMode::Strict))
+                            .is_ok()
+                        {
+                            self.cache.insert(format!("{:?}", index), ip.clone());
+                        }
+                    } else {
+                        self.cache.insert(format!("{:?}", index), ip.clone());
+                    }
+                }
+                sockets.clone().iter().for_each(|socket| {
+                    let socket = socket.clone();
+                    let ip = ip.clone();
+                    futures.push(Box::pin(async move {
+                        if let Ok(socket) = socket.try_lock().as_mut() {
+                            if let Ok(_) = socket.send(Some(&ip)).await {
+                            } else {
+                                return Err("Socket Send".to_string());
+                            }
+                        }
+                        Ok(())
+                    }));
+                });
+        
+                async_transform(futures).await
+            }
+            Err(x) =>{
+                Err(format!("{:?}", x))
+            }
+        }
+       
     }
 
     pub async fn begin_group(&mut self, group: Value, index: Option<usize>) -> Result<(), String> {
@@ -1251,7 +1302,7 @@ impl OutPort {
         sockets.iter().for_each(move |socket| {
             if let Ok(socket) = socket.clone().try_lock().as_mut() {
                 if pristine {
-                    let _ = socket.post(Some(ip.clone()), auto_connect);
+                    let _ = socket.post(Some(ip.clone()), auto_connect).expect("expected socket to post");
                     pristine = false;
                 } else {
                     if ip.can_fake_clone() {

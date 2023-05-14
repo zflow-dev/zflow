@@ -1,11 +1,16 @@
+use std::any::Any;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub enum IPType {
     OpenBracket(Value),
     CloseBracket(Value),
     Data(Value),
+    Buffer(Vec<u8>),
     All(Value),
     #[default]
     Unknown,

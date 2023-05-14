@@ -1,9 +1,11 @@
 use std::{
     any::Any,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex}, fmt::format,
 };
 
+use extism::Val;
 use fp_rust::publisher::Publisher;
+use serde::Serialize;
 use serde_json::{Map, Value};
 
 use std::fmt::Debug;
@@ -179,10 +181,26 @@ impl InternalSocket {
         } else if let Some(data) = data.unwrap().downcast_ref::<Value>() {
             IP::new(IPType::Data(data.clone()), IPOptions::default())
         } else {
-            panic!("packet type should be either IP or Value");
+            return Err("Uknown packet type".to_owned());
         };
 
         self.handle_socket_event(SocketEvent::Data(ip, None), true)
+    }
+    /// ## Sending information packets
+    /// For data you don't want to serialize as JSON values. Uses Bincode to encode data
+    pub async fn send_buffer<T>(&mut self, data: T) -> Result<(), String>
+    where
+        T: Serialize,
+    {
+        match bincode::serialize(&data) {
+            Ok(v) => {
+                let ip = IP::new(IPType::Buffer(v), IPOptions::default());
+                self.handle_socket_event(SocketEvent::Data(ip, None), true)
+            }
+            Err(x) =>{
+                Err(format!("{:?}", x))
+            }
+        }
     }
 
     pub async fn send_defaults(&mut self) -> Result<(), String> {

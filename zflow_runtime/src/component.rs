@@ -15,7 +15,8 @@ use fp_rust::{
     handler::{Handler, HandlerThread},
     publisher::Publisher,
 };
-use log::{log, Level};
+
+use log::{debug, log, Level};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use zflow_graph::types::GraphJson;
@@ -127,7 +128,7 @@ pub struct Component {
     pub(crate) handle: Option<Arc<Mutex<ProcessFunc>>>,
     pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
     pub(crate) internal_thread: Arc<Mutex<HandlerThread>>,
-    pub auto_ordering: bool,
+    pub auto_ordering: Option<bool>,
     setup_fn: Option<
         Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>,
     >,
@@ -287,7 +288,7 @@ impl Component {
             started: false,
             load: 0,
             handle: None,
-            auto_ordering: false,
+            auto_ordering: None,
             node_id: String::from(""),
             bus: Arc::new(Mutex::new(Publisher::new_with_handlers(Some(
                 bus_handle.clone(),
@@ -507,11 +508,11 @@ impl Component {
             // component_name = component.get_name();
             match ip.datatype {
                 IPType::OpenBracket(_) => {
-                    if !component.get_auto_ordering() && !component.get_ordered() {
+                    if component.get_auto_ordering().is_none() && !component.get_ordered() {
                         // Switch component to ordered mode when receiving a stream unless
                         // auto-ordering is disabled
-                        log!(
-                            Level::Debug,
+                        debug!(
+                            target: "Component::handle_ip",
                             "zflow::component => {} port '{}' entered auto-ordering mode",
                             component.get_node_id(),
                             port.clone().name
@@ -537,6 +538,7 @@ impl Component {
                         // B. There are closeBrackets in queue after current packet
                         // C. We've queued the results from all in-flight processes and
                         //    new closeBracket arrives
+
                         if let Some(buf) = port.get_buffer(Some(ip.clone().scope), ip.index, false)
                         {
                             if let Ok(buf) = buf.clone().try_lock() {
@@ -667,12 +669,25 @@ impl Component {
                 output: output.clone(),
             })));
             if res.is_ok() {
-                output.clone().send_done(&res.ok());
+                let data = res.ok().unwrap();
+                if !data.resolved && !data.data.is_null() {
+                    if let Err(x) = output.clone().send_done(&data) {
+                        output.clone().done(Some(&x));
+                        let _component = _component.clone();
+                        if let Ok(component) = _component.clone().try_lock().as_mut() {
+                            component.deactivate(_context.clone());
+                        }
+                    }
+                }
             } else {
                 if res.clone().err().is_some() {
                     output.clone().done(Some(res.err().as_ref().unwrap()));
                 } else {
                     output.clone().done(None);
+                }
+                let _component = _component.clone();
+                if let Ok(component) = _component.clone().try_lock().as_mut() {
+                    component.deactivate(_context.clone());
                 }
             }
         }
@@ -1455,7 +1470,7 @@ impl Component {
                 .unwrap()
                 .publish(ComponentEvent::Activate(self.get_load()));
 
-            if self.is_ordered() || self.get_auto_ordering() {
+            if self.is_ordered() || self.get_auto_ordering().is_some() {
                 self.get_output_queue_mut()
                     .push_back(context.result.clone());
             }
@@ -1538,7 +1553,7 @@ impl Component {
     /// Method for checking whether the component sends packets
     /// in the same order they were received.
     pub fn is_ordered(&self) -> bool {
-        if self.ordered || self.auto_ordering {
+        if self.ordered || self.auto_ordering == Some(true) {
             return true;
         };
         return false;
@@ -1589,12 +1604,12 @@ impl Component {
         &mut self.out_ports
     }
 
-    pub fn get_auto_ordering(&self) -> bool {
+    pub fn get_auto_ordering(&self) -> Option<bool> {
         self.auto_ordering
     }
 
     pub fn set_auto_ordering(&mut self, auto_ordering: bool) {
-        self.auto_ordering = auto_ordering;
+        self.auto_ordering = Some(auto_ordering);
     }
 
     pub fn get_ordered(&self) -> bool {

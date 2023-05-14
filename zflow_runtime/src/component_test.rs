@@ -21,6 +21,7 @@ mod tests {
     #[scenario]
     #[test]
     fn test_component() {
+        // env_logger::init();
         'given_a_component: {
             'when_with_required_ports: {
                 'then_it_should_throw_an_error_upon_sending_packet_to_an_unattached_required_port: {
@@ -334,7 +335,7 @@ mod tests {
                             if let Ok(handle) = this.try_lock().as_mut() {
                                 handle.output().send_done(
                                     &handle.input().get("in").expect("expected inport data"),
-                                );
+                                )?;
                             }
                             Ok(ProcessResult::default())
                         })),
@@ -428,12 +429,13 @@ mod tests {
                                             if level <= 0 {
                                                 handle
                                                     .output()
-                                                    .send(&("html", json!(*str.clone())));
+                                                    .send(&("html", json!(*str.clone())))?;
                                                 str.clear();
                                             }
                                         }
                                         _ => {}
                                     }
+                                    handle.output().done(None);
                                 }
                             }
                             Ok(ProcessResult::default())
@@ -449,15 +451,15 @@ mod tests {
                                 if let Ok(handle) = this.try_lock().as_mut() {
                                     let mut output = handle.output();
                                     if let Some(_bang) = handle.input().get("bang") {
-                                        output.send(&("tags", IPType::OpenBracket(json!("p"))));
-                                        output.send(&("tags", IPType::OpenBracket(json!("em"))));
-                                        output.send(&("tags", IPType::Data(json!("Hello"))));
-                                        output.send(&("tags", IPType::CloseBracket(json!("em"))));
-                                        output.send(&("tags", IPType::Data(json!(", "))));
-                                        output.send(&("tags", IPType::OpenBracket(json!("strong"))));
-                                        output.send(&("tags", IPType::Data(json!("World!"))));
-                                        output.send(&("tags", IPType::CloseBracket(json!("strong"))));
-                                        output.send(&("tags", IPType::CloseBracket(json!("p"))));
+                                        output.send(&("tags", IPType::OpenBracket(json!("p"))))?;
+                                        output.send(&("tags", IPType::OpenBracket(json!("em"))))?;
+                                        output.send(&("tags", IPType::Data(json!("Hello"))))?;
+                                        output.send(&("tags", IPType::CloseBracket(json!("em"))))?;
+                                        output.send(&("tags", IPType::Data(json!(", "))))?;
+                                        output.send(&("tags", IPType::OpenBracket(json!("strong"))))?;
+                                        output.send(&("tags", IPType::Data(json!("World!"))))?;
+                                        output.send(&("tags", IPType::CloseBracket(json!("strong"))))?;
+                                        output.send(&("tags", IPType::CloseBracket(json!("p"))))?;
                                     }
                                     output.done(None);
                                 }
@@ -470,10 +472,8 @@ mod tests {
                     let mut s2 = InternalSocket::create(None);
                     let mut s3 = InternalSocket::create(None);
 
-                    s3.clone()
-                        .try_lock()
-                        .unwrap()
-                        .on(|event| match event.as_ref() {
+                    s3.clone().try_lock().unwrap().on(|event| {
+                        match event.as_ref() {
                             SocketEvent::IP(ip, None) => match &ip.datatype {
                                 IPType::Data(data) => {
                                     assert_eq!(
@@ -485,7 +485,8 @@ mod tests {
                                 _ => {}
                             },
                             _ => {}
-                        });
+                        }
+                    });
 
                     d.clone()
                         .try_lock()
@@ -547,7 +548,7 @@ mod tests {
                                             Some(0)
                                         };
                                         ip.owner = None;
-                                        handle.output().send_done(&ip);
+                                        handle.output().send_done(&ip)?;
                                     }
                                 }
                                 Ok(ProcessResult::default())

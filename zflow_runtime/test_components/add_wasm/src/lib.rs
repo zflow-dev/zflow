@@ -14,6 +14,7 @@ pub struct Output {
 }
 
 impl Output {
+    #[cfg(not(tarpaulin_include))]
     #[inline(always)]
     pub fn as_ptr(&self) -> u64 {
         let mem = extism_pdk::Memory::from_bytes(json::to_string(self.clone()).unwrap().as_bytes());
@@ -27,6 +28,7 @@ pub struct Input {
     pub right: Value,
 }
 
+#[cfg(not(tarpaulin_include))]
 #[plugin_fn]
 pub fn process(input: Json<Input>) -> FnResult<Json<Value>> {
     // because inputs are controlled, we wait for all of them

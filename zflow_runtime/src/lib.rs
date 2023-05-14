@@ -12,3 +12,4 @@ pub mod registry;
 pub mod runtime;
 pub mod sockets;
 pub mod wasm;
+// pub mod blob;
