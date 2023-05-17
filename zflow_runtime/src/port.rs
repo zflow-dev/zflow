@@ -120,7 +120,7 @@ pub struct InPort {
 
 impl Debug for InPort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut binding = f.debug_struct("OutPort");
+        let mut binding = f.debug_struct("InPort");
         binding
             .field("node", &self.node)
             .field("name", &self.name)
@@ -144,7 +144,7 @@ impl BasePort for InPort {
         if !self.is_addressable() || index.is_none() {
             idx = Some(self.sockets.len());
         }
-
+        
         if let Ok(socket) = socket.clone().try_lock().as_mut().as_mut() {
             socket.index = idx.unwrap();
             let _ = socket.connect();
@@ -290,7 +290,9 @@ impl BasePort for InPort {
                     .expect("expected inport bus instance")
                     .publish(event.as_ref().clone()),
             });
+           
         }
+        
 
         self.attach_socket(socket.clone(), idx.unwrap());
         if self.is_addressable() {
@@ -307,7 +309,8 @@ impl BasePort for InPort {
                 IPType::All(data) | IPType::Data(data) => data,
                 _ => Value::Null,
             };
-            socket
+            
+            socket.clone()
                 .try_lock()
                 .as_mut()
                 .expect("expected socket instance")

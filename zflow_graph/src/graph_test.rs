@@ -61,7 +61,9 @@ mod tests {
                             let node = g.get_node("Foo");
                             if let Some(node) = node {
                                 assert_eq!(node.id, "Foo");
-                                assert_eq!(*node.uid, n.unwrap().uid);
+                                let this = node as *const _;
+                                let that = n.unwrap() as *const _;
+                                assert_eq!(this, that);
                             }
                         }
                         'and_then_metadata_should_be_empty: {

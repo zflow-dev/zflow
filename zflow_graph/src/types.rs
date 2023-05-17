@@ -2,28 +2,28 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{collections::HashMap, path::Path};
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphNode {
     pub id: String,
-    pub uid: String,
+    // pub uid: String,
     pub component: String,
     pub metadata: Option<Map<String, Value>>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphNodeJson {
     pub component: String,
     pub metadata: Option<Map<String, Value>>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphLeaf {
     pub port: String,
     pub node_id: String,
     pub index: Option<usize>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphLeafJson {
     pub port: String,
     pub process: String,
@@ -38,19 +38,19 @@ pub enum StubData {
     Bytes(Vec<u8>),
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphStub {
     pub data: Value,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphEdge {
     pub from: GraphLeaf,
     pub to: GraphLeaf,
     pub metadata: Option<Map<String, Value>>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphEdgeJson {
     pub src: Option<GraphLeafJson>,
     pub tgt: Option<GraphLeafJson>,
@@ -58,34 +58,34 @@ pub struct GraphEdgeJson {
     pub metadata: Option<Map<String, Value>>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphIIP {
     pub to: Option<GraphLeaf>,
     pub from: Option<GraphStub>,
     pub metadata: Option<Map<String, Value>>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphGroup {
     pub name: String,
     pub nodes: Vec<String>,
     pub metadata: Option<Map<String, Value>>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphExportedPort {
     pub process: String,
     pub port: String,
     pub metadata: Option<Map<String, Value>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphTransaction {
     pub id: Option<String>,
     pub depth: i32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphJson {
     pub case_sensitive: bool,

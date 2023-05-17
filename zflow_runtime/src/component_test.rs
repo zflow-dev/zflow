@@ -21,7 +21,6 @@ mod tests {
     #[scenario]
     #[test]
     fn test_component() {
-        // env_logger::init();
         'given_a_component: {
             'when_with_required_ports: {
                 'then_it_should_throw_an_error_upon_sending_packet_to_an_unattached_required_port: {
@@ -310,14 +309,16 @@ mod tests {
                         .clone()
                         .try_lock()
                         .unwrap()
-                        .subscribe_fn(|event| match event.as_ref() {
-                            ComponentEvent::Start => {
-                                assert!(true);
+                        .subscribe_fn(|event| {
+                            match event.as_ref() {
+                                ComponentEvent::Start => {
+                                    assert!(true);
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         });
 
-                    let c = std::sync::Arc::new(std::sync::Mutex::new(c));
+                    let c = std::sync::Arc::new(std::sync::Mutex::new(c.clone()));
                     let _ = Component::start(c.clone());
                     assert!(c.clone().try_lock().unwrap().started);
                     let _ = Component::shutdown(c.clone());

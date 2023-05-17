@@ -628,7 +628,7 @@ impl Graph {
         self.check_transaction_start();
         let node = GraphNode {
             id: id.to_owned(),
-            uid: guid(),
+            // uid: guid(),
             component: component.to_owned(),
             metadata,
         };
@@ -1027,7 +1027,6 @@ impl Graph {
     pub fn get_edge(&self, node: &str, port: &str, node2: &str, port2: &str) -> Option<&GraphEdge> {
         let out_port = self.get_port_name(port);
         let in_port = self.get_port_name(port2);
-
         self.edges.iter().find(|edge| {
             edge.from.node_id.as_str() == node
                 && edge.from.port == out_port

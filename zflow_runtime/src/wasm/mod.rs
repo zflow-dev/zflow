@@ -4,7 +4,7 @@ use extism::{
     manifest::Wasm, Context, CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Value, Map};
 
 use crate::{
     component::{Component, ComponentOptions, ModuleComponent},
@@ -40,6 +40,8 @@ pub struct WasmComponent {
     pub source: String,
     #[serde(default)]
     pub package_id: String,
+    #[serde(default)]
+    pub metadata: Map<String, Value>
 }
 
 impl WasmComponent {
@@ -48,7 +50,7 @@ impl WasmComponent {
     }
 
     pub fn with_metadata(&mut self, meta: Value) -> WasmComponent {
-        if let Some(meta) = WasmComponent::deserialize(meta).ok() {
+        if let Some(meta) = WasmComponent::deserialize(meta.clone()).ok() {
             self.inports.extend(meta.inports);
             self.outports.extend(meta.outports);
             if !meta.description.is_empty() {
@@ -61,7 +63,10 @@ impl WasmComponent {
             if !meta.base_dir.is_empty() {
                 self.base_dir = meta.base_dir;
             }
+        } else if let Some(meta) = meta.clone().as_object() {
+            self.metadata = meta.clone();
         }
+        
         self.clone()
     }
 }
@@ -85,6 +90,7 @@ impl ModuleComponent for WasmComponent {
             }
 
             return Ok(Component::new(ComponentOptions {
+                metadata: Some(self.metadata.clone()),
                 in_ports: HashMap::from_iter(
                     inports
                         .clone()

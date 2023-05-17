@@ -18,7 +18,7 @@ use fp_rust::{
 
 use log::{debug, log, Level};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Value, Map};
 use zflow_graph::types::GraphJson;
 use zflow_graph::Graph;
 
@@ -45,13 +45,14 @@ pub struct BracketContext {
     pub out: HashMap<String, HashMap<String, Vec<Arc<Mutex<ProcessContext>>>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ComponentEvent {
     Activate(usize),
     Deactivate(usize),
     Start,
     Ready,
     End,
+    Icon(Value)
 }
 
 pub trait ModuleComponent: DynClone + Send + Sync + 'static {
@@ -138,6 +139,7 @@ pub struct Component {
     tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
     pub(crate) graph: Option<Box<dyn GraphDefinition>>,
     pub(crate) ready: bool,
+    pub metadata: Option<Map<String, Value>>
 }
 
 impl Clone for Component {
@@ -169,6 +171,7 @@ impl Clone for Component {
             tracked_signals: self.tracked_signals.clone(),
             graph: None,
             ready: self.ready.clone(),
+            metadata: self.metadata.clone(),
         };
 
         if let Some(graph) = &self.graph {
@@ -211,6 +214,7 @@ impl Default for Component {
             network: Default::default(),
             loader: Default::default(),
             starting: Default::default(),
+            metadata: Default::default()
         }
     }
 }
@@ -248,7 +252,7 @@ impl Component {
     }
     pub fn new(mut options: ComponentOptions) -> Self {
         let bus_handle = HandlerThread::new_with_mutex();
-
+      
         if options.graph.is_some() {
             options.in_ports.insert(
                 "graph".to_string(),
@@ -290,9 +294,10 @@ impl Component {
             handle: None,
             auto_ordering: None,
             node_id: String::from(""),
-            bus: Arc::new(Mutex::new(Publisher::new_with_handlers(Some(
-                bus_handle.clone(),
-            )))),
+            // bus: Arc::new(Mutex::new(Publisher::new_with_handlers(Some(
+            //     bus_handle.clone(),
+            // )))),
+            bus:Arc::new(Mutex::new(Publisher::new())),
             internal_thread: bus_handle.clone(),
             setup_fn: None,
             teardown_fn: None,
@@ -302,8 +307,9 @@ impl Component {
             network: None,
             loader: None,
             starting: false,
+            metadata: options.metadata
         };
-
+    
         if let Some(process) = options.process {
             s.handle = Some(Arc::new(Mutex::new(Box::leak(process))));
         }
@@ -397,15 +403,16 @@ impl Component {
                 (setup_fn)(_component.clone())?;
             }
         }
-        if let Ok(component) = _component.clone().try_lock().as_mut() {
-            component.set_started(true);
-            component
-                .get_publisher()
-                .clone()
-                .try_lock()
-                .unwrap()
-                .publish(ComponentEvent::Start);
-        }
+        let binding = _component.clone();
+        let mut binding = binding.try_lock();
+        let component = binding.as_mut().unwrap();
+        component.set_started(true);
+        component
+            .get_publisher()
+            .clone()
+            .try_lock()
+            .unwrap()
+            .publish(ComponentEvent::Start);
         Ok(())
     }
 
@@ -742,8 +749,9 @@ impl Component {
 
     /// Subscribe to component's events
     pub fn on(&mut self, callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static) {
+       let f =  self.bus.clone().try_lock().unwrap().subscribe_fn(callback);
         self.tracked_signals
-            .push(self.bus.clone().try_lock().unwrap().subscribe_fn(callback));
+            .push(f.clone());
     }
 
     pub fn prepare_forwarding(&mut self) {
@@ -1670,8 +1678,12 @@ impl Component {
         self.bracket_context.out.clear();
     }
 
-    pub fn set_icon(&mut self, icon: String) {
-        self.icon = icon;
+    pub fn set_icon(&mut self, icon: &str) {
+        self.icon = icon.to_string();
+        self.bus.clone().try_lock().unwrap().publish(ComponentEvent::Icon(json!({
+            "id": self.node_id,
+            "icon": icon
+        })));
     }
 
     pub fn get_bracket_context_val(&self) -> BracketContext {
@@ -1762,7 +1774,7 @@ impl Component {
         }
 
         if let Some(icon) = graph.properties.get("icon") {
-            self.set_icon(icon.as_str().expect("expected icon string").to_owned())
+            self.set_icon(icon.as_str().expect("expected icon string"));
         }
 
         if graph.name.is_empty() && !self.get_node_id().is_empty() {
@@ -2005,6 +2017,7 @@ pub struct ComponentOptions {
     pub forward_brackets: HashMap<String, Vec<String>>,
     pub graph: Option<Box<dyn GraphDefinition>>,
     pub process: Option<Box<ProcessFunc>>,
+    pub metadata: Option<Map<String, Value>>
 }
 
 impl Clone for ComponentOptions {
@@ -2019,10 +2032,12 @@ impl Clone for ComponentOptions {
             forward_brackets: self.forward_brackets.clone(),
             graph: None,
             process: None,
+            metadata: self.metadata.clone(),
         };
         if let Some(graph) = &self.graph {
             s.graph = Some(dyn_clone::clone_box(&**graph));
         }
+     
         s
     }
 }
@@ -2042,6 +2057,7 @@ impl Default for ComponentOptions {
             )]),
             process: None,
             graph: None,
+            metadata: None,
         }
     }
 }

@@ -53,7 +53,7 @@ pub struct InternalSocket {
     pub to: Option<SocketConnection>,
     pub from: Option<SocketConnection>,
     pub metadata: Option<Map<String, Value>>,
-    pub data_delegate: Option<Arc<Mutex<dyn (FnMut() -> IP) + Sync + Send>>>,
+    pub data_delegate: Option<Arc<Mutex<dyn (FnMut() -> IP) + Sync + Send + 'static>>>,
     pub(crate) bus: Arc<Mutex<Publisher<SocketEvent>>>,
     pub brackets: Vec<Value>,
     pub errors: Vec<String>,

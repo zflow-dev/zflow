@@ -22,6 +22,8 @@ use crate::{
     wasm::WasmComponent,
 };
 
+use std::fmt::Debug;
+
 use is_url::is_url;
 
 #[derive(Debug, Default, Clone)]
@@ -38,7 +40,8 @@ pub struct ComponentLoaderOptions {
 /// The Component Loader is responsible for discovering components
 /// available in the running system, as well as for instantiating
 /// them.
-// #[derive(Clone)]
+///
+
 pub struct ComponentLoader {
     pub(crate) components: Arc<Mutex<HashMap<String, Box<dyn GraphDefinition>>>>,
     pub options: ComponentLoaderOptions,
@@ -60,6 +63,40 @@ impl Clone for ComponentLoader {
             processing: None,
             ready: self.ready.clone(),
             registry: self.registry.clone(),
+        }
+    }
+}
+
+impl Debug for ComponentLoader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let x = if let Some(p) = &self.processing {
+            p.len()
+        } else {
+            0
+        };
+
+        f.debug_struct("ComponentLoader")
+            .field("components", &self.components)
+            .field("options", &self.options)
+            .field("base_dir", &self.base_dir)
+            .field("library_icons", &self.library_icons)
+            .field("processes", &x)
+            .field("ready", &self.ready)
+            .field("registry", &["registry"])
+            .finish()
+    }
+}
+
+impl Default for ComponentLoader {
+    fn default() -> Self {
+        Self {
+            components: Default::default(),
+            options: Default::default(),
+            base_dir: Default::default(),
+            library_icons: Default::default(),
+            processing: Default::default(),
+            ready: Default::default(),
+            registry: Arc::new(Mutex::new(DefaultRegistry::default())),
         }
     }
 }
@@ -153,7 +190,6 @@ impl ComponentLoader {
         let components = binding
             .try_lock()
             .expect("Expected component list container");
-
         if !components.contains_key(name) {
             for i in 0..components.keys().len() {
                 if let Some(component_name) = components.keys().collect::<Vec<&String>>().get(i) {
@@ -166,6 +202,8 @@ impl ComponentLoader {
         } else {
             component = components.get(name);
         }
+
+        
 
         if component.is_none() {
             return Err(format!(
@@ -207,18 +245,18 @@ impl ComponentLoader {
 
         if let Some(prefix) = self.get_library_icon(library) {
             if component_name.is_some() {
-                instance.set_icon(prefix.to_owned());
+                instance.set_icon(prefix);
                 return Ok(_instance.clone());
             }
         }
 
         // See if instance is a subgraph
         if instance.is_subgraph() {
-            instance.set_icon("჻".to_owned());
+            instance.set_icon("჻");
             return Ok(_instance.clone());
         }
 
-        instance.set_icon("⚙".to_owned());
+        instance.set_icon("⚙");
 
         return Ok(_instance.clone());
     }
@@ -272,7 +310,11 @@ impl ComponentLoader {
 
         // check if it's a component instance
         if let Some(instance) = component.to_any().downcast_ref::<Component>() {
-            return Ok(Component::from_instance(instance.clone()));
+            let mut instance = instance.clone();
+            if let Some(meta) = metadata.as_object() {
+                instance.metadata = Some(meta.clone());
+            }
+            return Ok(Component::from_instance(instance));
         }
 
         Err("".to_owned())
@@ -304,11 +346,11 @@ impl ComponentLoader {
 
                     if let Some(prefix) = self.get_library_icon(library) {
                         if component_name.is_some() {
-                            instance.set_icon(prefix.to_owned());
+                            instance.set_icon(prefix);
                             return Ok(_instance.clone());
                         }
                     }
-                    instance.set_icon("჻".to_owned());
+                    instance.set_icon("჻");
 
                     Component::setup_graph(_instance.clone(), Some(component))?;
                 }
@@ -336,18 +378,18 @@ impl ComponentLoader {
 
             if let Some(prefix) = self.get_library_icon(library) {
                 if component_name.is_some() {
-                    instance.set_icon(prefix.to_owned());
+                    instance.set_icon(prefix);
                     return;
                 }
             }
 
             // See if instance is a subgraph
             if instance.is_subgraph() {
-                instance.set_icon("჻".to_owned());
+                instance.set_icon("჻");
                 return;
             }
 
-            instance.set_icon("⚙".to_owned());
+            instance.set_icon("⚙");
         }
     }
 
@@ -372,7 +414,10 @@ impl ComponentLoader {
         namespace: &str,
         name: &str,
         component: impl GraphDefinition,
-    ) {
+    ) -> Result<(), String> {
+        if !self.ready {
+            self.list_components()?;
+        }
         let f_name = normalize_name(namespace, name);
         self.components
             .clone()
@@ -380,6 +425,7 @@ impl ComponentLoader {
             .as_mut()
             .expect("Expected component list container")
             .insert(f_name, Box::new(component));
+        Ok(())
     }
 
     /// With `register_loader` you can register custom component
