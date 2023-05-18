@@ -50,7 +50,7 @@ let mut graph = Graph::new("", false);
 g.add_node("first_component", "first_component_process", None)
  .add_node("second_component", "second_component_process", None)
  // trigger the first component with an initial packet
- .add_initial(json!("start"), "first_component", "first_component_process", None)
+ .add_initial(json!("start"), "first_component", "in", None)
  // send the output of `first_component` to the input of the `second_component`
  .add_edge("first_component", "out", "second_component", "in", None);
 
@@ -65,7 +65,7 @@ let mut network = Network::create(graph.clone(), NetworkOptions {
 // register the components to the node ids
 let loader = network.get_loader();
 loader.register_component("first_component", "first_component_process", my_component).unwrap();
-loader.register_component("second_component", "second_component_process", merge).unwrap();
+loader.register_component("second_component", "second_component_process", second_component).unwrap();
 
 // sync graph with network
 if let Ok(nw) = network.connect().try_lock() {

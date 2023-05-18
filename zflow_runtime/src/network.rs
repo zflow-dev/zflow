@@ -247,30 +247,36 @@ impl Network {
         }
     }
 
-    fn check_if_finished(network: Arc<Mutex<impl BaseNetwork + Send + Sync + 'static + ?Sized>>) {
-        if let Ok(this) = network.clone().try_lock().as_mut() {
-            if this.is_running() {
-                return;
-            }
-            this.cancel_debounce(false);
-        }
+    fn check_if_finished(network: Arc<Mutex<Self>>) {
+        // if let Ok(this) = network.clone().try_lock().as_mut() {
+        //     if this.is_running() {
+        //         return;
+        //     }
+        //     this.cancel_debounce(false);
 
-        thread::spawn(move || loop {
-            thread::sleep(Duration::from_millis(50));
-            let binding = network.clone();
-            let mut binding = binding.try_lock();
-            let this = binding.as_mut().unwrap();
-            while !this.get_debounce_ended() {
-                if this.is_abort_debounce() {
-                    break;
-                }
-                if this.is_running() {
-                    break;
-                }
-                this.set_started(false);
-                this.set_debounce_ended(true);
-            }
-        });
+        //     let get_debounce_ended = this.debounce_end.clone();
+        //     let abort_debounce = this.abort_debounce.clone();
+        //     let started = this.started.clone();
+
+        //     thread::spawn(move || loop {
+        //         thread::sleep(Duration::from_millis(10));
+        //         while !*get_debounce_ended.clone().read().unwrap() {
+        //             if *abort_debounce.clone().read().unwrap() {
+        //                 break;
+        //             }
+        //             println!("here!");
+        //             // if this.is_running() {
+        //             //     break;
+        //             // }
+        //             let started = started.clone();
+        //             let mut w_started = started.write().unwrap();
+        //             *w_started = false;
+        //             let get_debounce_ended = get_debounce_ended.clone();
+        //             let mut w_get_debounce_ended = get_debounce_ended.write().unwrap();
+        //             *w_get_debounce_ended = true;
+        //         }
+        //     });
+        // }
     }
 
     fn subscribe_subgraph(
@@ -382,49 +388,6 @@ impl Network {
             }
             _ => {}
         });
-
-        // let component_events = self.component_events.clone();
-        // thread::spawn(move || {
-        //     loop {
-        //         let binding = component_events.clone();
-        //         let mut binding = binding.lock();
-        //         let events = binding.as_mut().unwrap();
-
-        //         // while !events.is_empty() {
-        //         events
-        //             .clone()
-        //             .iter()
-        //             .enumerate()
-        //             .for_each(|(i, event)| match event {
-        //                 ComponentEvent::Activate(_) => {
-        //                     if let Ok(this) = network.clone().try_lock().as_mut() {
-        //                         if this.get_debounce_ended() {
-        //                             this.cancel_debounce(true);
-        //                         }
-        //                     }
-        //                     // events.remove(i);
-        //                 }
-        //                 ComponentEvent::Deactivate(_) => {
-        //                     Network::check_if_finished(network.clone());
-        //                     //     events.remove(i);
-        //                 }
-        //                 ComponentEvent::Icon(new_icon) => {
-        //                     println!("{:?}", new_icon);
-        //                     let binding = network.clone();
-        //                     let mut binding = binding.lock();
-        //                     let this = binding.as_mut().unwrap();
-
-        //                     this.buffered_emit(NetworkEvent::Custom(
-        //                         "icon".to_owned(),
-        //                         new_icon.clone(),
-        //                     ));
-        //                     events.remove(i);
-        //                 }
-        //                 _ => {}
-        //             });
-        //         // }
-        //     }
-        // });
 
         Ok(())
     }
@@ -553,7 +516,10 @@ impl Network {
             }
         }
 
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(0).build().unwrap();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(0)
+            .build()
+            .unwrap();
 
         // Let network sync with the components' events
         let (cmp_tx, cmp_rx) = mpsc::sync_channel(2);
@@ -574,7 +540,7 @@ impl Network {
                         Ok("end_network") => {
                             break 'outter;
                         }
-                        _=>{
+                        _ => {
                             break;
                         }
                     }
@@ -618,7 +584,6 @@ impl Network {
             }
         });
 
-     
         // Let network sync with the sockets' events
         let (sck_tx, sck_rx) = mpsc::sync_channel(2);
         let socket_events = self.socket_events.clone();
@@ -634,7 +599,7 @@ impl Network {
                     Ok("end_network") => {
                         break 'outter;
                     }
-                    _=>{
+                    _ => {
                         break;
                     }
                 }
@@ -678,10 +643,10 @@ impl Network {
                 cmp_tx.send("end_network").unwrap();
                 sck_tx.send("end_network").unwrap();
                 if let Ok(pool) = pool.clone().try_lock() {
-                   drop(pool);
-                   println!("after terminate");
+                    drop(pool);
+                    println!("after terminate");
                 }
-            }   
+            }
             _ => {}
         });
 
@@ -1393,7 +1358,11 @@ impl BaseNetwork for Network {
         if !*self.started.read().unwrap() {
             let mut stopped = self.stopped.write().unwrap();
             *stopped = true;
-            self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::Terminate);
+            self.publisher
+                .clone()
+                .try_lock()
+                .unwrap()
+                .publish(NetworkEvent::Terminate);
             return Ok(());
         }
 
@@ -1415,7 +1384,11 @@ impl BaseNetwork for Network {
             self.set_started(false);
             let mut stopped = self.stopped.write().unwrap();
             *stopped = true;
-            self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::Terminate);
+            self.publisher
+                .clone()
+                .try_lock()
+                .unwrap()
+                .publish(NetworkEvent::Terminate);
             return Ok(());
         }
 
@@ -1436,7 +1409,11 @@ impl BaseNetwork for Network {
         let mut stopped = self.stopped.write().unwrap();
         *stopped = true;
 
-        self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::Terminate);
+        self.publisher
+            .clone()
+            .try_lock()
+            .unwrap()
+            .publish(NetworkEvent::Terminate);
         Ok(())
     }
 

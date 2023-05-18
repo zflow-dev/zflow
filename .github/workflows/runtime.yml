@@ -16,5 +16,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Run graph tests
-      run: cd zflow_runtime && cargo test --verbose
+    - name: Run runtime tests
+      run: cd zflow_runtime && cargo test --verbose -- --skip network_test
+    - name: Run network tests
+      run: cd zflow_runtime && cargo test network_test --verbose
