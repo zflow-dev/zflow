@@ -49,7 +49,9 @@ let mut second_component = Component::new(ComponentOptions {...});
 let mut graph = Graph::new("", false);
 g.add_node("first_component", "first_component_process", None)
  .add_node("second_component", "second_component_process", None)
+ // trigger the first component with an initial packet
  .add_initial(json!("start"), "first_component", "first_component_process", None)
+ // send the output of `first_component` to the input of the `second_component`
  .add_edge("first_component", "out", "second_component", "in", None);
 
 // create a network to run this graph
