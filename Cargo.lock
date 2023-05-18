@@ -153,17 +153,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-recursion"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e97ce7de6cf12de5d7226c73f5ba9811622f4db3a5b91b55c53e987e5f91cba"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.15",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2822,11 +2811,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rjdebounce"
-version = "0.2.1"
-source = "git+https://github.com/darmie/rjdebounce#1bc1392d30b722cf0d65e43583662e664fd29421"
-
-[[package]]
 name = "rmp"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4537,8 +4521,6 @@ dependencies = [
  "anyhow",
  "array_tool",
  "assert-json-diff",
- "async-recursion",
- "async-trait",
  "beady",
  "bincode",
  "cast_trait_object",
@@ -4554,7 +4536,6 @@ dependencies = [
  "poll-promise",
  "rayon",
  "regex",
- "rjdebounce",
  "serde",
  "serde_json",
  "wasmtime",

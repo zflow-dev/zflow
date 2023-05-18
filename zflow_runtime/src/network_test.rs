@@ -597,6 +597,7 @@ mod tests {
                         let _ = nw.start();
                         // drop(binding);
                         assert_eq!(*found_data.clone().read().unwrap(), json!("default-value"));
+                        let _ = nw.stop();
                     }
                 }
             }

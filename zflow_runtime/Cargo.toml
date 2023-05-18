@@ -23,11 +23,7 @@ beady = "0.6.0"
 regex = "1.7.1"
 log = "0.4"
 env_logger = "0.10.0"
-async-trait = "0.1.60"
-async-recursion = "1.0.2"
 poll-promise = {git="https://github.com/EmbarkStudios/poll-promise", version="0.2.0"}
-rjdebounce = {git="https://github.com/darmie/rjdebounce"}
-# tokio = {version="1.26.0", features = ["full"]}
 array_tool = "1.0.3"
 dyn-clone = "1.0.11"
 is-url = "1.0.4"
