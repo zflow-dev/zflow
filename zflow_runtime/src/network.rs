@@ -2,7 +2,7 @@ use std::{
     cell::{RefCell, UnsafeCell},
     collections::{HashMap, VecDeque},
     rc::Rc,
-    sync::{Arc, Mutex, RwLock},
+    sync::{mpsc, Arc, Mutex, RwLock},
     thread,
     time::{Duration, SystemTime},
 };
@@ -45,6 +45,7 @@ pub enum NetworkEvent {
     CloseBracket(Value),
     Start(Value),
     End(Value),
+    Terminate,
     IP(Value),
     Error(Value),
     Custom(String, Value),
@@ -551,18 +552,33 @@ impl Network {
                 ));
             }
         }
+
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(0).build().unwrap();
+
+        // Let network sync with the components' events
+        let (cmp_tx, cmp_rx) = mpsc::sync_channel(2);
         let network = Arc::new(Mutex::new(self.clone()));
         let component_events = self.component_events.clone();
         let _network = network.clone();
         let publisher = self.publisher.clone();
         let get_debounce_ended = self.debounce_end.clone();
         let abort_debounce = self.abort_debounce.clone();
-        thread::spawn(move || {
-            loop {
+        pool.spawn(move || {
+            'outter: loop {
                 let binding = component_events.clone();
                 let mut binding = binding.lock();
                 let events = binding.as_mut().unwrap();
 
+                while events.is_empty() {
+                    match cmp_rx.try_recv() {
+                        Ok("end_network") => {
+                            break 'outter;
+                        }
+                        _=>{
+                            break;
+                        }
+                    }
+                }
                 // while !events.is_empty() {
                 events
                     .clone()
@@ -602,13 +618,27 @@ impl Network {
             }
         });
 
+     
+        // Let network sync with the sockets' events
+        let (sck_tx, sck_rx) = mpsc::sync_channel(2);
         let socket_events = self.socket_events.clone();
         let _network = network.clone();
         let publisher = self.publisher.clone();
-        thread::spawn(move || loop {
+        pool.spawn(move || 'outter: loop {
             let binding = socket_events.clone();
             let mut binding = binding.lock();
             let events = binding.as_mut().unwrap();
+
+            while events.is_empty() {
+                match sck_rx.try_recv() {
+                    Ok("end_network") => {
+                        break 'outter;
+                    }
+                    _=>{
+                        break;
+                    }
+                }
+            }
 
             events
                 .clone()
@@ -636,6 +666,23 @@ impl Network {
                         events.remove(i);
                     }
                 });
+        });
+
+        let pubsub = self.publisher.clone();
+        let mut pubsub = pubsub.try_lock();
+        let publisher = pubsub.as_mut().unwrap();
+        let pool = Arc::new(Mutex::new(pool));
+        publisher.subscribe_fn(move |event| match event.as_ref() {
+            NetworkEvent::Terminate => {
+                println!("before terminate");
+                cmp_tx.send("end_network").unwrap();
+                sck_tx.send("end_network").unwrap();
+                if let Ok(pool) = pool.clone().try_lock() {
+                   drop(pool);
+                   println!("after terminate");
+                }
+            }   
+            _ => {}
         });
 
         Ok(network.clone())
@@ -1334,7 +1381,6 @@ impl BaseNetwork for Network {
         self.send_initials()?;
         self.send_defaults()?;
         self.set_started(true);
-        println!("{}", self.started.read().unwrap());
         Ok(())
     }
 
@@ -1347,6 +1393,7 @@ impl BaseNetwork for Network {
         if !*self.started.read().unwrap() {
             let mut stopped = self.stopped.write().unwrap();
             *stopped = true;
+            self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::Terminate);
             return Ok(());
         }
 
@@ -1368,6 +1415,7 @@ impl BaseNetwork for Network {
             self.set_started(false);
             let mut stopped = self.stopped.write().unwrap();
             *stopped = true;
+            self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::Terminate);
             return Ok(());
         }
 
@@ -1387,6 +1435,8 @@ impl BaseNetwork for Network {
         self.set_started(false);
         let mut stopped = self.stopped.write().unwrap();
         *stopped = true;
+
+        self.publisher.clone().try_lock().unwrap().publish(NetworkEvent::Terminate);
         Ok(())
     }
 

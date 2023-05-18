@@ -270,9 +270,7 @@ mod tests {
                         )
                         .unwrap();
 
-                        // let binding = n.clone();
-                        // let mut binding = binding.try_lock();
-                        // let _n = binding.as_mut().unwrap();
+                      
                         assert!(!_n.get_connections().is_empty());
                         if let Ok(socket) = _n.get_connections()[0].clone().try_lock() {
                             let socket = socket.clone();
