@@ -791,9 +791,11 @@ impl Network {
         options: Option<HashMap<String, Value>>,
     ) -> Result<Arc<Mutex<InternalSocket>>, String> {
         if let Some(leaf) = initializer.clone().to {
+            
             // let mut to: Option<NetworkProcess> = None;
             // if let Ok(this) = network.clone().try_lock().as_mut() {
             let to = self.ensure_node(&leaf.node_id, "inbound")?;
+            
             // }
             // if to.is_none() {
             //     return Err(format!(
@@ -1272,12 +1274,12 @@ impl BaseNetwork for Network {
     }
 
     fn send_initials(&mut self) -> Result<(), String> {
-        let _ = self.initials.clone().par_iter().map(|initial| {
+        self.initials = self.initials.clone().par_iter().filter(|initial| {
             if let Ok(socket) = initial.socket.clone().try_lock().as_mut() {
                 socket
                     .post(
                         Some(IP::new(
-                            IPType::Data(json!("data")),
+                            IPType::Data(initial.data.clone()),
                             IPOptions {
                                 initial: true,
                                 ..IPOptions::default()
@@ -1286,9 +1288,12 @@ impl BaseNetwork for Network {
                         true,
                     )
                     .expect("expected to post initials");
+
+                return false;
             }
-        });
-        self.initials.clear();
+            true
+        }).map(|iip| iip.clone()).collect();
+        // self.initials.clear();
         Ok(())
     }
 

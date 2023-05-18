@@ -4,7 +4,7 @@ use extism::{
     manifest::Wasm, Context, CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value, Map};
+use serde_json::{json, Map, Value};
 
 use crate::{
     component::{Component, ComponentOptions, ModuleComponent},
@@ -41,7 +41,7 @@ pub struct WasmComponent {
     #[serde(default)]
     pub package_id: String,
     #[serde(default)]
-    pub metadata: Map<String, Value>
+    pub metadata: Map<String, Value>,
 }
 
 impl WasmComponent {
@@ -66,7 +66,7 @@ impl WasmComponent {
         } else if let Some(meta) = meta.clone().as_object() {
             self.metadata = meta.clone();
         }
-        
+
         self.clone()
     }
 }
@@ -176,12 +176,14 @@ impl ModuleComponent for WasmComponent {
                                   params: &[Val],
                                   returns: &mut [Val],
                                   _: UserData| {
-                                    let port = _plugin.memory.get(params[0].unwrap_i64() as usize)?;
+                                let port = _plugin.memory.get(params[0].unwrap_i64() as usize)?;
                                 let data = _plugin.memory.get(params[1].unwrap_i64() as usize)?;
-                                
-                                if let Ok(port) = std::str::from_utf8(port)
-                                {
-                                    output.clone().send_buffer(port, data).expect("expected output value");
+
+                                if let Ok(port) = std::str::from_utf8(port) {
+                                    output
+                                        .clone()
+                                        .send_buffer(port, data)
+                                        .expect("expected output value");
                                 }
                                 returns[0] = params[0].clone();
 
@@ -209,7 +211,10 @@ impl ModuleComponent for WasmComponent {
                                 {
                                     if let Some(res) = result.as_object() {
                                         if let Err(x) = output.clone().send_done(res) {
-                                            output.clone().send_done(&x).expect("expected to send error");
+                                            output
+                                                .clone()
+                                                .send_done(&x)
+                                                .expect("expected to send error");
                                         }
                                     }
                                 }
@@ -264,9 +269,11 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use futures::executor::block_on;
+    use zflow_graph::Graph;
 
     use crate::{
         loader::{ComponentLoader, ComponentLoaderOptions},
+        network::{Network, NetworkOptions, BaseNetwork},
         port::BasePort,
         registry::DefaultRegistry,
         sockets::InternalSocket,
@@ -280,65 +287,23 @@ mod tests {
         base_dir.push("test_components");
         let base_dir = base_dir.to_str().unwrap();
 
-        let registry = Arc::new(Mutex::new(DefaultRegistry::default()));
-        let mut loader = ComponentLoader::new(
-            base_dir,
-            ComponentLoaderOptions::default(),
-            Some(registry.clone()),
+        let mut graph = Graph::new("wasm_graph", false);
+        graph.add_node("zflow", "add_wasm", None)
+            .add_initial(json!(1), "zflow", "left", None)
+            .add_initial(json!(2), "zflow", "right", None);
+
+        let mut network = Network::create(
+            graph.clone(),
+            NetworkOptions {
+                subscribe_graph: false,
+                delay: true,
+                base_dir: base_dir.to_string(),
+                ..Default::default()
+            },
         );
 
-        let wasm_component = loader.load("zflow/add_wasm", Value::Null);
-        assert!(wasm_component.is_ok());
-
-        let s_left = InternalSocket::create(None);
-        let s_right = InternalSocket::create(None);
-        let s_sum = InternalSocket::create(None);
-
-        let wasm_component = wasm_component.unwrap();
-        // left operand inport
-        wasm_component
-            .clone()
-            .try_lock()
-            .unwrap()
-            .get_inports_mut()
-            .ports
-            .get_mut("left")
-            .map(|v| v.attach(s_left.clone(), None));
-        // right operand inport
-        wasm_component
-            .clone()
-            .try_lock()
-            .unwrap()
-            .get_inports_mut()
-            .ports
-            .get_mut("right")
-            .map(|v| v.attach(s_right.clone(), None));
-        // sum outport
-        wasm_component
-            .clone()
-            .try_lock()
-            .unwrap()
-            .get_outports_mut()
-            .ports
-            .get_mut("sum")
-            .map(|v| v.attach(s_sum.clone(), None));
-
-        block_on(async move {
-            // send 1
-            let _ = s_left
-                .clone()
-                .try_lock()
-                .unwrap()
-                .send(Some(&json!(1)))
-                .await;
-
-            // send 2
-            let _ = s_right
-                .clone()
-                .try_lock()
-                .unwrap()
-                .send(Some(&json!(2)))
-                .await;
-        });
+        if let Ok(nw) = network.connect().unwrap().try_lock().as_mut() {
+            nw.start().unwrap();
+        }
     }
 }

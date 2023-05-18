@@ -68,7 +68,7 @@ loader.register_component("first_component", "first_component_process", my_compo
 loader.register_component("second_component", "second_component_process", second_component).unwrap();
 
 // sync graph with network
-if let Ok(nw) = network.connect().try_lock() {
+if let Ok(nw) = network.connect().unwrap().try_lock() {
     // start the network
     nw.start().unwrap();
 }
