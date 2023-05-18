@@ -5,7 +5,6 @@
 ///    FBP Graph may be freely distributed under the MIT license
 use crate::internal;
 use crate::internal::event_manager::{EventActor, EventListener};
-use crate::internal::utils::guid;
 use foreach::ForEach;
 use internal::event_manager::EventManager;
 use serde_json::{json, Map, Value};
@@ -39,7 +38,7 @@ pub struct Graph {
     pub inports: HashMap<String, GraphExportedPort>,
     pub outports: HashMap<String, GraphExportedPort>,
     pub properties: Map<String, Value>,
-    pub transaction: GraphTransaction,
+    pub transaction: Option<GraphTransaction>,
     pub case_sensitive: bool,
     listeners: HashMap<&'static str, Vec<EventActor<Self>>>,
     pub last_revision: i32,
@@ -108,7 +107,7 @@ impl Graph {
             inports: HashMap::new(),
             outports: HashMap::new(),
             properties: Map::new(),
-            transaction: GraphTransaction { id: None, depth: 0 },
+            transaction: None,
             case_sensitive,
             listeners: HashMap::new(),
             last_revision: 0,
@@ -131,18 +130,20 @@ impl Graph {
         id: &str,
         metadata: Option<Map<String, Value>>,
     ) -> &mut Self {
-        if self.transaction.id.is_some() {
+        if self.transaction.is_some() {
             log::error!("Nested transactions not supported");
             exit(1)
-        }
+        };
 
-        self.transaction.id = Some(id.to_string());
-        self.transaction.depth = 1;
+        self.transaction = Some(GraphTransaction{
+            id: id.to_string(),
+            depth: 1
+        });
 
         self.emit(
             "start_transaction",
             json!({
-                "id": self.transaction.id.clone(),
+                "id": id.to_string(),
                 "metadata": json!(metadata)
             }),
         );
@@ -150,13 +151,12 @@ impl Graph {
     }
 
     pub fn end_transaction(&mut self, id: &str, metadata: Option<Map<String, Value>>) -> &mut Self {
-        if self.transaction.id.is_none() {
+        if self.transaction.is_none() {
             log::error!("Attempted to end non-existing transaction");
             exit(1)
-        }
-
-        self.transaction.id = None;
-        self.transaction.depth = 0;
+        };
+    
+        self.transaction = None;
 
         self.emit(
             "end_transaction",
@@ -169,20 +169,23 @@ impl Graph {
     }
 
     pub fn check_transaction_start(&mut self) -> &mut Self {
-        if self.transaction.id.is_none() {
-            self.start_transaction("implicit", None);
-        } else if self.transaction.id.as_ref().unwrap() == "implicit" {
-            self.transaction.depth += 1;
+        match self.transaction {
+            None => { self.start_transaction("implicit", None); },
+            Some(ref mut transaction) => {
+                if transaction.id == "implicit" {
+                    transaction.depth += 1;
+                }
+            }
         }
         self
     }
     pub fn check_transaction_end(&mut self) -> &mut Self {
-        if let Some(transaction_id) = self.transaction.id.clone() {
-            if transaction_id == "implicit" {
-                self.transaction.depth -= 1;
+        if let Some(ref mut transaction) = self.transaction {
+            if transaction.id == "implicit" {
+                transaction.depth -= 1;
             }
 
-            if self.transaction.depth == 0 {
+            if transaction.depth == 0 {
                 self.end_transaction("implicit", None);
             }
         }
