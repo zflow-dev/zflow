@@ -48,6 +48,7 @@ pub enum NetworkEvent {
     IP(Value),
     Error(Value),
     Custom(String, Value),
+    ComponentDeactivated,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -196,15 +197,15 @@ pub struct Network {
     pub defaults: Vec<Arc<Mutex<InternalSocket>>>,
     /// The Graph this network is instantiated with
     pub graph: Arc<Mutex<Graph>>,
-    pub started: bool,
-    pub stopped: bool,
+    pub started: Arc<RwLock<bool>>,
+    pub stopped: Arc<RwLock<bool>>,
     pub debug: bool,
     pub event_buffer: Vec<NetworkEvent>,
     pub loader: ComponentLoader,
     pub publisher: Arc<Mutex<Publisher<NetworkEvent>>>,
     pub base_dir: String,
-    debounce_end: bool,
-    abort_debounce: bool,
+    debounce_end: Arc<RwLock<bool>>,
+    abort_debounce: Arc<RwLock<bool>>,
     startup_time: Option<SystemTime>,
     component_events: Arc<Mutex<VecDeque<ComponentEvent>>>,
     socket_events: Arc<Mutex<VecDeque<(String, Value)>>>,
@@ -230,16 +231,16 @@ impl Network {
             connections: Vec::new(),
             defaults: Vec::new(),
             graph: Arc::new(Mutex::new(graph)),
-            started: false,
-            stopped: true,
+            started: Arc::new(RwLock::new(false)),
+            stopped: Arc::new(RwLock::new(true)),
             debug: true,
             event_buffer: Vec::new(),
             loader,
             publisher: Arc::new(Mutex::new(Publisher::new())),
             startup_time: None,
-            debounce_end: false,
+            debounce_end: Arc::new(RwLock::new(false)),
             base_dir,
-            abort_debounce: false,
+            abort_debounce: Arc::new(RwLock::new(false)),
             component_events: Arc::new(Mutex::new(VecDeque::new())),
             socket_events: Arc::new(Mutex::new(VecDeque::new())),
         }
@@ -253,21 +254,20 @@ impl Network {
             this.cancel_debounce(false);
         }
 
-        thread::spawn(move || {
-            if let Ok(this) = network.clone().try_lock().as_mut() {
-                if !this.get_debounce_ended() {
-                    thread::sleep(Duration::from_millis(50));
-                    loop {
-                        if this.is_abort_debounce() {
-                            break;
-                        }
-                        if this.is_running() {
-                            break;
-                        }
-                        this.set_started(false);
-                    }
-                    this.set_debounce_ended(true);
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_millis(50));
+            let binding = network.clone();
+            let mut binding = binding.try_lock();
+            let this = binding.as_mut().unwrap();
+            while !this.get_debounce_ended() {
+                if this.is_abort_debounce() {
+                    break;
                 }
+                if this.is_running() {
+                    break;
+                }
+                this.set_started(false);
+                this.set_debounce_ended(true);
             }
         });
     }
@@ -555,6 +555,8 @@ impl Network {
         let component_events = self.component_events.clone();
         let _network = network.clone();
         let publisher = self.publisher.clone();
+        let get_debounce_ended = self.debounce_end.clone();
+        let abort_debounce = self.abort_debounce.clone();
         thread::spawn(move || {
             loop {
                 let binding = component_events.clone();
@@ -568,29 +570,30 @@ impl Network {
                     .enumerate()
                     .for_each(|(i, event)| match event {
                         ComponentEvent::Activate(_) => {
-                            let binding = _network.clone();
-                            let mut binding = binding.lock();
-                            let this = binding.as_mut().unwrap();
-
-                            if this.get_debounce_ended() {
-                                this.cancel_debounce(true);
+                            if *get_debounce_ended.clone().read().unwrap() {
+                                let abort_debounce = abort_debounce.clone();
+                                let mut abort_debounce = abort_debounce.write().unwrap();
+                                *abort_debounce = true;
                             }
 
                             events.remove(i);
                         }
                         ComponentEvent::Deactivate(_) => {
+                            publisher
+                                .clone()
+                                .try_lock()
+                                .unwrap()
+                                .publish(NetworkEvent::ComponentDeactivated);
+
                             Network::check_if_finished(_network.clone());
                             events.remove(i);
                         }
                         ComponentEvent::Icon(new_icon) => {
                             publisher
-                            .clone()
-                            .try_lock()
-                            .unwrap()
-                            .publish(NetworkEvent::Custom(
-                                "icon".to_owned(),
-                                new_icon.clone(),
-                            ));
+                                .clone()
+                                .try_lock()
+                                .unwrap()
+                                .publish(NetworkEvent::Custom("icon".to_owned(), new_icon.clone()));
                             events.remove(i);
                         }
                         _ => {}
@@ -901,21 +904,23 @@ impl BaseNetwork for Network {
     }
 
     fn is_started(&self) -> bool {
-        self.started
+        *self.started.read().unwrap()
     }
 
     fn is_stopped(&self) -> bool {
-        self.stopped
+        *self.stopped.read().unwrap()
     }
 
     fn set_started(&mut self, started: bool) {
-        if self.started == started {
+        if *self.started.clone().read().unwrap() == started {
             return;
         }
 
-        if !self.started {
+        if !started {
             // Ending the execution
-            self.started = false;
+            let w = self.started.clone();
+            let mut w = w.write().unwrap();
+            *w = false;
 
             // buffered emit
             let now: u128 = SystemTime::now().elapsed().unwrap().as_millis();
@@ -940,13 +945,20 @@ impl BaseNetwork for Network {
         if self.startup_time.is_none() {
             self.startup_time = Some(SystemTime::now());
         }
-        self.started = true;
-        self.stopped = false;
+
         // buffered emit
         let started = self.startup_time.unwrap().elapsed().unwrap().as_millis();
         self.buffered_emit(NetworkEvent::Start(
             json!({ "start": started, "end": null, "uptime": null }),
         ));
+
+        let started = self.started.clone();
+        let mut _started = started.write().unwrap();
+        *_started = true;
+
+        let stopped = self.stopped.clone();
+        let mut _stopped = stopped.write().unwrap();
+        *_stopped = false;
     }
 
     fn get_processes(&self) -> HashMap<String, NetworkProcess> {
@@ -1307,10 +1319,11 @@ impl BaseNetwork for Network {
     }
 
     fn start(&mut self) -> Result<(), String> {
-        if self.debounce_end {
-            self.abort_debounce = true;
+        if *self.debounce_end.read().unwrap() {
+            let mut abort = self.abort_debounce.write().unwrap();
+            *abort = true;
         }
-        if self.started {
+        if *self.started.read().unwrap() {
             self.stop()?;
             self.start()?;
             return Ok(());
@@ -1321,17 +1334,19 @@ impl BaseNetwork for Network {
         self.send_initials()?;
         self.send_defaults()?;
         self.set_started(true);
-
+        println!("{}", self.started.read().unwrap());
         Ok(())
     }
 
     fn stop(&mut self) -> Result<(), String> {
-        if self.debounce_end {
-            self.abort_debounce = true;
+        if *self.debounce_end.read().unwrap() {
+            let mut abort = self.abort_debounce.write().unwrap();
+            *abort = true;
         }
 
-        if !self.started {
-            self.stopped = true;
+        if !*self.started.read().unwrap() {
+            let mut stopped = self.stopped.write().unwrap();
+            *stopped = true;
             return Ok(());
         }
 
@@ -1351,7 +1366,8 @@ impl BaseNetwork for Network {
         if self.processes.is_empty() {
             // No processes to stop
             self.set_started(false);
-            self.stopped = true;
+            let mut stopped = self.stopped.write().unwrap();
+            *stopped = true;
             return Ok(());
         }
 
@@ -1369,7 +1385,8 @@ impl BaseNetwork for Network {
             .collect();
 
         self.set_started(false);
-        self.stopped = true;
+        let mut stopped = self.stopped.write().unwrap();
+        *stopped = true;
         Ok(())
     }
 
@@ -1432,19 +1449,21 @@ impl BaseNetwork for Network {
     }
 
     fn cancel_debounce(&mut self, abort: bool) {
-        self.abort_debounce = abort;
+        let mut w_abort = self.abort_debounce.write().unwrap();
+        *w_abort = abort;
     }
 
     fn is_abort_debounce(&self) -> bool {
-        self.abort_debounce
+        *self.abort_debounce.read().unwrap()
     }
 
     fn set_debounce_ended(&mut self, end: bool) {
-        self.debounce_end = end;
+        let mut w_end = self.debounce_end.write().unwrap();
+        *w_end = end;
     }
 
     fn get_debounce_ended(&self) -> bool {
-        self.debounce_end
+        *self.debounce_end.read().unwrap()
     }
 
     fn get_processes_mut(&mut self) -> &mut HashMap<String, NetworkProcess> {

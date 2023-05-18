@@ -362,6 +362,7 @@ mod tests {
                         let network = binding.as_mut().unwrap();
                         assert!(!network.get_initials().is_empty());
                         assert!(network.start().is_ok());
+                        assert!(network.is_started());
                     }
                     'and_then_it_should_contain_two_processes: {
                         if let Ok(network) = n.clone().try_lock() {
@@ -574,6 +575,7 @@ mod tests {
                         .add_node("Cb", "Cb", None)
                         .add_edge("Def", "out", "Cb", "in", None);
 
+                    // This test blocks some times
                     'and_then_it_should_send_default_values_without_an_edge: {
                         let mut n = Network::create(
                             g.clone(),
@@ -595,7 +597,7 @@ mod tests {
                         let mut binding = binding.try_lock();
                         let nw = binding.as_mut().unwrap();
                         let _ = nw.start();
-                        drop(binding);
+                        // drop(binding);
                         assert_eq!(*found_data.clone().read().unwrap(), json!("default-value"));
                     }
                 }
