@@ -1,3 +1,65 @@
+use eframe::{run_native, App, CreationContext};
+use egui::{
+    containers,
+    style::{WidgetVisuals, Widgets, Spacing},
+    Color32, Margin, Rounding, Stroke, Style, Visuals, Vec2,
+};
+
+pub struct EditorSettings {
+    pub workspace: String,
+}
+
+#[derive(Default)]
+pub struct Editor {}
+
+impl Editor {
+    pub fn new(ctx: &CreationContext<'_>) -> Self {
+        Editor::default()
+    }
+    pub fn run() {
+        let options = eframe::NativeOptions {
+            initial_window_size: Some(egui::vec2(1080.0, 640.0)),
+            transparent: false,
+            fullscreen: false,
+            fullsize_content: true,
+            decorated: true,
+            ..Default::default()
+        };
+        let _ = run_native(
+            "ZFlow Editor",
+            options,
+            Box::new(|cc| Box::new(Editor::new(cc))),
+        );
+    }
+}
+
+impl App for Editor {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        catppuccin_egui::set_theme(ctx, catppuccin_egui::FRAPPE);
+        let back_frame = containers::Frame {
+            fill: catppuccin_egui::FRAPPE.surface0,
+            ..Default::default()
+        };
+
+        egui::CentralPanel::default()
+            .frame(back_frame)
+            .show(ctx, |ui| {
+                egui::TopBottomPanel::top("ZFlow Editor").show_separator_line(false)
+                    .frame(back_frame)
+                    .show(ctx, |ui| {
+                        ui.with_layout(
+                            egui::Layout::centered_and_justified(egui::Direction::RightToLeft),
+                            |ui| {
+                                
+                                ui.set_height(32.0);
+                                ui.label("ZFLow");
+                            },
+                        );
+                    });
+            });
+    }
+}
+
 // use egui_node_graph::{Graph as EditorGraph, GraphEditorState, NodeId, DataTypeTrait};
 // use serde_json::{Value, Map};
 // use zflow::graph::{graph::Graph, types::GraphNode};
@@ -86,60 +148,60 @@
 
 // pub type EditorState = GraphEditorState<Metadata, Value, Value, GraphNode, GraphUIState>;
 
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
+// use std::{
+//     io,
+//     path::{Path, PathBuf},
+// };
 
-use serde_json::{Map, Value};
-use zflow::GraphNode;
-use zflow::Graph;
-use zflow::Journal;
+// use serde_json::{Map, Value};
+// use zflow::GraphNode;
+// use zflow::Graph;
+// use zflow::Journal;
 
-pub struct EditorWidget<'a> {
-    pub graph: &'a mut Graph,
-    pub working_dir: String,
-}
+// pub struct EditorWidget<'a> {
+//     pub graph: &'a mut Graph,
+//     pub working_dir: String,
+// }
 
-impl<'a> EditorWidget<'a> {
-    pub fn search_nodes(&self, node_id: &str) -> Vec<&GraphNode> {
-        let data = self
-            .graph
-            .nodes
-            .iter()
-            .filter(|node| (*node).id.contains(node_id));
-        return Vec::from_iter(data);
-    }
-    pub fn undo(&mut self) {
-        self.graph.undo();
-    }
-    pub fn redo(&mut self) {
-        self.graph.undo();
-    }
-    pub fn save(&self) -> Result<(), io::Error> {
-        let mut path = PathBuf::new()
-            .join(Path::new(&self.working_dir))
-            .join(Path::new(&self.graph.name));
-        path.set_extension("json");
-        self.graph
-            .save(path.as_path().to_str().expect("expect file path"))
-    }
+// impl<'a> EditorWidget<'a> {
+//     pub fn search_nodes(&self, node_id: &str) -> Vec<&GraphNode> {
+//         let data = self
+//             .graph
+//             .nodes
+//             .iter()
+//             .filter(|node| (*node).id.contains(node_id));
+//         return Vec::from_iter(data);
+//     }
+//     pub fn undo(&mut self) {
+//         self.graph.undo();
+//     }
+//     pub fn redo(&mut self) {
+//         self.graph.undo();
+//     }
+//     pub fn save(&self) -> Result<(), io::Error> {
+//         let mut path = PathBuf::new()
+//             .join(Path::new(&self.working_dir))
+//             .join(Path::new(&self.graph.name));
+//         path.set_extension("json");
+//         self.graph
+//             .save(path.as_path().to_str().expect("expect file path"))
+//     }
 
-    pub fn new_project(&mut self) {
-        // Todo: open file dialog to select work directory and project name
-        self.working_dir = "".to_string();
-        *self.graph = Graph::new("", true);
-        self.graph.start_journal(None);
-    }
+//     pub fn new_project(&mut self) {
+//         // Todo: open file dialog to select work directory and project name
+//         self.working_dir = "".to_string();
+//         *self.graph = Graph::new("", true);
+//         self.graph.start_journal(None);
+//     }
 
-    pub fn import_graph(&mut self, path: &str) {
-        if let Ok(graph) = Graph::load_file(path, None) {
-            *self.graph = graph;
-            self.graph.start_journal(None);
-        }
-    }
+//     pub fn import_graph(&mut self, path: &str) {
+//         if let Ok(graph) = Graph::load_file(path, None) {
+//             *self.graph = graph;
+//             self.graph.start_journal(None);
+//         }
+//     }
 
-    pub fn run(&mut self, metadata: Option<Map<String, Value>>) {
-        (*self.graph).start_journal(None);
-    }
-}
+//     pub fn run(&mut self, metadata: Option<Map<String, Value>>) {
+//         (*self.graph).start_journal(None);
+//     }
+// }

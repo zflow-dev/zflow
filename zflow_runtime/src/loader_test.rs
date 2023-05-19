@@ -7,7 +7,7 @@ mod tests {
 
     use beady::scenario;
     use poll_promise::Promise;
-    use serde_json::{Map, Value};
+    use serde_json::Value;
     use zflow_graph::Graph;
 
     use crate::component::{Component, ComponentOptions, GraphDefinition};

@@ -2,8 +2,6 @@ use std::{
     any::Any,
     collections::{HashMap, VecDeque},
     fmt::Debug,
-    pin::Pin,
-    rc::Rc,
     sync::{Arc, Mutex},
     thread,
 };
@@ -1796,7 +1794,7 @@ impl Component {
                 .try_lock()
                 .expect("expected network publisher")
                 .subscribe_fn(move |event| {
-                    if let Ok(component) = component.clone().try_lock().as_mut() {
+                    if let Ok(_) = component.clone().try_lock().as_mut() {
                         match event.as_ref() {
                             NetworkEvent::Start(_) => {
                                 // activate

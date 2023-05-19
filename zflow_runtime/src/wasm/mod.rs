@@ -266,18 +266,11 @@ impl ModuleComponent for WasmComponent {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{thread, time::Duration};
 
-    use futures::executor::block_on;
     use zflow_graph::Graph;
 
-    use crate::{
-        loader::{ComponentLoader, ComponentLoaderOptions},
-        network::{Network, NetworkOptions, BaseNetwork},
-        port::BasePort,
-        registry::DefaultRegistry,
-        sockets::InternalSocket,
-    };
+    use crate::network::{Network, NetworkOptions, BaseNetwork};
 
     use super::*;
 
@@ -304,6 +297,7 @@ mod tests {
 
         if let Ok(nw) = network.connect().unwrap().try_lock().as_mut() {
             nw.start().unwrap();
+            thread::sleep(Duration::from_secs(2));
         }
     }
 }

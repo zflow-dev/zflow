@@ -1,9 +1,8 @@
 use std::{
     any::Any,
-    sync::{Arc, Mutex}, fmt::format,
+    sync::{Arc, Mutex}
 };
 
-use extism::Val;
 use fp_rust::publisher::Publisher;
 use serde::Serialize;
 use serde_json::{Map, Value};

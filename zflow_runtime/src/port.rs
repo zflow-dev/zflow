@@ -1257,7 +1257,7 @@ impl OutPort {
         async_transform(futures).await
     }
 
-    fn get_data_type(&self) -> IPType {
+    pub fn get_data_type(&self) -> IPType {
         self.options.data_type.clone()
     }
 

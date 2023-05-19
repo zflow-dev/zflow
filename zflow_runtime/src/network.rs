@@ -1,14 +1,11 @@
 use std::{
-    cell::{RefCell, UnsafeCell},
     collections::{HashMap, VecDeque},
-    rc::Rc,
     sync::{mpsc, Arc, Mutex, RwLock},
-    thread,
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use array_tool::vec::Shift;
-use fp_rust::{common::LinkedListAsync, handler::Handler, publisher::Publisher};
+use fp_rust::{handler::Handler, publisher::Publisher};
 use futures::executor::block_on;
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -20,7 +17,6 @@ use crate::{
     component::{Component, ComponentEvent},
     ip::{IPOptions, IPType, IP},
     loader::{ComponentLoader, ComponentLoaderOptions},
-    network_test,
     port::BasePort,
     registry::DefaultRegistry,
     sockets::{InternalSocket, SocketConnection, SocketEvent},
@@ -247,7 +243,7 @@ impl Network {
         }
     }
 
-    fn check_if_finished(network: Arc<Mutex<Self>>) {
+    fn check_if_finished(_: Arc<Mutex<Self>>) {
         // if let Ok(this) = network.clone().try_lock().as_mut() {
         //     if this.is_running() {
         //         return;
@@ -404,7 +400,7 @@ impl Network {
             let socket_events = self.socket_events.clone();
             _socket.on(move |event| {
                 match event.as_ref() {
-                    crate::sockets::SocketEvent::IP(ip, i) => {
+                    crate::sockets::SocketEvent::IP(ip, _) => {
                         socket_events.clone().lock().unwrap().push_back((
                             "ip".to_string(),
                             json!({
@@ -665,7 +661,7 @@ impl Network {
         &mut self,
         // network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
         node: GraphNode,
-        options: Option<HashMap<String, Value>>,
+        _: Option<HashMap<String, Value>>,
     ) -> Result<NetworkProcess, String> {
         // Processes are treated as singletons by their identifier. If
         // we already have a process with the given ID, return that.
@@ -791,24 +787,14 @@ impl Network {
         options: Option<HashMap<String, Value>>,
     ) -> Result<Arc<Mutex<InternalSocket>>, String> {
         if let Some(leaf) = initializer.clone().to {
-            
-            // let mut to: Option<NetworkProcess> = None;
-            // if let Ok(this) = network.clone().try_lock().as_mut() {
             let to = self.ensure_node(&leaf.node_id, "inbound")?;
-            
-            // }
-            // if to.is_none() {
-            //     return Err(format!(
-            //         "Could not add initial packets {:?} to network",
-            //         initializer.clone()
-            //     ));
-            // }
+
             // Todo: configure socket to support async and debug
             let socket = InternalSocket::create(initializer.metadata);
             // Subscribe to events from the socket
             self.subscribe_socket(socket.clone(), None)?;
             let socket = connect_port(socket.clone(), to, &leaf.port, leaf.index, true)?;
-            // if let Ok(network) = network.clone().try_lock().as_mut() {
+
             self.get_connections_mut().push(socket.clone());
             let init = NetworkIIP {
                 socket: socket.clone(),
@@ -841,7 +827,6 @@ impl Network {
                     op,
                 );
             }
-            // }
             return Ok(socket.clone());
         }
         Err("".to_string())
@@ -852,23 +837,13 @@ impl Network {
         &mut self,
         node: GraphNode,
     ) -> Result<(), String> {
-        // let mut process: Option<NetworkProcess> = None;
-        // if let Ok(this) = network.clone().try_lock().as_mut() {
         let process = self.ensure_node(&node.id, "inbound")?;
-        // }
-        // if process.is_none() {
-        //     return Err(format!(
-        //         "Could not add defaults for node {} to network",
-        //         node.id
-        //     ));
-        // }
 
         if let Some(component) = process.clone().component {
             let binding = component.clone();
             let mut binding = binding.try_lock();
             let component = binding.as_mut().unwrap();
             let ports = component.clone().get_inports_mut().ports.clone();
-            // if let Ok(component) = component.clone().try_lock().as_mut() {
             drop(binding);
             for (key, port) in ports {
                 // Attach a socket to any defaulted inPorts as long as they aren't already attached.
@@ -882,14 +857,12 @@ impl Network {
 
                 let connect =
                     connect_port(socket.clone(), process.clone(), key.as_str(), None, true);
-                // if let Ok(this) = network.clone().try_lock().as_mut() {
+
                 if connect.is_ok() {
                     self.get_connections_mut().push(socket.clone());
                     self.get_defaults_mut().push(socket.clone());
                 }
-                // }
             }
-            // }
         }
 
         Ok(())
@@ -1011,7 +984,6 @@ impl BaseNetwork for Network {
                 let binding = binding.as_mut();
                 let instance = binding.unwrap();
 
-                // if let Ok(instance) = component.try_lock().as_mut() {
                 // Inform the ports of the node name
                 instance
                     .get_inports_mut()
@@ -1036,7 +1008,6 @@ impl BaseNetwork for Network {
                 }
                 instance.node_id = new_id.to_string();
                 return Ok(());
-                // }
             }
         }
         Err(format!("Process {} not found", old_id))
@@ -1274,25 +1245,31 @@ impl BaseNetwork for Network {
     }
 
     fn send_initials(&mut self) -> Result<(), String> {
-        self.initials = self.initials.clone().par_iter().filter(|initial| {
-            if let Ok(socket) = initial.socket.clone().try_lock().as_mut() {
-                socket
-                    .post(
-                        Some(IP::new(
-                            IPType::Data(initial.data.clone()),
-                            IPOptions {
-                                initial: true,
-                                ..IPOptions::default()
-                            },
-                        )),
-                        true,
-                    )
-                    .expect("expected to post initials");
+        self.initials = self
+            .initials
+            .clone()
+            .par_iter()
+            .filter(|initial| {
+                if let Ok(socket) = initial.socket.clone().try_lock().as_mut() {
+                    socket
+                        .post(
+                            Some(IP::new(
+                                IPType::Data(initial.data.clone()),
+                                IPOptions {
+                                    initial: true,
+                                    ..IPOptions::default()
+                                },
+                            )),
+                            true,
+                        )
+                        .expect("expected to post initials");
 
-                return false;
-            }
-            true
-        }).map(|iip| iip.clone()).collect();
+                    return false;
+                }
+                true
+            })
+            .map(|iip| iip.clone())
+            .collect();
         // self.initials.clear();
         Ok(())
     }
