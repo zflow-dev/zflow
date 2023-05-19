@@ -81,7 +81,7 @@ pub struct GraphExportedPort {
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphTransaction {
-    pub id: Option<String>,
+    pub id: String,
     pub depth: i32,
 }
 
