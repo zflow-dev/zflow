@@ -9,14 +9,25 @@ keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+
+# [features]
+# persistence = ["serde", "slotmap/serde", "smallvec/serde", "egui/persistence"]
+
 [dependencies]
-zflow = {path = "../"}
-egui = "0.21.0"
-eframe = "0.21.3"
+zflow_graph = {path = "../zflow_graph"}
+zflow_runtime = {path = "../zflow_runtime"}
+egui = {version = "0.21.0", features = ["persistence" ]}
+eframe = {version ="0.21.3", features = ["persistence", "wgpu"]}
 catppuccin-egui = "2.0"
 # egui_node_graph = "0.4.0"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-
+smallvec = { version = "1.10.0", features = ["serde"] }
+slotmap = { version = "1.0", features = ["serde"] }
+lazy_static = "1.4.0"
+thiserror = "1.0"
+debounce = "0.2.1"
 [lib]
 doctest = false
+
+

@@ -1,20 +1,33 @@
 use eframe::{run_native, App, CreationContext};
-use egui::{
-    containers,
-    style::{WidgetVisuals, Widgets, Spacing},
-    Color32, Margin, Rounding, Stroke, Style, Visuals, Vec2,
+use egui::{Frame, Id, Pos2, Rect, Ui};
+use serde_json::json;
+use zflow_runtime::{ip::IPType, port::PortOptions};
+
+use crate::{
+    node::{NodeData, NodeWidget},
+    state::{use_state, GraphEditorState, PanZoom},
 };
+
+const PERSISTENCE_KEY: &str = "zflow_node_graph_1";
 
 pub struct EditorSettings {
     pub workspace: String,
 }
 
 #[derive(Default)]
-pub struct Editor {}
+pub struct Editor {
+    state: GraphEditorState,
+}
 
 impl Editor {
     pub fn new(ctx: &CreationContext<'_>) -> Self {
-        Editor::default()
+        let state = ctx
+        .storage
+        .and_then(|storage| eframe::get_value(storage, PERSISTENCE_KEY))
+        .unwrap_or_default();
+        Self {
+            state,
+        }
     }
     pub fn run() {
         let options = eframe::NativeOptions {
@@ -23,6 +36,8 @@ impl Editor {
             fullscreen: false,
             fullsize_content: true,
             decorated: true,
+            vsync: true,
+            hardware_acceleration: eframe::HardwareAcceleration::Preferred,
             ..Default::default()
         };
         let _ = run_native(
@@ -34,174 +49,63 @@ impl Editor {
 }
 
 impl App for Editor {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        catppuccin_egui::set_theme(ctx, catppuccin_egui::FRAPPE);
-        let back_frame = containers::Frame {
-            fill: catppuccin_egui::FRAPPE.surface0,
-            ..Default::default()
-        };
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, PERSISTENCE_KEY, &self.state);
+    }
 
-        egui::CentralPanel::default()
-            .frame(back_frame)
-            .show(ctx, |ui| {
-                egui::TopBottomPanel::top("ZFlow Editor").show_separator_line(false)
-                    .frame(back_frame)
-                    .show(ctx, |ui| {
-                        ui.with_layout(
-                            egui::Layout::centered_and_justified(egui::Direction::RightToLeft),
-                            |ui| {
-                                
-                                ui.set_height(32.0);
-                                ui.label("ZFLow");
-                            },
-                        );
-                    });
-            });
+    /// Called each time the UI needs repainting, which may be many times per second.
+    /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let graph_response = self.state.draw_graph_editor(ui);
+
+            // for node_response in graph_response.node_responses {
+            // Here, we ignore all other graph events. But you may find
+            // some use for them. For example, by playing a sound when a new
+            // connection is created
+            // if let NodeResponse::User(user_event) = node_response {
+            //     match user_event {
+            //         MyResponse::SetActiveNode(node) => self.user_state.active_node = Some(node),
+            //         MyResponse::ClearActiveNode => self.user_state.active_node = None,
+            //     }
+            // }
+            // }
+
+            // if let Some(node) = self.user_state.active_node {
+            //     if self.state.graph.nodes.contains_key(node) {
+            //         let text = match evaluate_node(&self.state.graph, node, &mut HashMap::new()) {
+            //             Ok(value) => format!("The result is: {:?}", value),
+            //             Err(err) => format!("Execution error: {}", err),
+            //         };
+            //         ctx.debug_painter().text(
+            //             egui::pos2(10.0, 35.0),
+            //             egui::Align2::LEFT_TOP,
+            //             text,
+            //             TextStyle::Button.resolve(&ctx.style()),
+            //             egui::Color32::WHITE,
+            //         );
+            //     } else {
+            //         self.user_state.active_node = None;
+            //     }
+            // }
+        });
+
+        // egui::TopBottomPanel::top("ZFlow Editor")
+        //     .show_separator_line(false)
+        //     .frame(Frame {
+        //         fill: catppuccin_egui::FRAPPE.base,
+        //         ..Default::default()
+        //     })
+        //     .show(ctx, |ui| {
+        //         ui.with_layout(
+        //             egui::Layout::centered_and_justified(egui::Direction::RightToLeft),
+        //             |ui| {
+        //                 ui.set_height(32.0);
+        //                 ui.label("ZFLow Editor");
+        //             },
+        //         );
+        //     });
     }
 }
-
-// use egui_node_graph::{Graph as EditorGraph, GraphEditorState, NodeId, DataTypeTrait};
-// use serde_json::{Value, Map};
-// use zflow::graph::{graph::Graph, types::GraphNode};
-// use std::{borrow::Cow, collections::HashMap};
-
-// #[derive(Default)]
-// // #[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
-// pub struct GraphUIState {
-//     pub graph:Graph,
-//     pub selected_node: Option<NodeId>
-// }
-
-// type Metadata = Map<String, Value>;
-
-// impl DataTypeTrait<GraphUIState> for Value {
-//     fn data_type_color(&self, _user_state: &mut GraphUIState) -> egui::Color32 {
-//         match self {
-//             Value::Null => egui::Color32::TRANSPARENT,
-//             Value::Bool(v) => {
-//                 if v {
-//                     return egui::Color32::LIGHT_GREEN;
-//                 }
-//                 return egui::Color32::LIGHT_RED;
-//             },
-//             Value::Number(_) => egui::Color32::GOLD,
-//             Value::String(_) => egui::Color32::YELLOW,
-//             Value::Array(_) => egui::Color32::from_rgb(238, 207, 109),
-//             Value::Object(_) => egui::Color32::BLUE,
-//         }
-//     }
-//     fn name(&self) -> Cow<'_, str> {
-//         match self {
-//             Value::Null => Cow::Borrowed("Null"),
-//             Value::Bool(v) => {
-//                 if v {
-//                     return Cow::Borrowed("True");
-//                 }
-//                 return Cow::Borrowed("False");
-//             },
-//             Value::Number(_) => Cow::Borrowed("Number"),
-//             Value::String(_) => Cow::Borrowed("String"),
-//             Value::Array(_) => Cow::Borrowed("Array"),
-//             Value::Object(_) => Cow::Borrowed("Object"),
-//         }
-//     }
-// }
-
-// impl NodeTemplateTrait for GraphNode {
-//     type NodeData = Metadata;
-//     type DataType = Value;
-//     type ValueType = Value;
-//     type UserState = GraphUIState;
-
-//     fn node_finder_label(&self, _user_state: &mut Self::UserState) -> Cow<'_, str> {
-//         Cow::Borrowed(&self.id)
-//     }
-
-//     fn node_graph_label(&self, user_state: &mut Self::UserState) -> String {
-//         self.node_finder_label(user_state).into()
-//     }
-
-//     fn user_data(&self, _user_state: &mut Self::UserState) -> Self::NodeData {
-//         self.metadata
-//     }
-
-//     fn build_node(
-//         &self,
-//         graph: &mut EditorGraph<Self::NodeData, Self::DataType, Self::ValueType>,
-//         user_state: &mut Self::UserState,
-//         node_id: NodeId,
-//     ) {
-//         if let Some(inputs) = user_state.graph.inports.into_iter().find(|(_key, value)| value.process == self.id) {
-//             graph.add_input_param(
-//                 node_id,
-//                 value.port,
-//                 MyDataType::Scalar,
-//                 Value::Null,
-//                 InputParamKind::ConnectionOrConstant,
-//                 true,
-//             );
-//         }
-
-//     }
-
-// }
-
-// pub type EditorState = GraphEditorState<Metadata, Value, Value, GraphNode, GraphUIState>;
-
-// use std::{
-//     io,
-//     path::{Path, PathBuf},
-// };
-
-// use serde_json::{Map, Value};
-// use zflow::GraphNode;
-// use zflow::Graph;
-// use zflow::Journal;
-
-// pub struct EditorWidget<'a> {
-//     pub graph: &'a mut Graph,
-//     pub working_dir: String,
-// }
-
-// impl<'a> EditorWidget<'a> {
-//     pub fn search_nodes(&self, node_id: &str) -> Vec<&GraphNode> {
-//         let data = self
-//             .graph
-//             .nodes
-//             .iter()
-//             .filter(|node| (*node).id.contains(node_id));
-//         return Vec::from_iter(data);
-//     }
-//     pub fn undo(&mut self) {
-//         self.graph.undo();
-//     }
-//     pub fn redo(&mut self) {
-//         self.graph.undo();
-//     }
-//     pub fn save(&self) -> Result<(), io::Error> {
-//         let mut path = PathBuf::new()
-//             .join(Path::new(&self.working_dir))
-//             .join(Path::new(&self.graph.name));
-//         path.set_extension("json");
-//         self.graph
-//             .save(path.as_path().to_str().expect("expect file path"))
-//     }
-
-//     pub fn new_project(&mut self) {
-//         // Todo: open file dialog to select work directory and project name
-//         self.working_dir = "".to_string();
-//         *self.graph = Graph::new("", true);
-//         self.graph.start_journal(None);
-//     }
-
-//     pub fn import_graph(&mut self, path: &str) {
-//         if let Ok(graph) = Graph::load_file(path, None) {
-//             *self.graph = graph;
-//             self.graph.start_journal(None);
-//         }
-//     }
-
-//     pub fn run(&mut self, metadata: Option<Map<String, Value>>) {
-//         (*self.graph).start_journal(None);
-//     }
-// }
