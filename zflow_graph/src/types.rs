@@ -26,7 +26,7 @@ pub struct GraphLeaf {
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct GraphLeafJson {
     pub port: String,
-    pub process: String,
+    pub process:String,
     pub index: Option<usize>,
 }
 
@@ -83,6 +83,7 @@ pub struct GraphExportedPort {
 pub struct GraphTransaction {
     pub id: String,
     pub depth: i32,
+    pub metadata: Value,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -97,34 +98,53 @@ pub struct GraphJson {
     pub connections: Vec<GraphEdgeJson>,
 }
 
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct TransactionId(pub &'static str);
+
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub enum GraphEvents {
-    AddNode(Value),
-    RemoveNode(Value),
-    RenameNode(Value),
+    AddNode(GraphNode),
+    RemoveNode(String),
+    RemoveNodeFromGroup{
+        group: String,
+        node_index: usize
+    },
+    RenameNode{
+        node: GraphNode,
+        old_id: String,
+        new_id: String
+    },
     ChangeNode(Value),
     AddEdge(Value),
-    RemoveEdge(Value),
+    RemoveEdge(GraphEdge),
     // RenameEdge(Value),
-    ChangeEdge(Value),
+    ChangeEdge{edge: GraphEdge, old_metadata:Option<Map<String, Value>>, new_metadata:Map<String, Value>, index: usize},
     AddInitial(Value),
-    RemoveInitial(Value),
+    RemoveInitial{
+        id: String,
+        port: String
+    },
     ChangeProperties(Value),
     AddGroup(Value),
-    RemoveGroup(Value),
+    RemoveGroup(String),
     RenameGroup(Value),
     ChangeGroup(Value),
     AddInport(Value),
-    RemoveInport(Value),
-    RenameInport(Value),
+    RemoveInport(GraphExportedPort),
+    RenameInport(GraphExportedPort),
     ChangeInport(Value),
     AddOutport(Value),
-    RemoveOutport(Value),
-    RenameOutport(Value),
+    RemoveOutport(GraphExportedPort),
+    RenameOutport(GraphExportedPort),
     ChangeOutport(Value),
-    StartTransaction(Value),
-    EndTransaction(Value),
+    StartTransaction(TransactionId, Value),
+    IncTransaction,
+    DecTransaction,
+    EndTransaction(TransactionId, Value),
     Transaction(Value),
+    #[default]
+    Noop
 }
 
 impl GraphEvents {
@@ -133,12 +153,12 @@ impl GraphEvents {
             GraphEvents::AddNode(_) => "add_node",
             GraphEvents::RemoveNode(_) => "remove_node",
             GraphEvents::RenameNode(_) => "rename_node",
-            GraphEvents::ChangeNode(_) => "change_node",
+            GraphEvents::ChangeNode{..} => "change_node",
             GraphEvents::AddEdge(_) => "add_edge",
             GraphEvents::RemoveEdge(_) => "remove_edge",
-            GraphEvents::ChangeEdge(_) => "change_edge",
+            GraphEvents::ChangeEdge{..} => "change_edge",
             GraphEvents::AddInitial(_) => "add_initial",
-            GraphEvents::RemoveInitial(_) => "remove_initial",
+            GraphEvents::RemoveInitial{..} => "remove_initial",
             GraphEvents::ChangeProperties(_) => "change_properties",
             GraphEvents::AddGroup(_) => "add_group",
             GraphEvents::RemoveGroup(_) => "remove_group",
@@ -152,40 +172,42 @@ impl GraphEvents {
             GraphEvents::RemoveOutport(_) => "remove_outport",
             GraphEvents::RenameOutport(_) => "rename_outport",
             GraphEvents::ChangeOutport(_) => "change_outport",
-            GraphEvents::StartTransaction(_) => "start_transaction",
-            GraphEvents::EndTransaction(_) => "end_transaction",
+            GraphEvents::StartTransaction(_, _) => "start_transaction",
+            GraphEvents::EndTransaction(_, _) => "end_transaction",
             GraphEvents::Transaction(_) => "transaction",
+            GraphEvents::RemoveNodeFromGroup{..} => "remove_node_from_group",
+            _ =>{ "" }
         }
     }
 
-    pub fn new(name: &str, value: Value) -> GraphEvents {
-        match name {
-            "add_node" => GraphEvents::AddNode(value),
-            "remove_node" => GraphEvents::RemoveNode(value),
-            "rename_node" => GraphEvents::RenameNode(value),
-            "change_node" => GraphEvents::ChangeNode(value),
-            "add_edge" => GraphEvents::AddEdge(value),
-            "remove_edge" => GraphEvents::RemoveEdge(value),
-            "change_edge" => GraphEvents::ChangeEdge(value),
-            "add_initial" => GraphEvents::AddInitial(value),
-            "remove_initial" => GraphEvents::RemoveInitial(value),
-            "change_properties" => GraphEvents::ChangeProperties(value),
-            "add_group" => GraphEvents::AddGroup(value),
-            "remove_group" => GraphEvents::RemoveGroup(value),
-            "rename_group" => GraphEvents::RenameGroup(value),
-            "change_group" => GraphEvents::ChangeGroup(value),
-            "add_inport" => GraphEvents::AddInport(value),
-            "remove_inport" => GraphEvents::RemoveInport(value),
-            "rename_inport" => GraphEvents::RenameInport(value),
-            "change_inport" => GraphEvents::ChangeInport(value),
-            "add_outport" => GraphEvents::AddOutport(value),
-            "remove_outport" => GraphEvents::RemoveOutport(value),
-            "rename_outport" => GraphEvents::RenameOutport(value),
-            "change_outport" => GraphEvents::ChangeOutport(value),
-            "start_transaction" => GraphEvents::StartTransaction(value),
-            "end_transaction" => GraphEvents::EndTransaction(value),
-            // "transaction" => GraphEvents::Transaction(value),
-            _ => panic!("Unknown Graph event {}", name),
-        }
-    }
+    // pub fn new(name: &str, value: Value) -> GraphEvents {
+    //     match name {
+    //         "add_node" => GraphEvents::AddNode(),
+    //         "remove_node" => GraphEvents::RemoveNode(value),
+    //         "rename_node" => GraphEvents::RenameNode(value),
+    //         "change_node" => GraphEvents::ChangeNode(value),
+    //         "add_edge" => GraphEvents::AddEdge(value),
+    //         "remove_edge" => GraphEvents::RemoveEdge(value),
+    //         "change_edge" => GraphEvents::ChangeEdge(value),
+    //         "add_initial" => GraphEvents::AddInitial(value),
+    //         "remove_initial" => GraphEvents::RemoveInitial(value),
+    //         "change_properties" => GraphEvents::ChangeProperties(value),
+    //         "add_group" => GraphEvents::AddGroup(value),
+    //         "remove_group" => GraphEvents::RemoveGroup(value),
+    //         "rename_group" => GraphEvents::RenameGroup(value),
+    //         "change_group" => GraphEvents::ChangeGroup(value),
+    //         "add_inport" => GraphEvents::AddInport(value),
+    //         "remove_inport" => GraphEvents::RemoveInport(value),
+    //         "rename_inport" => GraphEvents::RenameInport(value),
+    //         "change_inport" => GraphEvents::ChangeInport(value),
+    //         "add_outport" => GraphEvents::AddOutport(value),
+    //         "remove_outport" => GraphEvents::RemoveOutport(value),
+    //         "rename_outport" => GraphEvents::RenameOutport(value),
+    //         "change_outport" => GraphEvents::ChangeOutport(value),
+    //         // "start_transaction" => GraphEvents::StartTransaction(value),
+    //         // "end_transaction" => GraphEvents::EndTransaction(value),
+    //         // "transaction" => GraphEvents::Transaction(value),
+    //         _ => panic!("Unknown Graph event {}", name),
+    //     }
+    // }
 }

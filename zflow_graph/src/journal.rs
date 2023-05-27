@@ -160,15 +160,11 @@ impl Journal for Graph {
     fn execute_entry(&mut self, entry: TransactionEntry) {
         if let Some(event) = entry.cmd {
             match event {
-                GraphEvents::AddNode(data) => {
-                    if let Ok(node) = GraphNode::deserialize(data) {
-                        self.add_node(&node.id, &node.component, None);
-                    }
+                GraphEvents::AddNode(node) => {
+                    self.add_node(&node.id, &node.component, None);
                 }
-                GraphEvents::RemoveNode(data) => {
-                    if let Ok(node) = GraphNode::deserialize(data) {
-                        self.remove_node(&node.id);
-                    }
+                GraphEvents::RemoveNode(node_id) => {
+                    self.remove_node(&node_id);
                 }
                 GraphEvents::RenameNode(data) => {
                     if let Some(data) = data.as_object() {
