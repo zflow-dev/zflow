@@ -3,21 +3,14 @@
 ///    (c) 2013-2020 Flowhub UG
 ///    (c) 2011-2012 Henri Bergius, Nemein
 ///    FBP Graph may be freely distributed under the MIT license
-use crate::internal;
-use crate::internal::event_manager::{EventActor, EventListener};
 use crate::types::{GraphEvents, TransactionId};
 use foreach::ForEach;
-use internal::event_manager::EventManager;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefIterator;
-use redux_rs::{Store, StoreApi};
-use serde_json::{json, Map, Value};
+use redux_rs::Store;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::fs::File;
-use std::io::{self, Read, Write};
-use std::iter::FromIterator;
-use std::process::exit;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
@@ -110,14 +103,18 @@ impl Graph {
                         last_action: action,
                         ..state
                     },
-                    GraphEvents::RenameNode { node, old_id, new_id } => {
+                    GraphEvents::RenameNode {
+                        node,
+                        old_id,
+                        new_id,
+                    } => {
                         state.nodes = {
                             state.nodes.par_iter_mut().for_each(|node| {
                                 if node.id == old_id {
                                     node.id = new_id;
                                 }
                                 node.id = new_id.to_owned();
-                
+
                                 state.edges.par_iter_mut().for_each(|edge| {
                                     if edge.from.node_id == old_id.to_owned() {
                                         (*edge).from.node_id = new_id.to_owned()
@@ -126,7 +123,7 @@ impl Graph {
                                         (*edge).to.node_id = new_id.to_owned()
                                     }
                                 });
-                
+
                                 state.initializers.par_iter_mut().for_each(|iip| {
                                     if let Some(to) = iip.to.as_mut() {
                                         if to.node_id == old_id.to_owned() {
@@ -134,18 +131,18 @@ impl Graph {
                                         }
                                     }
                                 });
-                
-                                state.inports.par_iter_mut().for_each(|(_, port), | {
-                                        if port.process == old_id.to_owned() {
-                                            port.process = new_id.to_owned();
-                                        }
+
+                                state.inports.par_iter_mut().for_each(|(_, port)| {
+                                    if port.process == old_id.to_owned() {
+                                        port.process = new_id.to_owned();
+                                    }
                                 });
                                 state.outports.par_iter_mut().for_each(|(_, port)| {
                                     if port.process == old_id.to_owned() {
                                         port.process = new_id.to_owned();
                                     }
                                 });
-                
+
                                 state.groups.par_iter_mut().for_each(|group| {
                                     if let Some(index) = group
                                         .nodes
@@ -160,9 +157,48 @@ impl Graph {
                         };
                         state.last_action = action;
                         state
+                    }
+                    GraphEvents::ChangeNode {
+                        mut node,
+                        old_metadata,
+                        new_metadata,
+                        index,
+                    } => GraphState {
+                        nodes: {
+                            if node.metadata.is_none() {
+                                node.metadata = Some(Map::new());
+                            }
+
+                            if new_metadata.keys().len() == 0 {
+                                node.metadata = Some(Map::new());
+                            }
+
+                            new_metadata.keys().for_each(|item| {
+                                let meta = new_metadata.clone();
+                                let val = meta.get(item);
+                                if let Some(existing_meta) = node.metadata.as_mut() {
+                                    if let Some(val) = val {
+                                        (*existing_meta).insert(item.clone(), val.clone());
+                                    } else {
+                                        (*existing_meta).remove(item);
+                                    }
+                                }
+                            });
+
+                            state.nodes.insert(index, node);
+                            state.nodes
+                        },
+                        last_action: action,
+                        ..state
                     },
-                    GraphEvents::ChangeNode(_) => todo!(),
-                    GraphEvents::AddEdge(_) => todo!(),
+                    GraphEvents::AddEdge(edge) => GraphState {
+                        edges: {
+                            state.edges.push(edge);
+                            state.edges
+                        },
+                        last_action: action,
+                        ..state
+                    },
                     GraphEvents::RemoveEdge(edge) => GraphState {
                         edges: {
                             let out_port = edge.from.port;
@@ -226,14 +262,86 @@ impl Graph {
                     GraphEvents::RemoveGroup(_) => todo!(),
                     GraphEvents::RenameGroup(_) => todo!(),
                     GraphEvents::ChangeGroup(_) => todo!(),
-                    GraphEvents::AddInport(_) => todo!(),
-                    GraphEvents::RemoveInport(_) => todo!(),
-                    GraphEvents::RenameInport(_) => todo!(),
-                    GraphEvents::ChangeInport(_) => todo!(),
-                    GraphEvents::AddOutport(_) => todo!(),
-                    GraphEvents::RemoveOutport(_) => todo!(),
-                    GraphEvents::RenameOutport(_) => todo!(),
-                    GraphEvents::ChangeOutport(_) => todo!(),
+                    GraphEvents::AddInport { inport, name } => GraphState {
+                        inports: {
+                            state.inports.insert(name, inport);
+                            state.inports
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::RemoveInport(port) => GraphState {
+                        inports: {
+                            state.inports.remove(&port);
+                            state.inports
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::RenameInport { old_name, new_name } => GraphState {
+                        inports: {
+                            if let Some(port) = state.inports.remove(&old_name) {
+                                state.inports.insert(new_name, port.clone());
+                            }
+                            state.inports
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::ChangeInport {
+                        name,
+                        mut port,
+                        old_metadata,
+                        new_metadata,
+                    } => GraphState {
+                        inports: {
+                            port.metadata = Some(new_metadata);
+                            state.inports.insert(name, port);
+                            state.inports
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::AddOutport { outport, name } => GraphState {
+                        outports: {
+                            state.outports.insert(name, outport);
+                            state.outports
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::RemoveOutport(port) => GraphState {
+                        outports: {
+                            state.outports.remove(&port);
+                            state.outports
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::RenameOutport { old_name, new_name } => GraphState {
+                        outports: {
+                            if let Some(port) = state.outports.remove(&old_name) {
+                                state.outports.insert(new_name, port.clone());
+                            }
+                            state.outports
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::ChangeOutport {
+                        name,
+                        mut port,
+                        old_metadata,
+                        new_metadata,
+                    } => GraphState {
+                        outports: {
+                            port.metadata = Some(new_metadata);
+                            state.outports.insert(name, port);
+                            state.outports
+                        },
+                        last_action: action,
+                        ..state
+                    },
                     GraphEvents::StartTransaction(id, metadata) => GraphState {
                         transaction: {
                             if state.transaction.is_some() {
@@ -440,7 +548,7 @@ impl Graph {
                     .await
                 {
                     self.store
-                        .dispatch(GraphEvents::RemoveInport(*inport))
+                        .dispatch(GraphEvents::RemoveInport(inport.port))
                         .await;
                 }
 
@@ -452,7 +560,7 @@ impl Graph {
                     .await
                 {
                     self.store
-                        .dispatch(GraphEvents::RemoveOutport(*outport))
+                        .dispatch(GraphEvents::RemoveOutport(outport.port))
                         .await;
                 }
 
@@ -474,9 +582,6 @@ impl Graph {
                         .dispatch(GraphEvents::RemoveNodeFromGroup { group, node_index })
                         .await;
                 }
-                // for (group, None) in v {
-                //     self.store.dispatch(GraphEvents::RemoveGroup(group));
-                // }
             }
             self.check_transaction_end().await;
         });
@@ -495,11 +600,42 @@ impl Graph {
                 .await
             {
                 self.check_transaction_start().await;
-                self.store.dispatch(GraphEvents::RenameNode{
+                self.store.dispatch(GraphEvents::RenameNode {
                     node: *node,
                     old_id: old_id.to_owned(),
                     new_id: new_id.to_owned(),
                 });
+                self.check_transaction_end().await;
+            }
+        });
+        self
+    }
+
+    pub fn set_node_metadata(&self, id: &str, metadata: Map<String, Value>) -> &Self {
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            if let Some(node) = self
+                .store
+                .select(|state: &GraphState| state.nodes.iter().find(|n| n.id == id.to_owned()))
+                .await
+            {
+                self.check_transaction_start().await;
+                let before = node.metadata.clone();
+                let index = self
+                    .store
+                    .select(|state: &GraphState| {
+                        state.nodes.iter().position(|n| n.id == id.to_owned())
+                    })
+                    .await
+                    .unwrap();
+                self.store
+                    .dispatch(GraphEvents::ChangeNode {
+                        node: node.clone(),
+                        old_metadata: before,
+                        new_metadata: metadata,
+                        index,
+                    })
+                    .await;
                 self.check_transaction_end().await;
             }
         });
@@ -534,6 +670,163 @@ impl Graph {
         self.store.dispatch(GraphEvents::RemoveInitial {
             id: id.to_owned(),
             port: port.to_owned(),
+        });
+        self
+    }
+
+    /// Connecting nodes
+    ///
+    /// Nodes can be connected by adding edges between a node's outport
+    ///	and another node's inport:
+    /// ```no_run
+    /// my_graph.add_edge("Read", "out", "Display", "in", None);
+    /// my_graph.add_edge_index("Read", "out", None, "Display", "in", Some(2), None);
+    /// ```
+    /// Adding an edge will an event.
+    pub fn add_edge(
+        &self,
+        out_node: &str,
+        out_port: &str,
+        in_node: &str,
+        in_port: &str,
+        mut metadata: Option<Map<String, Value>>,
+    ) -> &Self {
+        if metadata.is_none() {
+            metadata = Some(Map::new());
+        }
+        let out_port_name = self.get_port_name(out_port);
+        let in_port_name = self.get_port_name(in_port);
+
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            let some = self
+                .store
+                .select(|store: &GraphState| store.edges)
+                .await
+                .iter()
+                .find(|edge| {
+                    edge.from.node_id.as_str() == out_node
+                        && edge.from.port == out_port
+                        && edge.to.node_id.as_str() == in_node
+                        && edge.to.port == in_port
+                });
+
+            if some.is_some() {
+                return;
+            }
+            if self
+                .store
+                .select(|state: &GraphState| {
+                    state.nodes.iter().find(|n| n.id == out_node.to_owned())
+                })
+                .await
+                .is_none()
+            {
+                return;
+            }
+
+            if self
+                .store
+                .select(|state: &GraphState| {
+                    state.nodes.iter().find(|n| n.id == in_node.to_owned())
+                })
+                .await
+                .is_none()
+            {
+                return;
+            }
+
+            self.check_transaction_start().await;
+            let edge = GraphEdge {
+                from: GraphLeaf {
+                    port: out_port_name,
+                    node_id: out_node.to_owned(),
+                    index: None,
+                },
+                to: GraphLeaf {
+                    port: in_port_name,
+                    node_id: in_node.to_owned(),
+                    index: None,
+                },
+                metadata,
+            };
+
+            self.store.dispatch(GraphEvents::AddEdge(edge)).await;
+            self.check_transaction_end().await;
+        });
+        self
+    }
+
+    pub fn add_edge_index(
+        &mut self,
+        out_node: &str,
+        out_port: &str,
+        index_1: Option<usize>,
+        in_node: &str,
+        in_port: &str,
+        index_2: Option<usize>,
+        mut metadata: Option<Map<String, Value>>,
+    ) -> &mut Self {
+        if metadata.is_none() {
+            metadata = Some(Map::new());
+        }
+        let out_port_name = self.get_port_name(out_port);
+        let in_port_name = self.get_port_name(in_port);
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            let some = self
+                .store
+                .select(|store: &GraphState| store.edges)
+                .await
+                .iter()
+                .find(|edge| {
+                    edge.from.node_id.as_str() == out_node
+                        && edge.from.port == out_port
+                        && edge.to.node_id.as_str() == in_node
+                        && edge.to.port == in_port
+                });
+
+            if some.is_some() {
+                return;
+            }
+            if self
+                .store
+                .select(|state: &GraphState| {
+                    state.nodes.iter().find(|n| n.id == out_node.to_owned())
+                })
+                .await
+                .is_none()
+            {
+                return;
+            }
+
+            if self
+                .store
+                .select(|state: &GraphState| {
+                    state.nodes.iter().find(|n| n.id == in_node.to_owned())
+                })
+                .await
+                .is_none()
+            {
+                return;
+            }
+            self.check_transaction_start().await;
+            let edge = GraphEdge {
+                from: GraphLeaf {
+                    port: out_port_name.to_owned(),
+                    node_id: out_node.to_owned(),
+                    index: index_1,
+                },
+                to: GraphLeaf {
+                    port: in_port_name.to_owned(),
+                    node_id: in_node.to_owned(),
+                    index: index_2,
+                },
+                metadata,
+            };
+
+            self.store.dispatch(GraphEvents::AddEdge(edge)).await;
+            self.check_transaction_end().await;
         });
         self
     }
@@ -683,1055 +976,286 @@ impl Graph {
                     old_metadata: before,
                     new_metadata: metadata,
                     index: edge_index,
-                });
+                }).await;
 
                 self.check_transaction_end().await;
             }
         });
         self
     }
+
+    pub fn add_inport(
+        &mut self,
+        public_port: &str,
+        node_key: &str,
+        port_key: &str,
+        metadata: Option<Map<String, Value>>,
+    ) -> &mut Self {
+        let port_name = self.get_port_name(public_port);
+
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            // Check that node exists
+            if let Some(node) = self
+                .store
+                .select(|state: &GraphState| {
+                    state.nodes.iter().find(|n| n.id == node_key.to_owned())
+                })
+                .await
+            {
+                self.check_transaction_start().await;
+                let val = GraphExportedPort {
+                    process: node_key.to_owned(),
+                    port: self.get_port_name(port_key),
+                    metadata,
+                };
+                self.store
+                    .dispatch(GraphEvents::AddInport {
+                        name: port_name,
+                        inport: val,
+                    })
+                    .await;
+                self.check_transaction_end().await;
+            }
+        });
+        self
+    }
+
+    pub fn remove_inport(&mut self, public_port: &str) -> &mut Self {
+        let port_name = self.get_port_name(public_port);
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+
+        handle.block_on(async {
+            if !self
+                .store
+                .select(|state: &GraphState| state.inports.contains_key(&port_name))
+                .await
+            {
+                return;
+            }
+
+            self.check_transaction_start().await;
+
+            self.set_inports_metadata(port_name.as_str(), Map::new());
+
+            self.store
+                .dispatch(GraphEvents::RemoveInport(public_port.to_owned()))
+                .await;
+
+            self.check_transaction_end().await;
+        });
+
+        self
+    }
+
+    pub fn set_inports_metadata(&self, public_port: &str, metadata: Map<String, Value>) -> &Self {
+        let port_name = self.get_port_name(public_port);
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+
+        handle.block_on(async {
+            if !self
+                .store
+                .select(|state: &GraphState| state.inports.contains_key(&port_name))
+                .await
+            {
+                return;
+            }
+            self.check_transaction_start().await;
+
+            if let Some(p) = self
+                .store
+                .select(|state: &GraphState| state.inports.get(&port_name))
+                .await
+            {
+                let mut p = p.clone();
+                if p.metadata.is_none() {
+                    p.metadata = Some(Map::new());
+                }
+
+                let before = p.metadata.clone();
+
+                metadata.clone().keys().foreach(|item, _| {
+                    let meta = metadata.clone();
+                    let val = meta.get(item);
+                    let mut existing_meta = p.metadata.clone();
+                    if let Some(existing_meta) = existing_meta.as_mut() {
+                        if let Some(val) = val {
+                            existing_meta.insert(item.clone(), val.clone());
+                        } else {
+                            existing_meta.remove(item);
+                        }
+                        p.metadata = Some(existing_meta.clone());
+                        // self.inports.insert(port_name.clone(), p.clone());
+                    } else {
+                        // iter.next();
+                        return;
+                    }
+                });
+                self.store
+                    .dispatch(GraphEvents::ChangeInport {
+                        name: port_name.clone(),
+                        port: p.clone(),
+                        old_metadata: before,
+                        new_metadata: metadata,
+                    })
+                    .await;
+            }
+
+            self.check_transaction_end().await;
+        });
+
+        self
+    }
+
+    pub fn rename_inport(&self, old_port: &str, new_port: &str) -> &Self {
+        let old_port_name = self.get_port_name(old_port);
+        let new_port_name = self.get_port_name(new_port);
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            if !self
+                .store
+                .select(|state: &GraphState| state.inports.contains_key(&old_port_name))
+                .await
+            {
+                return;
+            }
+
+            if new_port_name == old_port_name {
+                return;
+            }
+
+            self.check_transaction_start().await;
+
+            self.store
+                .dispatch(GraphEvents::RenameInport {
+                    old_name: old_port_name,
+                    new_name: new_port_name,
+                })
+                .await;
+
+            self.check_transaction_end().await;
+        });
+
+        self
+    }
+
+    pub fn remove_outport(&mut self, public_port: &str) -> &mut Self {
+        let port_name = self.get_port_name(public_port);
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+
+        handle.block_on(async {
+            if !self
+                .store
+                .select(|state: &GraphState| state.outports.contains_key(&port_name))
+                .await
+            {
+                return;
+            }
+
+            self.check_transaction_start().await;
+
+            self.set_outports_metadata(port_name.as_str(), Map::new());
+
+            self.store
+                .dispatch(GraphEvents::RemoveOutport(public_port.to_owned()))
+                .await;
+
+            self.check_transaction_end().await;
+        });
+
+        self
+    }
+
+    pub fn set_outports_metadata(&self, public_port: &str, metadata: Map<String, Value>) -> &Self {
+        let port_name = self.get_port_name(public_port);
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+
+        handle.block_on(async {
+            if !self
+                .store
+                .select(|state: &GraphState| state.outports.contains_key(&port_name))
+                .await
+            {
+                return;
+            }
+            self.check_transaction_start().await;
+
+            if let Some(p) = self
+                .store
+                .select(|state: &GraphState| state.outports.get(&port_name))
+                .await
+            {
+                let mut p = p.clone();
+                if p.metadata.is_none() {
+                    p.metadata = Some(Map::new());
+                }
+
+                let before = p.metadata.clone();
+
+                metadata.clone().keys().foreach(|item, _| {
+                    let meta = metadata.clone();
+                    let val = meta.get(item);
+                    let mut existing_meta = p.metadata.clone();
+                    if let Some(existing_meta) = existing_meta.as_mut() {
+                        if let Some(val) = val {
+                            existing_meta.insert(item.clone(), val.clone());
+                        } else {
+                            existing_meta.remove(item);
+                        }
+                        p.metadata = Some(existing_meta.clone());
+                    } else {
+                        return;
+                    }
+                });
+                self.store
+                    .dispatch(GraphEvents::ChangeOutport {
+                        name: port_name.clone(),
+                        port: p.clone(),
+                        old_metadata: before,
+                        new_metadata: metadata,
+                    })
+                    .await;
+            }
+
+            self.check_transaction_end().await;
+        });
+
+        self
+    }
+
+    pub fn rename_outport(&self, old_port: &str, new_port: &str) -> &Self {
+        let old_port_name = self.get_port_name(old_port);
+        let new_port_name = self.get_port_name(new_port);
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            if !self
+                .store
+                .select(|state: &GraphState| state.outports.contains_key(&old_port_name))
+                .await
+            {
+                return;
+            }
+
+            if new_port_name == old_port_name {
+                return;
+            }
+
+            self.check_transaction_start().await;
+
+            self.store
+                .dispatch(GraphEvents::RenameOutport {
+                    old_name: old_port_name,
+                    new_name: new_port_name,
+                })
+                .await;
+
+            self.check_transaction_end().await;
+        });
+
+        self
+    }
 }
 
-// impl EventListener for Graph {
-//     /// Attach listener to an event
-//     fn connect(
-//         &mut self,
-//         name: &'static str,
-//         rec: impl FnMut(&mut Self, Value) -> () + Send + Sync + 'static,
-//         once: bool,
-//     ) {
-//         if !self.listeners.contains_key(name) {
-//             self.listeners.insert(name, Vec::new());
-//         }
-//         if let Some(v) = self.listeners.get_mut(name) {
-//             v.push(EventActor {
-//                 once,
-//                 callback: Arc::new(Mutex::new(rec)),
-//             });
-//         }
-//     }
-// }
-
-// impl EventManager for Graph {
-//     /// Send event
-//     fn emit(&mut self, name: &'static str, data: Value) {
-//         self.listeners
-//             .clone()
-//             .get_mut(name)
-//             .iter()
-//             .for_each(|actions| {
-//                 (*actions).iter().enumerate().foreach(|actor, _| {
-//                     if actor.1.once {
-//                         self.listeners.get_mut(name).unwrap().remove(actor.0);
-//                     }
-//                     if let Ok(mut callback) = actor.1.callback.lock() {
-//                         callback(self, data.clone());
-//                     }
-//                 })
-//             });
-//     }
-//     /// Remove listeners from event
-//     fn disconnect(&mut self, name: &str) {
-//         self.listeners.remove(name);
-//     }
-//     /// Check if we have events
-//     fn has_event(&self, name: &str) -> bool {
-//         self.listeners.contains_key(name)
-//     }
-// }
-
-// impl Graph {
-//     pub fn new(name: &str, case_sensitive: bool) -> Self {
-//         Self {
-//             name: name.to_owned(),
-//             nodes: Vec::new(),
-//             edges: Vec::new(),
-//             initializers: Vec::new(),
-//             groups: Vec::new(),
-//             inports: HashMap::new(),
-//             outports: HashMap::new(),
-//             properties: Map::new(),
-//             transaction: None,
-//             case_sensitive,
-//             listeners: HashMap::new(),
-//             last_revision: 0,
-//             transactions: Vec::new(),
-//             subscribed: true,
-//             current_revision: -1,
-//             entries: Vec::new(),
-//         }
-//     }
-
-//     pub fn get_port_name(&self, port: &str) -> String {
-//         if self.case_sensitive {
-//             return port.to_string();
-//         }
-//         port.to_lowercase()
-//     }
-
-//     pub fn start_transaction(
-//         &mut self,
-//         id: &str,
-//         metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         if self.transaction.is_some() {
-//             log::error!("Nested transactions not supported");
-//             exit(1)
-//         };
-
-//         self.transaction = Some(GraphTransaction{
-//             id: id.to_string(),
-//             depth: 1
-//         });
-
-//         self.emit(
-//             "start_transaction",
-//             json!({
-//                 "id": id.to_string(),
-//                 "metadata": json!(metadata)
-//             }),
-//         );
-//         self
-//     }
-
-//     pub fn end_transaction(&mut self, id: &str, metadata: Option<Map<String, Value>>) -> &mut Self {
-//         if self.transaction.is_none() {
-//             log::error!("Attempted to end non-existing transaction");
-//             exit(1)
-//         };
-
-//         self.transaction = None;
-
-//         self.emit(
-//             "end_transaction",
-//             json!({
-//                 "id": id.to_string(),
-//                 "metadata": json!(metadata)
-//             }),
-//         );
-//         self
-//     }
-
-//     pub fn check_transaction_start(&mut self) -> &mut Self {
-//         match self.transaction {
-//             None => { self.start_transaction("implicit", None); },
-//             Some(ref mut transaction) => {
-//                 if transaction.id == "implicit" {
-//                     transaction.depth += 1;
-//                 }
-//             }
-//         }
-//         self
-//     }
-//     pub fn check_transaction_end(&mut self) -> &mut Self {
-//         if let Some(ref mut transaction) = self.transaction {
-//             if transaction.id == "implicit" {
-//                 transaction.depth -= 1;
-//             }
-
-//             if transaction.depth == 0 {
-//                 self.end_transaction("implicit", None);
-//             }
-//         }
-
-//         self
-//     }
-
-//     /// This method allows changing properties of the graph.
-//     pub fn set_properties(&mut self, properties: Map<String, Value>) -> &mut Self {
-//         self.check_transaction_start();
-//         let before = self.properties.clone();
-
-//         for item in properties.keys() {
-//             let val = properties.get(item);
-//             if let Some(val) = val {
-//                 self.properties.insert(item.to_string(), val.clone());
-//             }
-//         }
-
-//         self.emit(
-//             "change_properties",
-//             json!({
-//                 "new": self.properties.clone(),
-//                 "before": before
-//             }),
-//         );
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     /// Nodes objects can be retrieved from the graph by their ID:
-//     /// ```no_run
-//     /// let node = my_graph.get_node('Read');
-//     /// ```
-//     pub fn get_node(&self, key: &str) -> Option<&GraphNode> {
-//         self.nodes.iter().find(|n| n.id == key.to_owned())
-//     }
-
-//     pub fn add_inport(
-//         &mut self,
-//         public_port: &str,
-//         node_key: &str,
-//         port_key: &str,
-//         metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         // Check that node exists
-//         if self.get_node(node_key).is_none() {
-//             return self;
-//         }
-
-//         let port_name = self.get_port_name(public_port);
-
-//         self.check_transaction_start();
-
-//         let val = GraphExportedPort {
-//             process: node_key.to_owned(),
-//             port: self.get_port_name(port_key),
-//             metadata,
-//         };
-//         self.inports.insert(port_name.to_owned(), val.clone());
-
-//         self.emit(
-//             "add_inport",
-//             json!({
-//                 "name": port_name,
-//                 "port": val
-//             }),
-//         );
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     pub fn remove_inport(&mut self, public_port: &str) -> &mut Self {
-//         let port_name = self.get_port_name(public_port);
-
-//         if !self.inports.contains_key(&(port_name.clone())) {
-//             return self;
-//         }
-//         self.check_transaction_start();
-
-//         let inp = self.inports.clone();
-
-//         self.set_inports_metadata(port_name.as_str(), Map::new());
-
-//         self.inports.remove(&(port_name.clone()));
-//         self.emit(
-//             "remove_inport",
-//             json!({
-//                 "name": port_name.clone(),
-//                 "port": inp.get(&(port_name.clone()))
-//             }),
-//         );
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     pub fn rename_inport(&mut self, old_port: &str, new_port: &str) -> &mut Self {
-//         let old_port_name = self.get_port_name(old_port);
-//         let new_port_name = self.get_port_name(new_port);
-//         if !self.inports.contains_key(&(old_port_name.clone())) {
-//             return self;
-//         }
-
-//         if new_port_name == old_port_name {
-//             return self;
-//         }
-
-//         self.check_transaction_start();
-
-//         if let Some(old_port) = self.inports.clone().get(&old_port_name) {
-//             self.inports.insert(new_port_name.clone(), old_port.clone());
-//             self.inports.remove(&old_port_name);
-//             self.emit(
-//                 "rename_inport",
-//                 json!({
-//                     "old": old_port_name.clone(),
-//                     "new": new_port_name.clone()
-//                 }),
-//             );
-//         }
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     pub fn add_outport(
-//         &mut self,
-//         public_port: &str,
-//         node_key: &str,
-//         port_key: &str,
-//         metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         // Check that node exists
-//         if self.get_node(node_key).is_none() {
-//             return self;
-//         }
-
-//         let port_name = self.get_port_name(public_port);
-
-//         self.check_transaction_start();
-
-//         let val = GraphExportedPort {
-//             process: node_key.to_owned(),
-//             port: self.get_port_name(port_key),
-//             metadata,
-//         };
-//         self.outports.insert(port_name.to_owned(), val.clone());
-
-//         self.emit(
-//             "add_outport",
-//             json!({
-//                 "name": port_name,
-//                 "port": val
-//             }),
-//         );
-
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     pub fn remove_outport(&mut self, public_port: &str) -> &mut Self {
-//         let port_name = self.get_port_name(public_port);
-
-//         if !self.outports.contains_key(&(port_name.clone())) {
-//             return self;
-//         }
-//         self.check_transaction_start();
-
-//         let oup = self.outports.clone();
-
-//         self.set_outports_metadata(port_name.as_str(), Map::new());
-
-//         self.outports.remove(&(port_name.clone()));
-
-//         self.emit(
-//             "remove_outport",
-//             json!({
-//                 "name": port_name.clone(),
-//                 "port": oup.get(&(port_name.clone()))
-//             }),
-//         );
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     pub fn rename_outport(&mut self, old_port: &str, new_port: &str) -> &mut Self {
-//         let old_port_name = self.get_port_name(old_port);
-//         let new_port_name = self.get_port_name(new_port);
-//         if !self.outports.contains_key(&(old_port_name.clone())) {
-//             return self;
-//         }
-
-//         if new_port_name == old_port_name {
-//             return self;
-//         }
-
-//         self.check_transaction_start();
-
-//         if let Some(old_port) = self.outports.clone().get(&old_port_name) {
-//             self.outports
-//                 .insert(new_port_name.clone(), old_port.clone());
-//             self.outports.remove(&old_port_name);
-//             self.emit(
-//                 "rename_outport",
-//                 json!({
-//                     "old": old_port_name.clone(),
-//                     "new": new_port_name.clone()
-//                 }),
-//             );
-//         }
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     pub fn set_inports_metadata(
-//         &mut self,
-//         public_port: &str,
-//         metadata: Map<String, Value>,
-//     ) -> &mut Self {
-//         let port_name = self.get_port_name(public_port);
-//         if !self.inports.contains_key(&(port_name.clone())) {
-//             return self;
-//         }
-
-//         self.check_transaction_start();
-
-//         if let Some(p) = self.inports.get(&(port_name.clone())) {
-//             let mut p = p.clone();
-//             if p.metadata.is_none() {
-//                 p.metadata = Some(Map::new());
-//             }
-
-//             let before = p.metadata.clone();
-
-//             metadata.clone().keys().foreach(|item, _| {
-//                 let meta = metadata.clone();
-//                 let val = meta.get(item);
-//                 let mut existing_meta = p.metadata.clone();
-//                 if let Some(existing_meta) = existing_meta.as_mut() {
-//                     if let Some(val) = val {
-//                         existing_meta.insert(item.clone(), val.clone());
-//                     } else {
-//                         existing_meta.remove(item);
-//                     }
-//                     p.metadata = Some(existing_meta.clone());
-//                     self.inports.insert(port_name.clone(), p.clone());
-//                 } else {
-//                     // iter.next();
-//                     return;
-//                 }
-//             });
-
-//             self.emit(
-//                 "change_inport",
-//                 json!({
-//                     "name": port_name.clone(),
-//                     "port": p.clone(),
-//                     "old_metadata": before,
-//                     "new_metadata": metadata
-//                 }),
-//             );
-//         }
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     pub fn set_outports_metadata(
-//         &mut self,
-//         public_port: &str,
-//         metadata: Map<String, Value>,
-//     ) -> &mut Self {
-//         let port_name = self.get_port_name(public_port);
-//         if !self.outports.contains_key(&(port_name.clone())) {
-//             return self;
-//         }
-
-//         self.check_transaction_start();
-
-//         if let Some(p) = self.outports.get(&(port_name.clone())) {
-//             let mut p = p.clone();
-//             if p.metadata.is_none() {
-//                 p.metadata = Some(Map::new());
-//             }
-
-//             let before = p.metadata.clone();
-
-//             metadata.clone().keys().foreach(|item, _| {
-//                 let meta = metadata.clone();
-//                 let val = meta.get(item);
-//                 let mut existing_meta = p.metadata.clone();
-//                 if let Some(existing_meta) = existing_meta.as_mut() {
-//                     if let Some(val) = val {
-//                         existing_meta.insert(item.clone(), val.clone());
-//                     } else {
-//                         existing_meta.remove(item);
-//                     }
-//                     p.metadata = Some(existing_meta.clone());
-//                     self.outports.insert(port_name.clone(), p.clone());
-//                 } else {
-//                     // iter.next();
-//                     return;
-//                 }
-//             });
-
-//             self.emit(
-//                 "change_outport",
-//                 json!({
-//                     "name": port_name.clone(),
-//                     "port": p.clone(),
-//                     "old_metadata": before,
-//                     "new_metadata": metadata
-//                 }),
-//             );
-//         }
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     /// Grouping nodes in a graph
-//     pub fn add_group(
-//         &mut self,
-//         group: &str,
-//         nodes: Vec<String>,
-//         metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         self.check_transaction_start();
-//         let g = &GraphGroup {
-//             name: group.to_owned(),
-//             nodes,
-//             metadata,
-//         };
-//         self.groups.push(g.clone());
-//         self.emit("add_group", json!(g));
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     pub fn rename_group(&mut self, old_name: &str, new_name: &str) -> &mut Self {
-//         self.check_transaction_start();
-//         for i in 0..self.groups.len() {
-//             let mut group = &mut self.groups[i];
-//             if group.name == old_name {
-//                 (*group).name = new_name.to_owned();
-//                 self.emit(
-//                     "rename_group",
-//                     json!({
-//                         "old": old_name.clone(),
-//                         "new": new_name.clone()
-//                     }),
-//                 );
-//             }
-//         }
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     pub fn remove_group(&mut self, group_name: &str) -> &mut Self {
-//         self.check_transaction_start();
-
-//         self.groups = self
-//             .groups
-//             .clone()
-//             .iter()
-//             .filter(|v| {
-//                 if v.name == group_name.to_owned() {
-//                     self.set_group_metadata(group_name, Map::new());
-//                     self.emit("remove_group", json!(v.clone()));
-//                     return false;
-//                 }
-//                 return true;
-//             })
-//             .map(|v| v.clone())
-//             .collect();
-//         self.check_transaction_end();
-//         self
-//     }
-//     pub fn set_group_metadata(
-//         &mut self,
-//         group_name: &str,
-//         metadata: Map<String, Value>,
-//     ) -> &mut Self {
-//         self.check_transaction_start();
-//         for (i, group) in self.groups.clone().iter_mut().enumerate() {
-//             if group.name != group_name.to_owned() {
-//                 continue;
-//             }
-//             let before = group.metadata.clone();
-//             for item in metadata.clone().keys() {
-//                 if let Some(meta) = group.metadata.as_mut() {
-//                     if let Some(val) = metadata.get(item) {
-//                         meta.insert(item.to_owned(), val.clone());
-//                     } else {
-//                         meta.remove(item);
-//                     }
-//                 }
-//             }
-//             self.groups[i] = group.clone();
-//             self.emit(
-//                 "change_group",
-//                 json!({
-//                     "group": group.clone(),
-//                     "old_metadata": before,
-//                     "new_metadata": metadata
-//                 }),
-//             );
-//         }
-
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     /// Adding a node to the graph
-//     /// Nodes are identified by an ID unique to the graph. Additionally,
-//     /// a node may contain information on what FBP component it is and
-//     /// possible display coordinates.
-//     /// ```no_run
-//     /// let mut metadata = Map::new();
-//     /// metadata.insert("x".to_string(), 91);
-//     /// metadata.insert("y".to_string(), 154);
-//     /// my_graph.add_node("Read", "ReadFile", Some(metadata));
-//     /// ```
-//     pub fn add_node(
-//         &mut self,
-//         id: &str,
-//         component: &str,
-//         metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         self.check_transaction_start();
-//         let node = GraphNode {
-//             id: id.to_owned(),
-//             // uid: guid(),
-//             component: component.to_owned(),
-//             metadata,
-//         };
-//         self.nodes.push(node.clone());
-//         self.emit("add_node", json!(node));
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     /// Removing a node from the graph
-//     /// Existing nodes can be removed from a graph by their ID. This
-//     /// will remove the node and also remove all edges connected to it.
-//     /// ```no_run
-//     /// my_graph.remove_node("Read");
-//     /// ```
-//     /// Once the node has been removed, the `remove_node` event will be
-//     pub fn remove_node(&mut self, id: &str) -> &mut Self {
-//         if let Some(node) = self.get_node(id).cloned() {
-//             self.check_transaction_start();
-//             self.edges.clone().iter().foreach(|edge, _iter| {
-//                 if (edge.from.node_id == node.id) || (edge.to.node_id == node.id) {
-//                     self.remove_edge(
-//                         edge.from.node_id.as_str(),
-//                         edge.from.port.as_str(),
-//                         Some(edge.to.node_id.as_str()),
-//                         Some(edge.to.port.as_str()),
-//                     );
-//                 }
-//             });
-//             self.initializers.clone().iter().foreach(|iip, _iter| {
-//                 if let Some(to) = iip.to.clone() {
-//                     if to.node_id == node.id {
-//                         self.remove_initial(to.node_id.as_str(), to.port.as_str());
-//                     }
-//                 }
-//             });
-//             self.inports.clone().keys().foreach(|port, _iter| {
-//                 if let Some(private) = self.inports.clone().get(port) {
-//                     if private.process == id {
-//                         self.remove_inport(port);
-//                     }
-//                 }
-//             });
-//             self.outports.clone().keys().foreach(|port, _iter| {
-//                 if let Some(private) = self.outports.clone().get(port) {
-//                     if private.process == id {
-//                         self.remove_outport(port);
-//                     }
-//                 }
-//             });
-
-//             for (i, group) in self.groups.clone().iter_mut().enumerate() {
-//                 if group.nodes.contains(&id.to_string()) {
-//                     if let Some(index) = group.nodes.iter().position(|node| node == id) {
-//                         self.groups[i].nodes.remove(index);
-//                         if self.groups[i].nodes.is_empty() {
-//                             self.remove_group(&group.name);
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-
-//         self.set_node_metadata(id, Map::new());
-//         if let Some(index) = self.nodes.iter().position(|n| n.id == id) {
-//             let node = self.nodes.remove(index);
-//             self.emit("remove_node", json!(node));
-//         }
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     /// Renaming a node
-//     ///
-//     /// Nodes IDs can be changed by calling this method.
-//     pub fn rename_node(&mut self, old_id: &str, new_id: &str) -> &mut Self {
-//         if let Some(node) = self.get_node(old_id).cloned().as_mut() {
-//             self.check_transaction_start();
-//             node.id = new_id.to_owned();
-
-//             let node_index = self
-//                 .nodes
-//                 .iter()
-//                 .position(|n| n.id == old_id.to_owned())
-//                 .unwrap();
-//             self.nodes[node_index] = node.clone();
-
-//             let _ = self.edges.iter_mut().foreach(|edge, _iter| {
-//                 if edge.from.node_id == old_id.to_owned() {
-//                     (*edge).from.node_id = new_id.to_owned()
-//                 }
-//                 if edge.to.node_id == old_id.to_owned() {
-//                     (*edge).to.node_id = new_id.to_owned()
-//                 }
-//             });
-
-//             let _ = self.initializers.iter_mut().foreach(|iip, _iter| {
-//                 if let Some(to) = iip.to.as_mut() {
-//                     if to.node_id == old_id.to_owned() {
-//                         (*to).node_id = new_id.to_owned()
-//                     }
-//                 }
-//             });
-
-//             let _ = self.inports.clone().keys().foreach(|port, _iter| {
-//                 if let Some(private) = self.inports.get_mut(port) {
-//                     if private.process == old_id.to_owned() {
-//                         private.process = new_id.to_owned();
-//                     }
-//                 }
-//             });
-//             let _ = self.outports.clone().keys().foreach(|port, _iter| {
-//                 if let Some(private) = self.outports.get_mut(port) {
-//                     if private.process == old_id.to_owned() {
-//                         private.process = new_id.to_owned();
-//                     }
-//                 }
-//             });
-
-//             let _ = self.groups.iter_mut().foreach(|group, _iter| {
-//                 if let Some(index) = group
-//                     .nodes
-//                     .iter()
-//                     .position(|n| n.to_owned() == old_id.to_owned())
-//                 {
-//                     group.nodes[index] = new_id.to_owned();
-//                 }
-//             });
-
-//             self.emit(
-//                 "rename_node",
-//                 json!({
-//                     "old": old_id.clone(),
-//                     "new": new_id.clone(),
-//                 }),
-//             );
-//             self.check_transaction_end();
-//         }
-//         self
-//     }
-
-//     pub fn set_node_metadata(&mut self, id: &str, metadata: Map<String, Value>) -> &mut Self {
-//         if let Some(node) = self.get_node(id).cloned().as_mut() {
-//             self.check_transaction_start();
-
-//             let before = node.metadata.clone();
-
-//             if node.metadata.is_none() {
-//                 (*node).metadata = Some(Map::new());
-//             }
-
-//             if metadata.keys().len() == 0 {
-//                 (*node).metadata = Some(Map::new());
-//             }
-
-//             let _ = metadata.clone().keys().foreach(|item, _iter| {
-//                 let meta = metadata.clone();
-//                 let val = meta.get(item);
-
-//                 if let Some(existing_meta) = node.metadata.as_mut() {
-//                     if let Some(val) = val {
-//                         (*existing_meta).insert(item.clone(), val.clone());
-//                     } else {
-//                         (*existing_meta).remove(item);
-//                     }
-//                 }
-//             });
-
-//             self.emit(
-//                 "change_node",
-//                 json!({
-//                     "node": node.clone(),
-//                     "old_metadata": before,
-//                     "new_metadata": metadata
-//                 }),
-//             );
-//             let node_index = self
-//                 .nodes
-//                 .iter()
-//                 .position(|n| n.id == id.to_owned())
-//                 .unwrap();
-//             self.nodes[node_index] = node.clone();
-//         }
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     /// Connecting nodes
-//     ///
-//     /// Nodes can be connected by adding edges between a node's outport
-//     ///	and another node's inport:
-//     /// ```no_run
-//     /// my_graph.add_edge("Read", "out", "Display", "in", None);
-//     /// my_graph.add_edge_index("Read", "out", None, "Display", "in", Some(2), None);
-//     /// ```
-//     /// Adding an edge will emit the `addEdge` event.
-//     pub fn add_edge(
-//         &mut self,
-//         out_node: &str,
-//         out_port: &str,
-//         in_node: &str,
-//         in_port: &str,
-//         mut metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         if metadata.is_none() {
-//             metadata = Some(Map::new());
-//         }
-//         let out_port_name = self.get_port_name(out_port);
-//         let in_port_name = self.get_port_name(in_port);
-//         let some = self.edges.iter().find(|edge| {
-//             (edge.from.node_id == out_node.to_owned())
-//                 && (edge.from.port == out_port_name.to_owned())
-//                 && (edge.to.node_id == in_node.to_owned())
-//                 && (edge.to.port == in_port_name.to_owned())
-//         });
-//         if some.is_some() {
-//             return self;
-//         }
-//         if self.get_node(out_node).is_none() {
-//             return self;
-//         }
-//         if self.get_node(in_node).is_none() {
-//             return self;
-//         }
-//         self.check_transaction_start();
-//         let edge = &GraphEdge {
-//             from: GraphLeaf {
-//                 port: out_port_name.to_owned(),
-//                 node_id: out_node.to_owned(),
-//                 index: None,
-//             },
-//             to: GraphLeaf {
-//                 port: in_port_name.to_owned(),
-//                 node_id: in_node.to_owned(),
-//                 index: None,
-//             },
-//             metadata,
-//         };
-//         self.edges.push(edge.clone());
-//         self.emit("add_edge", json!(edge));
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     pub fn add_edge_index(
-//         &mut self,
-//         out_node: &str,
-//         out_port: &str,
-//         index_1: Option<usize>,
-//         in_node: &str,
-//         in_port: &str,
-//         index_2: Option<usize>,
-//         mut metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         if metadata.is_none() {
-//             metadata = Some(Map::new());
-//         }
-//         let out_port_name = self.get_port_name(out_port);
-//         let in_port_name = self.get_port_name(in_port);
-//         if self
-//             .edges
-//             .clone()
-//             .iter()
-//             .find(|edge| {
-//                 // don't add a duplicate edge
-//                 if (edge.from.node_id == out_node.to_owned())
-//                     && (edge.from.port == out_port_name.to_owned())
-//                     && (edge.to.node_id == in_node.to_owned())
-//                     && (edge.to.port == in_port_name.to_owned())
-//                 {
-//                     if index_1 == edge.from.index && index_2 == edge.to.index {
-//                         return true;
-//                     }
-//                 }
-//                 return false;
-//             })
-//             .is_some()
-//         {
-//             return self;
-//         }
-
-//         if self.get_node(out_node).is_none() {
-//             return self;
-//         }
-//         if self.get_node(in_node).is_none() {
-//             return self;
-//         }
-//         self.check_transaction_start();
-//         let edge = &GraphEdge {
-//             from: GraphLeaf {
-//                 port: out_port_name.to_owned(),
-//                 node_id: out_node.to_owned(),
-//                 index: index_1,
-//             },
-//             to: GraphLeaf {
-//                 port: in_port_name.to_owned(),
-//                 node_id: in_node.to_owned(),
-//                 index: index_2,
-//             },
-//             metadata,
-//         };
-//         self.edges.push(edge.clone());
-//         self.emit("add_edge", json!(edge));
-
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     /// Disconnected nodes
-//     ///
-//     /// Connections between nodes can be removed by providing the
-//     ///	nodes and ports to disconnect.
-//     /// ```no_run
-//     /// my_graph.remove_edge("Display", "out", "Foo", "in");
-//     /// ```
-//     /// Removing a connection will emit the `removeEdge` event.
-//     pub fn remove_edge(
-//         &mut self,
-//         node: &str,
-//         port: &str,
-//         node2: Option<&str>,
-//         port2: Option<&str>,
-//     ) -> &mut Self {
-//         if self
-//             .get_edge(
-//                 node,
-//                 port,
-//                 node2.or(Some("")).unwrap(),
-//                 port2.or(Some("")).unwrap(),
-//             )
-//             .is_none()
-//         {
-//             return self;
-//         }
-
-//         self.check_transaction_start();
-//         let out_port = self.get_port_name(port);
-//         let mut in_port = None;
-//         if let Some(port2) = port2 {
-//             in_port = Some(self.get_port_name(port2));
-//         }
-
-//         self.edges = self
-//             .edges
-//             .clone()
-//             .iter()
-//             .filter(|edge| {
-//                 if in_port.is_some() && node2.is_some() {
-//                     if edge.from.node_id.as_str() == node
-//                         && edge.from.port == out_port
-//                         && edge.to.node_id.as_str() == node2.unwrap()
-//                         && edge.to.port == in_port.clone().unwrap()
-//                     {
-//                         self.set_edge_metadata(
-//                             edge.from.node_id.as_str(),
-//                             edge.from.port.as_str(),
-//                             edge.to.node_id.as_str(),
-//                             edge.to.port.as_str(),
-//                             Map::new(),
-//                         );
-//                         self.emit("remove_edge", json!(edge.clone()));
-//                         return false;
-//                     }
-//                 } else if (edge.from.node_id.as_str() == node && edge.from.port == out_port)
-//                     || (edge.to.node_id.as_str() == node && edge.to.port == out_port)
-//                 {
-//                     self.set_edge_metadata(
-//                         edge.from.node_id.as_str(),
-//                         edge.from.port.as_str(),
-//                         edge.to.node_id.as_str(),
-//                         edge.to.port.as_str(),
-//                         Map::new(),
-//                     );
-
-//                     self.emit("remove_edge", json!(edge.clone()));
-//                     return false;
-//                 }
-//                 true
-//             })
-//             .map(|edge| edge.clone())
-//             .collect();
-
-//         self.check_transaction_end();
-
-//         self
-//     }
-
-//     /// Getting an edge
-//     ///
-//     /// Edge objects can be retrieved from the graph by the node and port IDs:
-//     /// ```no_run
-//     /// my_edge = my_graph.get_edge("Read", "out", "Write", "in");
-//     /// ```
-//     pub fn get_edge(&self, node: &str, port: &str, node2: &str, port2: &str) -> Option<&GraphEdge> {
-//         let out_port = self.get_port_name(port);
-//         let in_port = self.get_port_name(port2);
-//         self.edges.iter().find(|edge| {
-//             edge.from.node_id.as_str() == node
-//                 && edge.from.port == out_port
-//                 && edge.to.node_id.as_str() == node2
-//                 && edge.to.port == in_port
-//         })
-//     }
-
-//     /// Changing an edge's metadata
-//     ///
-//     /// Edge metadata can be set or changed by calling this method.
-//     pub fn set_edge_metadata(
-//         &mut self,
-//         node: &str,
-//         port: &str,
-//         node2: &str,
-//         port2: &str,
-//         metadata: Map<String, Value>,
-//     ) -> &mut Self {
-//         if let Some(edge) = self.get_edge(node, port, node2, port2).cloned().as_mut() {
-//             self.check_transaction_start();
-//             if edge.metadata.is_none() {
-//                 edge.metadata = Some(Map::new());
-//             }
-//             let before = edge.metadata.clone();
-//             for item in metadata.clone().keys() {
-//                 let val = metadata.get(item);
-//                 if let Some(edge_metadata) = edge.metadata.as_mut() {
-//                     if let Some(val) = val {
-//                         (*edge_metadata).insert(item.clone(), val.clone());
-//                     } else {
-//                         (*edge_metadata).remove(item);
-//                     }
-//                 }
-//             }
-//             self.emit(
-//                 "change_edge",
-//                 json!({
-//                     "edge": edge.clone(),
-//                     "old_metadata": before,
-//                     "new_metadata": metadata
-//                 }),
-//             );
-//             let edge_index = self
-//                 .edges
-//                 .iter()
-//                 .position(|edge| {
-//                     edge.from.node_id.as_str() == node
-//                         && edge.from.port == port
-//                         && edge.to.node_id.as_str() == node2
-//                         && edge.to.port == port2
-//                 })
-//                 .unwrap();
-//             self.edges[edge_index] = edge.clone();
-//             self.check_transaction_end();
-//         }
-//         self
-//     }
 
 //     /// Adding Initial Information Packets
 //     ///
