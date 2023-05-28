@@ -6,9 +6,9 @@
 use crate::types::{GraphEvents, TransactionId};
 use foreach::ForEach;
 use rayon::iter::ParallelIterator;
-use rayon::prelude::IntoParallelRefIterator;
+use rayon::prelude::{IntoParallelRefIterator, IntoParallelIterator};
 use redux_rs::Store;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -38,6 +38,103 @@ pub struct GraphState {
     pub current_revision: i32,
     pub reducers: Arc<Mutex<Vec<Box<dyn Fn(GraphState, GraphEvents)>>>>,
     pub last_action: GraphEvents, // pub(crate) entries: Vec<TransactionEntry>,
+}
+
+impl GraphState {
+    pub fn to_json(&self, name: &str, case_sensitive: bool) -> GraphJson {
+        let mut json = GraphJson {
+            case_sensitive,
+            properties: Map::new(),
+            inports: self.inports.clone(),
+            outports: self.outports.clone(),
+            groups: Vec::new(),
+            processes: HashMap::new(),
+            connections: Vec::new(),
+        };
+
+        json.properties = self.properties.clone();
+        json.properties
+            .insert("name".to_owned(), Value::from(name.to_owned()));
+        json.properties.remove("baseDir");
+        json.properties.remove("componentLoader");
+
+        self.groups.par_iter().for_each(|group| {
+            let mut group_data = group.clone();
+            if let Some(metadata) = group.metadata.clone() {
+                if !metadata.is_empty() {
+                    group_data.metadata = Some(metadata);
+                }
+            }
+            json.groups.push(group_data);
+        });
+
+        self.nodes.par_iter().for_each(|node| {
+            json.processes.insert(
+                node.id.clone(),
+                GraphNodeJson {
+                    component: node.component.clone(),
+                    metadata: if node.metadata.is_none() {
+                        Some(Map::new())
+                    } else {
+                        node.metadata.clone()
+                    },
+                },
+            );
+        });
+
+        self.edges.par_iter().for_each(|edge| {
+            let mut connection = GraphEdgeJson {
+                src: Some(GraphLeafJson {
+                    process: edge.from.node_id.clone(),
+                    port: edge.from.port.clone(),
+                    index: edge.from.index,
+                }),
+                tgt: Some(GraphLeafJson {
+                    process: edge.to.node_id.clone(),
+                    port: edge.to.port.clone(),
+                    index: edge.to.index,
+                }),
+                metadata: None,
+                data: None,
+            };
+            if let Some(metadata) = edge.metadata.clone() {
+                if !metadata.is_empty() {
+                    connection.metadata = Some(metadata);
+                }
+            }
+            json.connections.push(connection);
+        });
+
+        self.initializers.par_iter().for_each(|initializer| {
+            let mut iip = GraphEdgeJson {
+                src: None,
+                tgt: None,
+                data: None,
+                metadata: None,
+            };
+            if let Some(to) = initializer.to.clone() {
+                iip.tgt = Some(GraphLeafJson {
+                    process: to.node_id,
+                    port: to.port,
+                    index: to.index,
+                });
+            }
+
+            if let Some(from) = initializer.from.clone() {
+                iip.data = Some(from.data);
+            }
+
+            if let Some(metadata) = initializer.metadata.clone() {
+                if !metadata.is_empty() {
+                    iip.metadata = Some(metadata);
+                }
+            }
+
+            json.connections.push(iip);
+        });
+
+        json
+    }
 }
 
 impl Debug for GraphState {
@@ -237,7 +334,14 @@ impl Graph {
                         last_action: action,
                         ..state
                     },
-                    GraphEvents::AddInitial(_) => todo!(),
+                    GraphEvents::AddInitial(iip) => GraphState {
+                        initializers: {
+                            state.initializers.push(iip);
+                            state.initializers
+                        },
+                        last_action: action,
+                        ..state
+                    },
                     GraphEvents::RemoveInitial { id, port } => GraphState {
                         initializers: {
                             state
@@ -257,11 +361,79 @@ impl Graph {
                         last_action: action,
                         ..state
                     },
-                    GraphEvents::ChangeProperties(_) => todo!(),
-                    GraphEvents::AddGroup(_) => todo!(),
-                    GraphEvents::RemoveGroup(_) => todo!(),
-                    GraphEvents::RenameGroup(_) => todo!(),
-                    GraphEvents::ChangeGroup(_) => todo!(),
+                    GraphEvents::ChangeProperties { new, old } => GraphState {
+                        properties: {
+                            for item in new.keys() {
+                                let val = new.get(item);
+                                if let Some(val) = val {
+                                    state.properties.insert(*item, *val);
+                                }
+                            }
+                            state.properties
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::AddGroup(group) => GraphState {
+                        groups: {
+                            state.groups.push(group);
+                            state.groups
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::RemoveGroup(group) => GraphState {
+                        groups: state
+                            .groups
+                            .iter()
+                            .filter(|g| {
+                                if g.name == group {
+                                    return false;
+                                }
+                                return true;
+                            })
+                            .map(|g| *g)
+                            .collect(),
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::RenameGroup { old, new } => GraphState {
+                        groups: {
+                            if let Some(group) =
+                                state.groups.iter_mut().find(|group| group.name == old)
+                            {
+                                group.name = new;
+                            }
+                            state.groups
+                        },
+                        last_action: action,
+                        ..state
+                    },
+                    GraphEvents::ChangeGroup {
+                        name,
+                        old_metadata,
+                        metadata,
+                    } => GraphState {
+                        groups: {
+                            for (i, group) in state.groups.iter_mut().enumerate() {
+                                if group.name == name {
+                                    for item in metadata.keys() {
+                                        if let Some(meta) = group.metadata.as_mut() {
+                                            if let Some(val) = metadata.get(item) {
+                                                meta.insert(item.to_owned(), val.clone());
+                                            } else {
+                                                meta.remove(item);
+                                            }
+                                        }
+                                    }
+                                    state.groups[i] = group.clone();
+                                }
+                            }
+                            state.groups
+                        },
+                        last_action: action,
+                        ..state
+                    },
                     GraphEvents::AddInport { inport, name } => GraphState {
                         inports: {
                             state.inports.insert(name, inport);
@@ -426,6 +598,50 @@ impl Graph {
         }
         port.to_lowercase()
     }
+
+    // pub fn start_transaction(
+    //     &mut self,
+    //     id: &str,
+    //     metadata: Option<Map<String, Value>>,
+    // ) -> &mut Self {
+    //     if self.transaction.is_some() {
+    //         log::error!("Nested transactions not supported");
+    //         exit(1)
+    //     };
+
+    //     self.transaction = Some(GraphTransaction{
+    //         id: id.to_string(),
+    //         depth: 1,
+    //         metadata: json!(metadata),
+    //     });
+
+    //     self.emit(
+    //         "start_transaction",
+    //         json!({
+    //             "id": id.to_string(),
+    //             "metadata": json!(metadata)
+    //         }),
+    //     );
+    //     self
+    // }
+
+    // pub fn end_transaction(&mut self, id: &str, metadata: Option<Map<String, Value>>) -> &mut Self {
+    //     if self.transaction.is_none() {
+    //         log::error!("Attempted to end non-existing transaction");
+    //         exit(1)
+    //     };
+
+    //     self.transaction = None;
+
+    //     self.emit(
+    //         "end_transaction",
+    //         json!({
+    //             "id": id.to_string(),
+    //             "metadata": json!(metadata)
+    //         }),
+    //     );
+    //     self
+    // }
 
     pub(crate) async fn check_transaction_start(&self) {
         match self
@@ -971,12 +1187,14 @@ impl Graph {
                     })
                     .await;
 
-                self.store.dispatch(GraphEvents::ChangeEdge {
-                    edge: edge.clone(),
-                    old_metadata: before,
-                    new_metadata: metadata,
-                    index: edge_index,
-                }).await;
+                self.store
+                    .dispatch(GraphEvents::ChangeEdge {
+                        edge: edge.clone(),
+                        old_metadata: before,
+                        new_metadata: metadata,
+                        index: edge_index,
+                    })
+                    .await;
 
                 self.check_transaction_end().await;
             }
@@ -1139,6 +1357,44 @@ impl Graph {
         self
     }
 
+
+    pub fn add_outport(
+        &mut self,
+        public_port: &str,
+        node_key: &str,
+        port_key: &str,
+        metadata: Option<Map<String, Value>>,
+    ) -> &mut Self {
+        let port_name = self.get_port_name(public_port);
+
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            // Check that node exists
+            if let Some(node) = self
+                .store
+                .select(|state: &GraphState| {
+                    state.nodes.iter().find(|n| n.id == node_key.to_owned())
+                })
+                .await
+            {
+                self.check_transaction_start().await;
+                let val = GraphExportedPort {
+                    process: node_key.to_owned(),
+                    port: self.get_port_name(port_key),
+                    metadata,
+                };
+                self.store
+                    .dispatch(GraphEvents::AddOutport {
+                        name: port_name,
+                        outport: val,
+                    })
+                    .await;
+                self.check_transaction_end().await;
+            }
+        });
+        self
+    }
+
     pub fn remove_outport(&mut self, public_port: &str) -> &mut Self {
         let port_name = self.get_port_name(public_port);
         let handle = Runtime::new().expect("expected to start tokio runtime");
@@ -1254,363 +1510,364 @@ impl Graph {
 
         self
     }
+
+    /// Grouping nodes in a graph
+    pub fn add_group(
+        &self,
+        group: &str,
+        nodes: Vec<String>,
+        metadata: Option<Map<String, Value>>,
+    ) -> &Self {
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            self.check_transaction_start().await;
+            let g = GraphGroup {
+                name: group.to_owned(),
+                nodes,
+                metadata,
+            };
+            self.store.dispatch(GraphEvents::AddGroup(g)).await;
+            self.check_transaction_end().await;
+        });
+        self
+    }
+
+    pub fn rename_group(&self, old_name: &str, new_name: &str) -> &Self {
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            self.check_transaction_start().await;
+            self.store
+                .dispatch(GraphEvents::RenameGroup {
+                    old: old_name.to_owned(),
+                    new: new_name.to_owned(),
+                })
+                .await;
+            self.check_transaction_end().await;
+        });
+        self
+    }
+
+    pub fn remove_group(&mut self, group_name: &str) -> &mut Self {
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        if handle.block_on(async {
+            if let Some(group) = self
+                .store
+                .select(|state: &GraphState| state.groups.iter().find(|g| g.name == group_name))
+                .await
+            {
+                self.check_transaction_start().await;
+                self.store
+                    .dispatch(GraphEvents::RemoveGroup(group_name.to_owned()))
+                    .await;
+                self.check_transaction_end().await;
+                return true;
+            }
+            false
+        }) {
+            self.set_group_metadata(group_name, Map::new());
+        }
+        self
+    }
+    pub fn set_group_metadata(&self, group_name: &str, metadata: Map<String, Value>) -> &Self {
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            self.check_transaction_start().await;
+            if let Some(group) = self
+                .store
+                .select(|state: &GraphState| state.groups.iter().find(|g| g.name == group_name))
+                .await
+            {
+                self.store
+                    .dispatch(GraphEvents::ChangeGroup {
+                        name: group_name.to_owned(),
+                        old_metadata: group.metadata,
+                        metadata,
+                    })
+                    .await;
+            }
+            self.check_transaction_end().await;
+        });
+        self
+    }
+
+    /// Adding Initial Information Packets
+    ///
+    /// Initial Information Packets (IIPs) can be used for sending data
+    /// to specified node inports without a sending node instance.
+    ///
+    /// IIPs are especially useful for sending configuration information
+    /// to components at FBP network start-up time. This could include
+    /// filenames to read, or network ports to listen to.
+    ///
+    /// ```no_run
+    /// my_graph.add_initial("somefile.txt", "Read", "source", None);
+    /// my_graph.add_initial_index("somefile.txt", "Read", "source", Some(2), None);
+    /// ```
+    /// If inports are defined on the graph, IIPs can be applied calling
+    /// the `add_graph_initial` or `add_graph_initial_index` methods.
+    /// ```no_run
+    /// my_graph.add_graph_initial("somefile.txt", "file", None);
+    ///	my_graph.add_graph_initial_index("somefile.txt", "file", Some(2), None);
+    /// ```
+    pub fn add_initial(
+        &self,
+        data: Value,
+        node: &str,
+        port: &str,
+        mut metadata: Option<Map<String, Value>>,
+    ) -> &Self {
+        if metadata.is_none() {
+            metadata = Some(Map::new());
+        }
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            if let Some(_node) = self
+                .store
+                .select(|state: &GraphState| state.nodes.iter().find(|n| n.id == node))
+                .await
+            {
+                let port_name = self.get_port_name(port);
+                self.check_transaction_start().await;
+                let stub = GraphStub { data };
+                let initializer = GraphIIP {
+                    to: Some(GraphLeaf {
+                        port: port_name,
+                        node_id: node.to_owned(),
+                        index: None,
+                    }),
+                    from: Some(stub),
+                    metadata,
+                };
+                self.store
+                    .dispatch(GraphEvents::AddInitial(initializer))
+                    .await;
+                self.check_transaction_end().await;
+            }
+        });
+        self
+    }
+    pub fn add_initial_index(
+        &self,
+        data: Value,
+        node: &str,
+        port: &str,
+        index: Option<usize>,
+        mut metadata: Option<Map<String, Value>>,
+    ) -> &Self {
+        if metadata.is_none() {
+            metadata = Some(Map::new());
+        }
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        handle.block_on(async {
+            if let Some(_node) = self
+                .store
+                .select(|state: &GraphState| state.nodes.iter().find(|n| n.id == node))
+                .await
+            {
+                let port_name = self.get_port_name(port);
+                self.check_transaction_start().await;
+                let stub = GraphStub { data };
+                let initializer = GraphIIP {
+                    to: Some(GraphLeaf {
+                        port: port_name,
+                        node_id: node.to_owned(),
+                        index,
+                    }),
+                    from: Some(stub),
+                    metadata,
+                };
+                self.store
+                    .dispatch(GraphEvents::AddInitial(initializer))
+                    .await;
+                self.check_transaction_end().await;
+            }
+        });
+        self
+    }
+
+    pub fn add_graph_initial(
+        &self,
+        data: Value,
+        node: &str,
+        mut metadata: Option<Map<String, Value>>,
+    ) -> &Self {
+        if metadata.is_none() {
+            metadata = Some(Map::new());
+        }
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+
+        if let Some(inport) = handle.block_on(async {
+            self.store
+                .select(|state: &GraphState| state.inports.get(node))
+                .await
+        }) {
+            self.add_initial(data, &inport.process, &inport.port, metadata);
+        }
+        self
+    }
+
+    pub fn add_graph_initial_index(
+        &self,
+        data: Value,
+        node: &str,
+        index: Option<usize>,
+        mut metadata: Option<Map<String, Value>>,
+    ) -> &Self {
+        if metadata.is_none() {
+            metadata = Some(Map::new());
+        }
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        if let Some(inport) = handle.block_on(async {
+            self.store
+                .select(|state: &GraphState| state.inports.get(node))
+                .await
+        }) {
+            self.add_initial_index(data, &inport.process, &inport.port, index, metadata);
+        }
+        self
+    }
+
+    pub fn remove_graph_initial(&self, id: &str) -> &Self {
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        if let Some(inport) = handle.block_on(async {
+            self.store
+                .select(|state: &GraphState| state.inports.get(id))
+                .await
+        }) {
+            self.remove_initial(&inport.process, &inport.port);
+        }
+        self
+    }
+
+    pub fn to_json(&self) -> GraphJson {
+        let name = self.name.as_str();
+        let case_sensitive = self.case_sensitive;
+        let handle = Runtime::new().expect("expected to start tokio runtime");
+        let json = handle.block_on(async {
+            self.store
+                .select(|state: &GraphState| state.to_json(name, case_sensitive))
+                .await
+        });
+        json
+    }
+
+    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(&self.to_json())
+    }
+
+    pub fn from_json(json: GraphJson, metadata: Option<Map<String, Value>>) -> Graph {
+        let mut graph = Graph::new(
+            json.properties
+                .get("name")
+                .or(Some(&Value::String("".to_string())))
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            json.case_sensitive,
+        );
+
+        graph.store.dispatch(GraphEvents::StartTransaction(
+            TransactionId("load_json"),
+            json!(metadata),
+        ));
+        graph.store.dispatch(GraphEvents::ChangeProperties {
+            new: Map::from_iter(json.properties.clone().into_iter().filter(|v| {
+                if v.0 != "name" {
+                    return true;
+                }
+                return false;
+            })),
+            old: None,
+        });
+
+        json.processes.keys().foreach(|prop, _iter| {
+            if let Some(def) = json.processes.clone().get(prop) {
+                graph.add_node(prop.as_str(), &def.component, def.metadata.clone());
+            }
+        });
+
+        json.connections.into_iter().for_each(|conn| {
+            if let Some(data) = conn.data {
+                if let Some(tgt) = conn.tgt {
+                    if tgt.index.is_some() {
+                        graph.add_initial_index(
+                            data,
+                            &tgt.process,
+                            &graph.get_port_name(&tgt.port),
+                            tgt.index,
+                            conn.metadata,
+                        );
+                    } else {
+                        graph.add_initial(
+                            data,
+                            &tgt.process,
+                            &graph.get_port_name(&tgt.port),
+                            conn.metadata,
+                        );
+                    }
+                    // iter.next();
+                    return;
+                }
+            }
+            if conn.src.clone().is_some() || conn.tgt.clone().is_some() {
+                if conn.src.clone().unwrap().index.is_some()
+                    || conn.tgt.clone().unwrap().index.is_some()
+                {
+                    graph.add_edge_index(
+                        &conn.src.clone().unwrap().process,
+                        &graph.get_port_name(&conn.src.clone().unwrap().port),
+                        conn.src.unwrap().index,
+                        &conn.tgt.clone().unwrap().process,
+                        &graph.get_port_name(&conn.tgt.clone().unwrap().port),
+                        conn.tgt.unwrap().index,
+                        conn.metadata,
+                    );
+                    // iter.next();
+                    return;
+                }
+                graph.add_edge(
+                    &conn.src.clone().unwrap().process,
+                    &graph.get_port_name(&conn.src.clone().unwrap().port),
+                    &conn.tgt.clone().unwrap().process,
+                    &graph.get_port_name(&conn.tgt.clone().unwrap().port),
+                    conn.metadata,
+                );
+            }
+        });
+
+        json.inports.clone().keys().foreach(|inport, _iter| {
+            if let Some(pri) = json.inports.clone().get(inport) {
+                graph.add_inport(
+                    inport,
+                    &pri.clone().process,
+                    &graph.get_port_name(&pri.port),
+                    pri.metadata.clone(),
+                );
+            }
+        });
+        json.outports.clone().keys().foreach(|outport, _iter| {
+            if let Some(pri) = json.outports.clone().get(outport) {
+                graph.add_outport(
+                    outport,
+                    &pri.clone().process,
+                    &graph.get_port_name(&pri.port),
+                    pri.metadata.clone(),
+                );
+            }
+        });
+
+        for group in json.groups.clone() {
+            graph.add_group(&group.name, group.nodes, group.metadata);
+        }
+
+        graph.store.dispatch(GraphEvents::EndTransaction(
+            TransactionId("load_json"),
+            json!(metadata),
+        ));
+
+        graph
+    }
 }
-
-
-//     /// Adding Initial Information Packets
-//     ///
-//     /// Initial Information Packets (IIPs) can be used for sending data
-//     /// to specified node inports without a sending node instance.
-//     ///
-//     /// IIPs are especially useful for sending configuration information
-//     /// to components at FBP network start-up time. This could include
-//     /// filenames to read, or network ports to listen to.
-//     ///
-//     /// ```no_run
-//     /// my_graph.add_initial("somefile.txt", "Read", "source", None);
-//     /// my_graph.add_initial_index("somefile.txt", "Read", "source", Some(2), None);
-//     /// ```
-//     /// If inports are defined on the graph, IIPs can be applied calling
-//     /// the `add_graph_initial` or `add_graph_initial_index` methods.
-//     /// ```no_run
-//     /// my_graph.add_graph_initial("somefile.txt", "file", None);
-//     ///	my_graph.add_graph_initial_index("somefile.txt", "file", Some(2), None);
-//     /// ```
-//     pub fn add_initial(
-//         &mut self,
-//         data: Value,
-//         node: &str,
-//         port: &str,
-//         mut metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         if metadata.is_none() {
-//             metadata = Some(Map::new());
-//         }
-//         if let Some(_node) = self.get_node(node) {
-//             let port_name = self.get_port_name(port);
-//             self.check_transaction_start();
-//             let stub = GraphStub { data };
-//             let initializer = GraphIIP {
-//                 to: Some(GraphLeaf {
-//                     port: port_name,
-//                     node_id: node.to_owned(),
-//                     index: None,
-//                 }),
-//                 from: Some(stub),
-//                 metadata,
-//             };
-//             self.initializers.push(initializer.clone());
-//             self.emit("add_initial", json!(initializer));
-//             self.check_transaction_end();
-//         }
-//         self
-//     }
-
-//     pub fn add_initial_index(
-//         &mut self,
-//         data: Value,
-//         node: &str,
-//         port: &str,
-//         index: Option<usize>,
-//         mut metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         if metadata.is_none() {
-//             metadata = Some(Map::new());
-//         }
-//         if let Some(_) = self.get_node(node) {
-//             let port_name = self.get_port_name(port);
-//             self.check_transaction_start();
-//             let stub = GraphStub { data };
-//             let initializer = GraphIIP {
-//                 to: Some(GraphLeaf {
-//                     port: port_name,
-//                     node_id: node.to_owned(),
-//                     index,
-//                 }),
-//                 from: Some(stub),
-//                 metadata,
-//             };
-//             self.initializers.push(initializer.clone());
-//             self.emit("add_initial", json!(initializer));
-//             self.check_transaction_end();
-//         }
-//         self
-//     }
-
-//     pub fn add_graph_initial(
-//         &mut self,
-//         data: Value,
-//         node: &str,
-//         mut metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         if metadata.is_none() {
-//             metadata = Some(Map::new());
-//         }
-//         if let Some(inport) = self.inports.clone().get(node) {
-//             self.add_initial(data, &inport.process, &inport.port, metadata);
-//         }
-//         self
-//     }
-
-//     pub fn add_graph_initial_index(
-//         &mut self,
-//         data: Value,
-//         node: &str,
-//         index: Option<usize>,
-//         mut metadata: Option<Map<String, Value>>,
-//     ) -> &mut Self {
-//         if metadata.is_none() {
-//             metadata = Some(Map::new());
-//         }
-//         if let Some(inport) = self.inports.clone().get(node) {
-//             self.add_initial_index(data, &inport.process, &inport.port, index, metadata);
-//         }
-//         self
-//     }
-
-//     /// Removing Initial Information Packets
-//     ///
-//     /// IIPs can be removed by calling the `remove_initial` method.
-//     /// ```no_run
-//     /// my_graph.remove_initial("Read", "source");
-//     /// ```
-//     /// If the IIP was applied via the `add_graph_initial` or
-//     /// `add_graph_initial_index` functions, it can be removed using
-//     /// the `remove_graph_initial` method.
-//     /// ```no_run
-//     /// my_graph.remove_graph_initial("file");
-//     /// ```
-//     /// Remove an IIP will emit a `remove_initial` event.
-//     pub fn remove_initial(&mut self, id: &str, port: &str) -> &mut Self {
-//         let port_name = self.get_port_name(port);
-//         self.check_transaction_start();
-//         let inits = self.initializers.clone();
-//         let mut _initializers = Vec::new();
-//         for iip in inits {
-//             if let Some(to) = iip.to.clone() {
-//                 if to.node_id.as_str() == id && to.port == port_name {
-//                     self.emit("remove_initial", json!(iip));
-//                 }
-//             } else {
-//                 _initializers.push(iip);
-//             }
-//         }
-//         self.initializers = _initializers;
-//         self.check_transaction_end();
-//         self
-//     }
-
-//     pub fn remove_graph_initial(&mut self, id: &str) -> &mut Self {
-//         if let Some(inport) = self.inports.clone().get(id) {
-//             self.remove_initial(&inport.process, &inport.port);
-//         }
-//         self
-//     }
-
-//     pub fn to_json(&self) -> GraphJson {
-//         let mut json = GraphJson {
-//             case_sensitive: self.case_sensitive,
-//             properties: Map::new(),
-//             inports: self.inports.clone(),
-//             outports: self.outports.clone(),
-//             groups: Vec::new(),
-//             processes: HashMap::new(),
-//             connections: Vec::new(),
-//         };
-
-//         json.properties = self.properties.clone();
-//         json.properties
-//             .insert("name".to_owned(), Value::from(self.name.to_owned()));
-//         json.properties.remove("baseDir");
-//         json.properties.remove("componentLoader");
-
-//         let _ = self.groups.iter().foreach(|group, _iter| {
-//             let mut group_data = group.clone();
-//             if let Some(metadata) = group.metadata.clone() {
-//                 if !metadata.is_empty() {
-//                     group_data.metadata = Some(metadata);
-//                 }
-//             }
-//             json.groups.push(group_data);
-//         });
-
-//         let _ = self.nodes.iter().foreach(|node, _ter| {
-//             json.processes.insert(
-//                 node.id.clone(),
-//                 GraphNodeJson {
-//                     component: node.component.clone(),
-//                     metadata: if node.metadata.is_none() {
-//                         Some(Map::new())
-//                     } else {
-//                         node.metadata.clone()
-//                     },
-//                 },
-//             );
-//         });
-
-//         let _ = self.edges.iter().foreach(|edge, _iter| {
-//             let mut connection = GraphEdgeJson {
-//                 src: Some(GraphLeafJson {
-//                     process: edge.from.node_id.clone(),
-//                     port: edge.from.port.clone(),
-//                     index: edge.from.index,
-//                 }),
-//                 tgt: Some(GraphLeafJson {
-//                     process: edge.to.node_id.clone(),
-//                     port: edge.to.port.clone(),
-//                     index: edge.to.index,
-//                 }),
-//                 metadata: None,
-//                 data: None,
-//             };
-//             if let Some(metadata) = edge.metadata.clone() {
-//                 if !metadata.is_empty() {
-//                     connection.metadata = Some(metadata);
-//                 }
-//             }
-//             json.connections.push(connection);
-//         });
-
-//         let _ = self.initializers.iter().foreach(|initializer, _iter| {
-//             let mut iip = GraphEdgeJson {
-//                 src: None,
-//                 tgt: None,
-//                 data: None,
-//                 metadata: None,
-//             };
-//             if let Some(to) = initializer.to.clone() {
-//                 iip.tgt = Some(GraphLeafJson {
-//                     process: to.node_id,
-//                     port: to.port,
-//                     index: to.index,
-//                 });
-//             }
-
-//             if let Some(from) = initializer.from.clone() {
-//                 iip.data = Some(from.data);
-//             }
-
-//             if let Some(metadata) = initializer.metadata.clone() {
-//                 if !metadata.is_empty() {
-//                     iip.metadata = Some(metadata);
-//                 }
-//             }
-
-//             json.connections.push(iip);
-//         });
-
-//         json
-//     }
-
-//     pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
-//         serde_json::to_string(&self.to_json())
-//     }
-
-//     pub fn from_json(json: GraphJson, metadata: Option<Map<String, Value>>) -> Graph {
-//         let mut graph = Graph::new(
-//             json.properties
-//                 .get("name")
-//                 .or(Some(&Value::String("".to_string())))
-//                 .unwrap()
-//                 .as_str()
-//                 .unwrap(),
-//             json.case_sensitive,
-//         );
-//         graph.start_transaction("load_json", metadata.clone());
-
-//         graph.set_properties(Map::from_iter(json.properties.clone().into_iter().filter(
-//             |v| {
-//                 if v.0 != "name" {
-//                     return true;
-//                 }
-//                 return false;
-//             },
-//         )));
-
-//         json.processes.keys().foreach(|prop, _iter| {
-//             if let Some(def) = json.processes.clone().get(prop) {
-//                 graph.add_node(prop.as_str(), &def.component, def.metadata.clone());
-//             }
-//         });
-
-//         json.connections.clone().into_iter().foreach(|conn, _| {
-//             if let Some(data) = conn.data {
-//                 if let Some(tgt) = conn.tgt {
-//                     if tgt.index.is_some() {
-//                         graph.add_initial_index(
-//                             data,
-//                             &tgt.process,
-//                             &graph.get_port_name(&tgt.port),
-//                             tgt.index,
-//                             conn.metadata,
-//                         );
-//                     } else {
-//                         graph.add_initial(
-//                             data,
-//                             &tgt.process,
-//                             &graph.get_port_name(&tgt.port),
-//                             conn.metadata,
-//                         );
-//                     }
-//                     // iter.next();
-//                     return;
-//                 }
-//             }
-//             if conn.src.clone().is_some() || conn.tgt.clone().is_some() {
-//                 if conn.src.clone().unwrap().index.is_some()
-//                     || conn.tgt.clone().unwrap().index.is_some()
-//                 {
-//                     graph.add_edge_index(
-//                         &conn.src.clone().unwrap().process,
-//                         &graph.get_port_name(&conn.src.clone().unwrap().port),
-//                         conn.src.unwrap().index,
-//                         &conn.tgt.clone().unwrap().process,
-//                         &graph.get_port_name(&conn.tgt.clone().unwrap().port),
-//                         conn.tgt.unwrap().index,
-//                         conn.metadata,
-//                     );
-//                     // iter.next();
-//                     return;
-//                 }
-//                 graph.add_edge(
-//                     &conn.src.clone().unwrap().process,
-//                     &graph.get_port_name(&conn.src.clone().unwrap().port),
-//                     &conn.tgt.clone().unwrap().process,
-//                     &graph.get_port_name(&conn.tgt.clone().unwrap().port),
-//                     conn.metadata,
-//                 );
-//             }
-//         });
-
-//         json.inports.clone().keys().foreach(|inport, _iter| {
-//             if let Some(pri) = json.inports.clone().get(inport) {
-//                 graph.add_inport(
-//                     inport,
-//                     &pri.clone().process,
-//                     &graph.get_port_name(&pri.port),
-//                     pri.metadata.clone(),
-//                 );
-//             }
-//         });
-//         json.outports.clone().keys().foreach(|outport, _iter| {
-//             if let Some(pri) = json.outports.clone().get(outport) {
-//                 graph.add_outport(
-//                     outport,
-//                     &pri.clone().process,
-//                     &graph.get_port_name(&pri.port),
-//                     pri.metadata.clone(),
-//                 );
-//             }
-//         });
-
-//         for group in json.groups.clone() {
-//             graph.add_group(&group.name, group.nodes, group.metadata);
-//         }
-
-//         graph.end_transaction("load_json", metadata.clone());
-
-//         graph
-//     }
 
 //     pub fn from_json_string(
 //         source: &str,
