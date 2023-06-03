@@ -21,12 +21,13 @@ pub struct Editor {
 
 impl Editor {
     pub fn new(ctx: &CreationContext<'_>) -> Self {
-        let state = ctx
-        .storage
-        .and_then(|storage| eframe::get_value(storage, PERSISTENCE_KEY))
-        .unwrap_or_default();
+        ctx.egui_ctx.set_pixels_per_point(1.4);
+        // let state = ctx
+        // .storage
+        // .and_then(|storage| eframe::get_value(storage, PERSISTENCE_KEY))
+        // .unwrap_or_default();
         Self {
-            state,
+            state: GraphEditorState::default(),
         }
     }
     pub fn run() {

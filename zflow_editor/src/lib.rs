@@ -9,3 +9,4 @@ pub mod connection;
 pub mod types;
 pub mod index_impls;
 pub mod error;
+pub mod icons;

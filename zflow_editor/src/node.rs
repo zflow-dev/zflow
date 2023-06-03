@@ -1,10 +1,7 @@
 use std::{cell::Cell, collections::HashMap, rc::Rc, sync::Arc};
 
-use egui::{
-    epaint::RectShape, mutex::Mutex, pos2, vec2, Color32, ComboBox, Context, DragValue, Id, Label,
-    Layout, PointerButton, Pos2, Rect, Response, RichText, Rounding, Sense, Shape, Stroke,
-    TextEdit, TextStyle, Ui, Vec2, Event,
-};
+use egui::{epaint::RectShape, *};
+use egui_extras::{image::FitTo, RetainedImage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use zflow_graph::types::GraphNode;
@@ -13,6 +10,7 @@ use zflow_runtime::ip::IPType;
 use crate::{
     error::ZFlowGraphError,
     graph::{GraphImpl, InPortParams, OutPortParams},
+    icons::IconLibrary,
     state::{NodeId, NodeResponse, DISTANCE_TO_CONNECT},
     types::{data_type_color, AnyParameterId, InputId, OutputId},
 };
@@ -95,18 +93,20 @@ pub struct NodeWidget<'a> {
     pub graph: &'a mut GraphImpl,
     pub position: &'a mut Pos2,
     pub pan: egui::Vec2,
+    pub zoom: f32,
     pub node_rects: &'a mut NodeRects,
     pub port_locations: &'a mut PortLocations,
     pub ongoing_drag: Option<(NodeId, AnyParameterId)>,
     pub selected: bool,
+    pub hide_attributes: bool,
 }
 
 impl<'a> NodeWidget<'a> {
     pub const MAX_NODE_SIZE: [f32; 2] = [200.0, 200.0];
 
-    pub fn show(self, ui: &mut egui::Ui) -> Vec<NodeResponse> {
+    pub fn show(self, ui: &mut Ui) -> Vec<NodeResponse> {
         let mut child_ui = ui.child_ui_with_id_source(
-            Rect::from_min_size(*self.position + self.pan, Vec2::new(150.0, 150.0)),
+            Rect::from_min_size(*self.position + self.pan, Vec2::new(125.0, 125.0)),
             Layout::default(),
             self.node_id,
         );
@@ -114,7 +114,7 @@ impl<'a> NodeWidget<'a> {
         Self::show_graph_node(self, &mut child_ui)
     }
 
-    fn show_graph_node(self, ui: &mut egui::Ui) -> Vec<NodeResponse> {
+    fn show_graph_node(self, ui: &mut Ui) -> Vec<NodeResponse> {
         let mut responses = Vec::<NodeResponse>::new();
 
         let node_id = self.node_id;
@@ -174,76 +174,137 @@ impl<'a> NodeWidget<'a> {
                 //         .top_bar_ui(ui, self.node_id, self.graph, user_state)
                 //         .into_iter(),
                 // );
-                ui.add_space(8.0); // The size of the little cross icon
+                // ui.add_space(10.0); // The size of the little cross icon
             });
 
             ui.add_space(margin.y);
-            title_height = ui.min_size().y;
+            title_height = ui.min_size().y + 5.0;
 
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    for (input, id) in self.graph[node_id].inports.clone().iter() {
-                        let (_, options) = &mut self.graph.inputs[*id].clone();
-                        let height_before = ui.min_rect().bottom();
+                    let size = self.graph[node_id].inports.len();
+                    fn draw_inport(
+                        ui: &mut egui::Ui,
+                        graph: &mut GraphImpl,
+                        node_id: NodeId,
+                        id: InputId,
+                        name: &str,
+                        options: &mut InPortParams,
+                        hide_attribute: bool,
+                    ) {
                         ui.horizontal(|ui| {
-                            ui.label(input.clone());
-                            if let IPType::Data(value) = &options.clone().data.data_type {
-                                let mut new_value = value.clone();
-                                if let Some(ref mut num) = value.as_f64() {
-                                    ui.add(DragValue::new(num));
-                                    new_value = json!(num);
-                                }
-                                if let Some(ref mut v) = value.as_str() {
-                                    ui.add_enabled(true, TextEdit::singleline(v));
-                                    new_value = json!(v);
-                                }
+                            if !hide_attribute {
+                                ui.label(name.clone());
 
-                                if let Some(ref mut selected) = value.as_bool() {
-                                    ComboBox::from_label("Select one!")
-                                        .selected_text(format!("{:?}", selected))
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(selected, true, "true");
-                                            ui.selectable_value(selected, false, "false");
-                                        });
-                                    new_value = json!(selected);
+                                if let IPType::Data(value) = &options.clone().data.data_type {
+                                    let mut new_value = value.clone();
+                                    if let Some(ref mut num) = value.as_f64() {
+                                        ui.add(DragValue::new(num));
+                                        new_value = json!(num);
+                                    }
+                                    if let Some(ref mut v) = value.as_str() {
+                                        ui.add_enabled(true, TextEdit::singleline(v));
+                                        new_value = json!(v);
+                                    }
+
+                                    if let Some(ref mut selected) = value.as_bool() {
+                                        ComboBox::from_label("Select one!")
+                                            .selected_text(format!("{:?}", selected))
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(selected, true, "true");
+                                                ui.selectable_value(selected, false, "false");
+                                            });
+                                        new_value = json!(selected);
+                                    }
+
+                                    options.data.data_type = IPType::Data(new_value);
+
+                                    graph.replace_input_param_with_id(
+                                        id.clone(),
+                                        node_id,
+                                        name.to_owned(),
+                                        options.data.clone(),
+                                    );
                                 }
-
-                                options.data.data_type = IPType::Data(new_value);
-
-                                self.graph.replace_input_param_with_id(id.clone(), node_id, input.clone(), options.data.clone());
+                            } else {
+                                ui.label("");
                             }
                         });
-
-                        let height_after = ui.min_rect().bottom();
-                        input_port_heights.push((height_before + height_after) / 2.0);
+                    }
+                    if size > 1 {
+                        for (input, id) in self.graph[node_id].inports.clone().iter() {
+                            let (_, options) = &mut self.graph.inputs[*id].clone();
+                            let height_before = ui.min_rect().bottom();
+                            ui.with_layout(
+                                Layout::centered_and_justified(Direction::LeftToRight),
+                                |ui| {
+                                    draw_inport(
+                                        ui,
+                                        self.graph,
+                                        node_id,
+                                        id.clone(),
+                                        input,
+                                        options,
+                                        self.hide_attributes,
+                                    );
+                                },
+                            );
+                            let height_after = ui.min_rect().bottom();
+                            input_port_heights.push((height_before + height_after) / 2.0);
+                        }
+                    } else {
+                        if let Some((input, id)) = self.graph[node_id].clone().inports.first() {
+                            let (_, options) = &mut self.graph.inputs[*id].clone();
+                            let height_before = ui.min_rect().bottom();
+                            ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
+                                draw_inport(
+                                    ui,
+                                    self.graph,
+                                    node_id,
+                                    id.clone(),
+                                    input,
+                                    options,
+                                    self.hide_attributes,
+                                );
+                            });
+                            let height_after = ui.min_rect().bottom();
+                            input_port_heights.push((height_before + height_after) / 2.0);
+                        }
                     }
                 });
-
-                // Todo: Draw icon
-
                 ui.vertical(|ui| {
                     let size = self.graph[node_id].outports.len();
                     if size > 1 {
-                        ui.with_layout(Layout::left_to_right(egui::Align::Max), |ui| {
-                            for (output, id) in self.graph[node_id].outports.iter() {
-                                let (_, options) = &self.graph.outputs[*id];
-                                let height_before = ui.min_rect().bottom();
-                                ui.horizontal(|ui| {
+                        for (output, id) in self.graph[node_id].outports.iter() {
+                            let (_, options) = &self.graph.outputs[*id];
+                            let height_before = ui.min_rect().bottom();
+
+                            ui.horizontal(|ui| {
+                                if !self.hide_attributes {
                                     ui.label(output);
-                                });
-                                let height_after = ui.min_rect().bottom();
-                                output_port_heights.push((height_before + height_after) / 2.0);
-                            }
-                        });
+                                } else {
+                                    ui.label("");
+                                }
+                            });
+                            let height_after = ui.min_rect().bottom();
+                            output_port_heights.push((height_before + height_after) / 2.0);
+                        }
                     } else {
                         if let Some((output, id)) = self.graph[node_id].outports.first() {
                             let height_before = ui.min_rect().bottom();
                             ui.with_layout(
-                                Layout::centered_and_justified(egui::Direction::RightToLeft),
+                                Layout::with_main_align(
+                                    Layout::centered_and_justified(egui::Direction::RightToLeft),
+                                    Align::Center,
+                                ),
                                 |ui| {
                                     // let (_, options) = &self.graph.outputs[*id];
                                     ui.horizontal(|ui| {
-                                        ui.label(output);
+                                        if !self.hide_attributes {
+                                            ui.label(output);
+                                        } else {
+                                            ui.label("");
+                                        }
                                     });
                                 },
                             );
@@ -255,10 +316,29 @@ impl<'a> NodeWidget<'a> {
             });
         });
 
+        if !self.selected || self.hide_attributes {
+            let mut icon_ui = ui.child_ui(child_ui.min_rect(), *child_ui.layout());
+            icon_ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui| {
+                if let Some(icon_data) = self.graph.icons.get(&node_id) {
+                    if let Ok(icon) = RetainedImage::from_svg_bytes_with_size(
+                        format!("{:?}", node_id),
+                        icon_data.to_vec().as_slice(),
+                        FitTo::Zoom(self.zoom),
+                    ) {
+                        ui.add_space(title_height);
+                        icon.show(ui);
+                        ui.add_space(title_height);
+                    }
+                }
+            });
+            child_ui.add_space(10.0);
+        }
+
         // Second pass, iterate again to draw the ports. This happens outside
         // the child_ui because we want ports to overflow the node background.
 
         let outer_rect = child_ui.min_rect().expand2(margin);
+
         let port_left = outer_rect.left();
         let port_right = outer_rect.right();
 
@@ -282,7 +362,7 @@ impl<'a> NodeWidget<'a> {
         ) {
             let port_type = graph.any_param_type(param_id).unwrap();
 
-            let port_rect = Rect::from_center_size(port_pos, egui::vec2(3.0, 3.0));
+            let port_rect = Rect::from_center_size(port_pos, egui::vec2(5.0, 5.0));
 
             let sense = if ongoing_drag.is_some() {
                 Sense::hover()
@@ -394,7 +474,7 @@ impl<'a> NodeWidget<'a> {
         // does not support drawing rectangles with asymmetrical round corners.
 
         let (shape, outline) = {
-            let rounding_radius = 4.0;
+            let rounding_radius = 10.0;
             let rounding = Rounding::same(rounding_radius);
 
             let titlebar_height = title_height + margin.y;
@@ -453,9 +533,9 @@ impl<'a> NodeWidget<'a> {
         // --- Interaction ---
 
         // Titlebar buttons
-        if Self::close_button(ui, outer_rect).clicked() {
-            responses.push(NodeResponse::DeleteNodeUi(self.node_id));
-        };
+        // if Self::close_button(ui, outer_rect).clicked() {
+        //     responses.push(NodeResponse::DeleteNodeUi(self.node_id));
+        // };
 
         // Movement
         let drag_delta = window_response.drag_delta();

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 /// MIT License
 ///
@@ -13,6 +14,7 @@ use slotmap::{SecondaryMap};
 use zflow_graph::Graph;
 
 use crate::graph::GraphImpl;
+use crate::icons::{IconLibrary, IconLocation};
 use crate::node::NodeData;
 use crate::types::{AnyParameterId, InputId, OutputId};
 
@@ -86,17 +88,18 @@ pub struct GraphEditorState {
     // pub node_finder: Option<NodeFinder<NodeTemplate>>,
     /// The panning of the graph viewport.
     pub pan_zoom: PanZoom,
+    pub hide_attributes: bool,
 }
 
 impl Default for GraphEditorState {
     fn default() -> Self {
-        let _g = GraphImpl::from_graph(CURRENT_GRAPH.clone());
+        let mut _g = GraphImpl::from_graph(CURRENT_GRAPH.clone());
         let mut node_pos:SecondaryMap<NodeId, egui::Pos2> = SecondaryMap::new();
-
-        _g.nodes.iter().enumerate().for_each(|(i, (id, _))|{
+        _g.nodes.iter().enumerate().for_each(|(i, (id, data))|{
             let offset_y = (100 * i) as f32;
             let offset_x = DISTANCE_TO_CONNECT * i as f32 * 25_f32;
             node_pos.insert(id,  Pos2 { x:  100.0 +offset_x, y: 100.0 + offset_y});
+            _g.icons.add(id, IconLocation::File { path: &Path::new(&data.icon) }).expect("expected to add retained icon image for node");
         });
         
         Self {
@@ -109,8 +112,9 @@ impl Default for GraphEditorState {
             // node_finder: Default::default(),
             pan_zoom: PanZoom {
                 pan: egui::Vec2::ZERO,
-                zoom: 0.1,
-            }
+                zoom:1.0,
+            },
+            hide_attributes: true
             // _user_state: Default::default(),
         }
     }

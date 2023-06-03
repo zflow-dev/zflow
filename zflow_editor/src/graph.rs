@@ -9,7 +9,7 @@ use crate::{
     index_impls,
     node::{NodeData, NodeWidget},
     state::*,
-    types::*,
+    types::*, icons::IconLibrary,
 };
 use egui::{
     epaint::CubicBezierShape, CentralPanel, Color32, Context, Frame, Key, Painter, Pos2, Rect,
@@ -49,6 +49,7 @@ pub struct GraphImpl {
     // Connects the input of a node, to the output of its predecessor that
     // produces it
     pub connections: SecondaryMap<InputId, OutputId>,
+    pub icons: IconLibrary,
 }
 
 impl GraphImpl {
@@ -57,6 +58,7 @@ impl GraphImpl {
         let mut _inputs: SlotMap<InputId, (String, InPortParams)> = SlotMap::with_key();
         let mut _outputs: SlotMap<OutputId, (String, OutPortParams)> = SlotMap::with_key();
         let mut _connections: SecondaryMap<InputId, OutputId> = SecondaryMap::new();
+        let icons = IconLibrary::new();
 
         let mut ports: HashMap<String, AnyParameterId> = HashMap::new();
         if let Ok(_graph) = z_graph.lock() {
@@ -195,6 +197,7 @@ impl GraphImpl {
             inputs: _inputs,
             outputs: _outputs,
             connections: _connections,
+            icons
         }
     }
 
@@ -204,6 +207,7 @@ impl GraphImpl {
             inputs: SlotMap::default(),
             outputs: SlotMap::default(),
             connections: SecondaryMap::default(),
+            icons: IconLibrary::default()
         }
     }
 
@@ -507,6 +511,8 @@ impl GraphEditorState {
                     .iter()
                     .any(|selected| *selected == node_id),
                 pan: self.pan_zoom.pan + editor_rect.min.to_vec2(),
+                zoom: self.pan_zoom.zoom,
+                hide_attributes: self.hide_attributes,
             }
             .show(ui);
 
@@ -633,15 +639,18 @@ impl GraphEditorState {
             match response {
                 NodeResponse::ConnectEventStarted(node_id, port) => {
                     self.connection_in_progress = Some((*node_id, *port));
+                    self.hide_attributes = false;
                 }
                 NodeResponse::ConnectEventEnded { input, output } => {
-                    self.graph.add_connection(*output, *input)
+                    self.graph.add_connection(*output, *input);
+                    self.hide_attributes = true;
                 }
                 NodeResponse::CreatedNode(_) => {
                     // Do something when node is added?
                 }
                 NodeResponse::SelectNode(node_id) => {
                     self.selected_nodes = Vec::from([*node_id]);
+                    self.hide_attributes = false;
                 }
                 NodeResponse::DeleteNodeUi(node_id) => {
                     let (node, disc_events) = self.graph.remove_node(*node_id);
@@ -746,6 +755,8 @@ impl GraphEditorState {
             }
         });
 
+        
+
         if mouse.any_released() && self.connection_in_progress.is_some() {
             self.connection_in_progress = None;
         }
@@ -766,11 +777,13 @@ impl GraphEditorState {
         // *or* if the the mouse clicks off the ui
         if click_on_background || (mouse.any_click() && !cursor_in_editor) {
             self.selected_nodes = Vec::new();
+            self.hide_attributes = true;
             // self.node_finder = None;
         }
 
         if drag_started_on_background && mouse.primary_down() {
             self.ongoing_box_selection = Some(cursor_pos);
+            self.hide_attributes = false;
         }
         if mouse.primary_released() || drag_released_on_background {
             self.ongoing_box_selection = None;
