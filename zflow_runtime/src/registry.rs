@@ -13,6 +13,7 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     component::{Component, GraphDefinition, ModuleComponent},
+    js::JsComponent,
     loader::{normalize_name, ComponentLoader},
     port::PortOptions,
     wasm::WasmComponent,
@@ -151,24 +152,31 @@ impl RuntimeRegistry for DefaultRegistry {
             let base_dir = PathBuf::from_str(dir.as_str()).unwrap();
             // Recursively look up all component directories
             let components = visit_dirs(&base_dir, &|entry| {
-                if entry.path().is_file() && entry.path().file_name().unwrap() == "zflow.json" {
+                if entry.path().is_file()
+                    && (entry.path().file_name().unwrap() == "zflow.json"
+                        || entry.path().file_name().unwrap() == "package.json")
+                {
                     let file =
                         File::open(entry.path()).expect("expected to open zflow.json manifest");
                     let reader = BufReader::new(file);
 
                     let mut de = serde_json::Deserializer::from_reader(reader);
                     if let Ok(metadata) = Value::deserialize(&mut de).as_mut() {
-                        let wasm_metadata = metadata.clone();
-                        let package_id = wasm_metadata
-                            .get("package_name")
-                            .expect("Invalid metadata, zflow.js should have package name")
-                            .as_str()
-                            .expect("Package name should be string");
+                        let _metadata = metadata.clone();
+                        let package_id = if _metadata.as_object().unwrap().contains_key("package_name") {
+                            _metadata
+                            .get("package_name").unwrap().as_str().expect("expected name to be string")
+                        } else if _metadata.as_object().unwrap().contains_key("name") {
+                            _metadata
+                            .get("name").unwrap().as_str().expect("expected name to be string")
+                        } else {
+                            ""
+                        };
 
-                        let mut wasm_metadata = metadata.clone();
-                        let components = wasm_metadata
+                        let mut _metadata = metadata.clone();
+                        let components = _metadata
                             .get_mut("components")
-                            .expect("Invalid metadata, zflow.js should have components fiekd")
+                            .expect("Invalid metadata, zflow.js should have components field")
                             .as_array_mut()
                             .expect("Components should be array");
 
@@ -182,28 +190,56 @@ impl RuntimeRegistry for DefaultRegistry {
                                 let copy_meta = metadata.clone();
                                 let language = copy_meta.get("language").expect("component metadata must specify a language");
                                 metadata.remove("language");
-                                if language == &json!("wasm")
-                                {
-                                    // Read wasm
-                                    let mut wasm_component = WasmComponent::deserialize(component_meta)
-                                    .expect(
-                                        "expected to decode wasm component metadata from zflow.json",
-                                    );
-                                    wasm_component.base_dir = entry
-                                        .path()
-                                        .parent()
-                                        .unwrap()
-                                        .as_os_str()
-                                        .to_str()
-                                        .unwrap()
-                                        .to_owned();
-                                    wasm_component.package_id = package_id.to_owned();
-                                    let definition: Box<dyn GraphDefinition> =
-                                        Box::new(wasm_component.clone());
-                                    return Some((
-                                        normalize_name(&wasm_component.package_id, &wasm_component.name),
-                                        definition,
-                                    ));
+                                match language.as_str() {
+                                    Some("wasm") => {
+                                        // Read wasm
+                                        let mut wasm_component = WasmComponent::deserialize(component_meta)
+                                        .expect(
+                                            "expected to decode component metadata from zflow.json or package.json",
+                                        );
+                                        wasm_component.base_dir = entry
+                                            .path()
+                                            .parent()
+                                            .unwrap()
+                                            .as_os_str()
+                                            .to_str()
+                                            .unwrap()
+                                            .to_owned();
+                                        wasm_component.package_id = package_id.to_owned();
+                                        let definition: Box<dyn GraphDefinition> =
+                                            Box::new(wasm_component.clone());
+                                        return Some((
+                                            normalize_name(&wasm_component.package_id, &wasm_component.name),
+                                            definition,
+                                        ));
+                                    }
+                                    Some("js") | Some("ts") => {
+                                        // Read js/ts
+                                        let mut js_component = JsComponent::deserialize(component_meta)
+                                        .expect(
+                                            "expected to decode component metadata from zflow.json or package.json",
+                                        );
+
+                                        js_component.base_dir = entry
+                                            .path()
+                                            .parent()
+                                            .unwrap()
+                                            .as_os_str()
+                                            .to_str()
+                                            .unwrap()
+                                            .to_owned();
+                                        js_component.package_id = package_id.to_owned();
+
+                                        let definition: Box<dyn GraphDefinition> =
+                                            Box::new(js_component.clone());
+                                        return Some((
+                                            normalize_name(&js_component.package_id, &js_component.name),
+                                            definition,
+                                        ));
+                                    }
+                                    _=>{
+                                       return None
+                                    }
                                 }
                             }
                             None

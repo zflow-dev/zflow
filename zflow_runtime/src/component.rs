@@ -34,7 +34,7 @@ use crate::{
     },
     registry::RemoteComponent,
     sockets::SocketEvent,
-    wasm::WasmComponent,
+    wasm::WasmComponent, js::JsComponent,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -68,6 +68,12 @@ impl GraphDefinition for Component {
 }
 
 impl GraphDefinition for WasmComponent {
+    fn to_any(&self) -> &dyn Any {
+        Box::leak(Box::new(self.clone())) as &dyn Any
+    }
+}
+
+impl GraphDefinition for JsComponent {
     fn to_any(&self) -> &dyn Any {
         Box::leak(Box::new(self.clone())) as &dyn Any
     }

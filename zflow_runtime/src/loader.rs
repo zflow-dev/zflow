@@ -13,7 +13,7 @@ use zflow_graph::types::GraphJson;
 use crate::{
     component::{Component, GraphDefinition, ModuleComponent},
     registry::{ComponentSource, DefaultRegistry, RuntimeRegistry},
-    wasm::WasmComponent,
+    wasm::WasmComponent, js::JsComponent,
 };
 
 use std::fmt::Debug;
@@ -197,8 +197,6 @@ impl ComponentLoader {
             component = components.get(name);
         }
 
-        
-
         if component.is_none() {
             return Err(format!(
                 "Component {} not available with base {}",
@@ -296,6 +294,24 @@ impl ComponentLoader {
             };
             return Ok(Component::from_instance(
                 wasm_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
+        // Load and create a js component
+        if let Some(js_component) = component.to_any().downcast_ref::<JsComponent>() {
+            let mut js = js_component.clone();
+            js.base_dir = if js.base_dir == "/" {
+                let mut buf = PathBuf::from(self.base_dir.clone());
+                buf.push(js.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir.clone()
+            };
+            return Ok(Component::from_instance(
+                js_component
                     .clone()
                     .with_metadata(metadata)
                     .as_component()?,
