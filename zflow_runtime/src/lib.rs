@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate lazy_static;
+
 pub mod component;
 mod component_test;
 pub mod errors;
@@ -11,4 +14,5 @@ pub mod process;
 pub mod registry;
 pub mod sockets;
 pub mod wasm;
+pub mod js;
 mod network_test;
