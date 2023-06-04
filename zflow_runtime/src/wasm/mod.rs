@@ -50,7 +50,7 @@ impl WasmComponent {
     }
 
     pub fn with_metadata(&mut self, meta: Value) -> WasmComponent {
-        if let Some(meta) = WasmComponent::deserialize(meta.clone()).ok() {
+        if let Some(meta) = WasmComponent::from_metadata(meta.clone()) {
             self.inports.extend(meta.inports);
             self.outports.extend(meta.outports);
             if !meta.description.is_empty() {

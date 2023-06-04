@@ -68,7 +68,7 @@ impl JsComponent {
     }
 
     pub fn with_metadata(&mut self, meta: Value) -> JsComponent {
-        if let Some(meta) = JsComponent::deserialize(meta.clone()).ok() {
+        if let Some(meta) = JsComponent::from_metadata(meta.clone()) {
             self.inports.extend(meta.inports);
             self.outports.extend(meta.outports);
             if !meta.description.is_empty() {
@@ -88,15 +88,6 @@ impl JsComponent {
         self.clone()
     }
 }
-
-// lazy_static!{
-//     pub static ref JS_RUNTIME:Runtime = {
-//         let rt = Rc::new(RefCell::new(Runtime::new().unwrap()));
-//         // Todo: set resolver and loader for inbuilt modules
-//         // rt.set_loader(resolver, loader);
-//         rt
-//     };
-// }
 
 impl ModuleComponent for JsComponent {
     fn as_component(&self) -> Result<Component, String> {

@@ -4931,7 +4931,6 @@ dependencies = [
  "futures",
  "futures-util 0.2.1",
  "is-url",
- "lazy_static",
  "log",
  "poll-promise",
  "rayon",
