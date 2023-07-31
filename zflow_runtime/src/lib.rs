@@ -13,3 +13,4 @@ pub mod sockets;
 pub mod wasm;
 pub mod js;
 mod network_test;
+pub mod python;
