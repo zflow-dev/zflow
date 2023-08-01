@@ -32,9 +32,9 @@ pub struct PythonComponent {
     #[serde(default)]
     /// Bracket forwarding rules. By default we forward
     pub forward_brackets: HashMap<String, Vec<String>>,
-    /// Base directory of js packages
+    /// Base directory of python packages
     pub base_dir: String,
-    /// Path to js source
+    /// Path to python source
     pub source: String,
     #[serde(default)]
     pub package_id: String,
