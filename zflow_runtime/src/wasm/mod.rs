@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, any::Any};
 
 use extism::{
     manifest::Wasm, Context, CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType,
@@ -7,11 +7,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::{
-    component::{Component, ComponentOptions, ModuleComponent},
+    component::{Component, ComponentOptions, ModuleComponent, GraphDefinition},
     ip::IPType,
     port::{InPort, OutPort, PortOptions},
     process::{ProcessError, ProcessResult},
 };
+
+impl GraphDefinition for WasmComponent {
+    fn to_any(&self) -> &dyn Any {
+        Box::leak(Box::new(self.clone())) as &dyn Any
+    }
+}
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct WasmComponent {

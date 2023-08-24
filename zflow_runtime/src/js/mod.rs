@@ -1,12 +1,13 @@
 use array_tool::vec::Join;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::marker::PhantomData;
+use std::any::Any;
+use std::fs;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, path::PathBuf};
+use is_url::is_url;
 
 use rquickjs::{
-    module_init,
     BuiltinLoader,
     BuiltinResolver,
     // loader::{
@@ -16,13 +17,13 @@ use rquickjs::{
     Ctx,
     FileResolver,
     Func,
-    IntoJs,
     ModuleDef,
     ModuleLoader,
     NativeLoader,
     Runtime,
 };
 
+use crate::component::GraphDefinition;
 use crate::process::ProcessHandle;
 use crate::{
     component::{Component, ComponentOptions, ModuleComponent},
@@ -30,6 +31,12 @@ use crate::{
     port::{InPort, OutPort, PortOptions},
     process::{ProcessError, ProcessResult},
 };
+
+impl GraphDefinition for JsComponent {
+    fn to_any(&self) -> &dyn Any {
+        Box::leak(Box::new(self.clone())) as &dyn Any
+    }
+}
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct JsComponent {
@@ -91,9 +98,14 @@ impl JsComponent {
 
 impl ModuleComponent for JsComponent {
     fn as_component(&self) -> Result<Component, String> {
-        let source = self.source.clone();
+        // let source = self.source.clone();
         let mut code = PathBuf::from(self.base_dir.clone());
-        code.push(source);
+        let source = if is_url(&self.source) || self.base_dir != "/"  {
+            code.push(self.source.clone());
+            fs::read_to_string(code).expect("Could not read lua code")
+        } else {
+            self.source.clone()
+        };
 
         let mut inports = self.inports.clone();
         let mut outports = self.outports.clone();
@@ -143,7 +155,7 @@ impl ModuleComponent for JsComponent {
                             ModuleLoader::default().with_module("builtin/console", JsConsole),
                         ),
                     );
-
+            
                     return context.with(|ctx| {
                         // let inputs: Vec<&String> = inports.keys().collect();
                         let global = ctx.globals();
@@ -244,8 +256,8 @@ impl ModuleComponent for JsComponent {
                                 console.get::<&str, rquickjs::Object>("default").unwrap(),
                             )
                             .expect("runtime error");
-
-                        return match ctx.eval_file::<rquickjs::Value, PathBuf>(code.clone()) {
+                        
+                        return match ctx.eval(source.clone()) {
                             Ok(val) => {
                                 if let Err(err) = this
                                     .output

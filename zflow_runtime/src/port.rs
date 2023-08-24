@@ -135,7 +135,6 @@ impl Debug for InPort {
     }
 }
 
-// #[dyn_cast(PortTrait, BasePort)]
 impl PortTrait for InPort {}
 
 impl BasePort for InPort {

@@ -67,18 +67,6 @@ impl GraphDefinition for Component {
     }
 }
 
-impl GraphDefinition for WasmComponent {
-    fn to_any(&self) -> &dyn Any {
-        Box::leak(Box::new(self.clone())) as &dyn Any
-    }
-}
-
-impl GraphDefinition for JsComponent {
-    fn to_any(&self) -> &dyn Any {
-        Box::leak(Box::new(self.clone())) as &dyn Any
-    }
-}
-
 impl GraphDefinition for RemoteComponent {
     fn to_any(&self) -> &dyn Any {
         Box::leak(Box::new(self.clone())) as &dyn Any

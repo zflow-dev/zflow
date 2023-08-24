@@ -12,4 +12,5 @@ pub mod registry;
 pub mod sockets;
 pub mod wasm;
 pub mod js;
+pub mod lua;
 mod network_test;

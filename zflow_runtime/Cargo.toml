@@ -32,6 +32,9 @@ wasmtime = "6.0.2"
 anyhow = "1.0.71"
 bincode = "1.3.3"
 rquickjs = {version = "0.1.7", features = ["exports", "async-std", "rust-alloc", "loader", "dyn-load"]}
+rlua = "0.19.7"
+once_cell = "1.18.0"
+rlua_serde = {git="https://github.com/darmie/rlua_serde", branch="master"}
 
 
 [lib]
