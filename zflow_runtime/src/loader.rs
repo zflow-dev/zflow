@@ -7,13 +7,16 @@ use std::{
 
 use poll_promise::Promise;
 use regex::Regex;
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Value, json};
 use zflow_graph::types::GraphJson;
 
 use crate::{
     component::{Component, GraphDefinition, ModuleComponent},
+    js::JsComponent,
+    lua::LuaComponent,
     registry::{ComponentSource, DefaultRegistry, RuntimeRegistry},
-    wasm::WasmComponent, js::JsComponent,
+    wasm::WasmComponent,
 };
 
 use std::fmt::Debug;
@@ -263,7 +266,7 @@ impl ComponentLoader {
         // If a string was specified, attempt to load it dynamically
         if let Some(path) = component.to_any().downcast_ref::<String>() {
             if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
-                if is_url(path) {
+                if !is_url(path) {
                     return registry.dynamic_load(name, path, metadata);
                 }
 
@@ -316,6 +319,38 @@ impl ComponentLoader {
                     .with_metadata(metadata)
                     .as_component()?,
             ));
+        }
+
+        // Load and create a lua component
+        if let Some(lua_component) = component.to_any().downcast_ref::<LuaComponent>() {
+            let mut lua = lua_component.clone();
+            lua.base_dir = if lua.base_dir == "/" {
+                let mut buf = PathBuf::from(self.base_dir.clone());
+                buf.push(lua.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir.clone()
+            };
+            return Ok(Component::from_instance(
+                lua_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
+        // check if it's source code 
+        if let Some(source) = component.to_any().downcast_ref::<ComponentSource>() {
+            match source.language.as_str() {
+                "lua" =>{
+                    let comp = LuaComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
+                    return self.create_component(name, &comp, metadata)
+                }
+                "js" | "ts" =>{
+                    return self.create_component(name, &JsComponent::deserialize(json!(source)).map_err(|err| err.to_string())?, metadata)
+                }
+                _=> return Err(format!("Unsupported source language: {}", source.language))
+            }
         }
 
         // check if it's a component instance
@@ -457,21 +492,28 @@ impl ComponentLoader {
         self.processing = Some(vec![loading_components]);
     }
 
-    /// With `set_source` you can register a component by providing
-    /// a source code string. Supported languages and techniques
+    /// With `set_source` you can replace a component's source code by providing. 
+    /// Supported languages and techniques
     /// depend on the runtime environment registry provided
     pub fn set_source(
         &mut self,
         namespace: &str,
         name: &str,
-        source: ComponentSource,
+        mut source: ComponentSource,
     ) -> Result<(), String> {
         if !self.ready {
             self.list_components()?;
             return self.set_source(namespace, name, source);
         }
         if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
-            return registry.set_source(namespace, name, source);
+            registry.set_source(namespace, name, source.clone())?;
+            if let Ok(components) = self.components.clone().try_lock().as_mut() {
+                let new_name = normalize_name(namespace, name);
+                source.name = new_name.clone();
+                components.insert(new_name, Box::new(source.clone()));
+            }
+            self.list_components()?;
+            return  Ok(());
         }
         Err(format!(
             "Could not set code source for component '{}'",
@@ -530,6 +572,8 @@ pub fn normalize_name(package_id: &str, name: &str) -> String {
 
     f_name
 }
+
+
 
 #[cfg(test)]
 mod tests {

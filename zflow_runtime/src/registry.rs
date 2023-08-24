@@ -4,7 +4,7 @@ use std::{
     io::{self, BufReader},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex}, any::Any,
 };
 
 use poll_promise::Promise;
@@ -16,7 +16,7 @@ use crate::{
     js::JsComponent,
     loader::{normalize_name, ComponentLoader},
     port::PortOptions,
-    wasm::WasmComponent,
+    wasm::WasmComponent, lua::LuaComponent,
 };
 
 use is_url::is_url;
@@ -44,8 +44,16 @@ pub struct RemoteComponent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentSource {
     pub name: String,
-    pub code: String,
+    pub inports: HashMap<String, PortOptions>,
+    pub outports: HashMap<String, PortOptions>,
+    pub source: String,
     pub language: String,
+}
+
+impl GraphDefinition for ComponentSource {
+    fn to_any(&self) -> &dyn Any {
+        Box::leak(Box::new(self.clone())) as &dyn Any
+    }
 }
 /// Registry is a way to tell the Component Loader where to discover, load and execute custom components
 pub trait RuntimeRegistry {
@@ -125,12 +133,9 @@ impl RuntimeRegistry for DefaultRegistry {
         component_name: &str,
         source: ComponentSource,
     ) -> Result<(), String> {
-        let mut path = PathBuf::new();
-        path.push(format!("{}", namespace));
-        path.push(format!("{}", component_name));
         // todo: validate source
         self.source_map
-            .insert(path.as_os_str().to_str().unwrap().to_owned(), source);
+            .insert(normalize_name(namespace, component_name), source);
         Ok(())
     }
 
@@ -148,10 +153,12 @@ impl RuntimeRegistry for DefaultRegistry {
     ) -> Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>> {
         let dir = loader.base_dir.clone();
 
+        let source_map = self.source_map.clone();
+
         Promise::spawn_thread("register_components", move || {
             let base_dir = PathBuf::from_str(dir.as_str()).unwrap();
             // Recursively look up all component directories
-            let components = visit_dirs(&base_dir, &|entry| {
+            let mut components = visit_dirs(&base_dir, &|entry| {
                 if entry.path().is_file()
                     && (entry.path().file_name().unwrap() == "zflow.json"
                         || entry.path().file_name().unwrap() == "package.json")
@@ -236,6 +243,30 @@ impl RuntimeRegistry for DefaultRegistry {
                                             normalize_name(&js_component.package_id, &js_component.name),
                                             definition,
                                         ));
+                                    },
+                                    Some("lua") => {
+                                        // Read lua
+                                        let mut lua_component = LuaComponent::deserialize(component_meta)
+                                        .expect(
+                                            "expected to decode component metadata from zflow.json or package.json",
+                                        );
+
+                                        lua_component.base_dir = entry
+                                            .path()
+                                            .parent()
+                                            .unwrap()
+                                            .as_os_str()
+                                            .to_str()
+                                            .unwrap()
+                                            .to_owned();
+                                        lua_component.package_id = package_id.to_owned();
+
+                                        let definition: Box<dyn GraphDefinition> =
+                                            Box::new(lua_component.clone());
+                                        return Some((
+                                            normalize_name(&lua_component.package_id, &lua_component.name),
+                                            definition,
+                                        ));
                                     }
                                     _=>{
                                        return None
@@ -245,14 +276,21 @@ impl RuntimeRegistry for DefaultRegistry {
                             None
                         }).filter(|component| component.is_some()).map(|component| component.unwrap());
 
-                        return Some(HashMap::from_iter(components));
+                        let mut components = HashMap::from_iter(components);
+                        source_map.iter().for_each(|(k, v)|{
+                            components.insert(k.clone(), Box::new(v.clone()));
+                            
+                        });
+                        return Some(components);
                     }
                 }
                 None
             });
+            
             if components.is_err() {
                 return Err(format!("{}", components.err().unwrap().to_string()));
             }
+           
             Ok(components.ok().unwrap())
         })
     }
@@ -268,7 +306,7 @@ impl RuntimeRegistry for DefaultRegistry {
             // fetch remote component and instantiate it
         }
 
-        if !Path::new(path).exists() {
+        if is_url(path) && !Path::new(path).exists() {
             return Err(format!("Could not find component at {}", path));
         }
         if path.contains(std::path::is_separator) {

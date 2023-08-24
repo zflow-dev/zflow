@@ -28,7 +28,6 @@ pub struct Input {
     pub right: Value,
 }
 
-#[cfg(not(tarpaulin_include))]
 #[plugin_fn]
 pub fn process(input: Json<Input>) -> FnResult<Json<Value>> {
     // because inputs are controlled, we wait for all of them
