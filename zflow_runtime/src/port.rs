@@ -145,7 +145,7 @@ impl BasePort for InPort {
             idx = Some(self.sockets.len());
         }
         
-        if let Ok(socket) = socket.clone().try_lock().as_mut().as_mut() {
+        if let Ok(socket) = socket.clone().try_lock().as_mut() {
             socket.index = idx.unwrap();
             let _ = socket.connect();
             let bus = self.bus.clone();
