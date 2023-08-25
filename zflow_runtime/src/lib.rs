@@ -13,4 +13,5 @@ pub mod sockets;
 pub mod wasm;
 pub mod js;
 pub mod lua;
+pub mod wren;
 mod network_test;

@@ -16,7 +16,7 @@ use crate::{
     js::JsComponent,
     loader::{normalize_name, ComponentLoader},
     port::PortOptions,
-    wasm::WasmComponent, lua::LuaComponent,
+    wasm::WasmComponent, lua::LuaComponent, wren::WrenComponent,
 };
 
 use is_url::is_url;
@@ -265,6 +265,30 @@ impl RuntimeRegistry for DefaultRegistry {
                                             Box::new(lua_component.clone());
                                         return Some((
                                             normalize_name(&lua_component.package_id, &lua_component.name),
+                                            definition,
+                                        ));
+                                    }
+                                    Some("wren") => {
+                                        // Read lua
+                                        let mut wren_component = WrenComponent::deserialize(component_meta)
+                                        .expect(
+                                            "expected to decode component metadata from zflow.json or package.json",
+                                        );
+
+                                        wren_component.base_dir = entry
+                                            .path()
+                                            .parent()
+                                            .unwrap()
+                                            .as_os_str()
+                                            .to_str()
+                                            .unwrap()
+                                            .to_owned();
+                                        wren_component.package_id = package_id.to_owned();
+
+                                        let definition: Box<dyn GraphDefinition> =
+                                            Box::new(wren_component.clone());
+                                        return Some((
+                                            normalize_name(&wren_component.package_id, &wren_component.name),
                                             definition,
                                         ));
                                     }

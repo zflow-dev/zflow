@@ -16,7 +16,7 @@ use crate::{
     js::JsComponent,
     lua::LuaComponent,
     registry::{ComponentSource, DefaultRegistry, RuntimeRegistry},
-    wasm::WasmComponent,
+    wasm::WasmComponent, wren::WrenComponent,
 };
 
 use std::fmt::Debug;
@@ -339,11 +339,33 @@ impl ComponentLoader {
             ));
         }
 
+          // Load and create a wren component
+          if let Some(wren_component) = component.to_any().downcast_ref::<WrenComponent>() {
+            let mut wren = wren_component.clone();
+            wren.base_dir = if wren.base_dir == "/" {
+                let mut buf = PathBuf::from(self.base_dir.clone());
+                buf.push(wren.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir.clone()
+            };
+            return Ok(Component::from_instance(
+                wren_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
         // check if it's source code 
         if let Some(source) = component.to_any().downcast_ref::<ComponentSource>() {
             match source.language.as_str() {
                 "lua" =>{
                     let comp = LuaComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
+                    return self.create_component(name, &comp, metadata)
+                }
+                "wren" =>{
+                    let comp = WrenComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
                     return self.create_component(name, &comp, metadata)
                 }
                 "js" | "ts" =>{
