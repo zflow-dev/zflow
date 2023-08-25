@@ -38,6 +38,11 @@ impl GraphDefinition for JsComponent {
     }
 }
 
+fn default_base_dir() -> String {
+    "/".to_string()
+}
+
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct JsComponent {
     pub name: String,
@@ -59,6 +64,7 @@ pub struct JsComponent {
     #[serde(default)]
     /// Bracket forwarding rules. By default we forward
     pub forward_brackets: HashMap<String, Vec<String>>,
+    #[serde(default = "default_base_dir")]
     /// Base directory of js packages
     pub base_dir: String,
     /// Path to js source
@@ -98,7 +104,6 @@ impl JsComponent {
 
 impl ModuleComponent for JsComponent {
     fn as_component(&self) -> Result<Component, String> {
-        // let source = self.source.clone();
         let mut code = PathBuf::from(self.base_dir.clone());
         let source = if is_url(&self.source) || self.base_dir != "/"  {
             code.push(self.source.clone());
@@ -157,10 +162,8 @@ impl ModuleComponent for JsComponent {
                     );
             
                     return context.with(|ctx| {
-                        // let inputs: Vec<&String> = inports.keys().collect();
                         let global = ctx.globals();
 
-                        // JsConsole::load(ctx, )
                         let process_object = rquickjs::Object::new(ctx).unwrap();
                         let mut _inputs = rquickjs::Object::new(ctx).unwrap();
 

@@ -67,7 +67,7 @@ pub struct LuaComponent {
     /// Bracket forwarding rules. By default we forward
     pub forward_brackets: HashMap<String, Vec<String>>,
     #[serde(default = "default_base_dir")]
-    /// Base directory of wasm sources
+    /// Base directory of lua sources
     pub base_dir: String,
     /// Path to lua source
     pub source: String,

@@ -1,0 +1,20 @@
+{
+    "package_name": "zflow",
+    "components": [
+        {
+            "name": "add_wren",
+            "inports": {
+                "left":{"trigerring": true, "control":true},
+                "right":{"trigerring":true, "control":true}
+            },
+            "outports": {
+                "sum":{}
+            },
+            "base_dir": "/",
+            "source": "main.wren",
+            "description": "sum of two numbers",
+            "language": "wren",
+            "ordered": true
+        }
+    ]
+}
