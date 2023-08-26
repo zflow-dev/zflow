@@ -194,7 +194,6 @@ impl ModuleComponent for JsComponent {
                                 "send",
                                 Func::new("", move |data: rquickjs::Value| {
                                     let data = js_value_to_json_value(data).expect("runtime error");
-                                    println!("{:?}", data);
                                     output.clone().send(&data).unwrap();
                                 }),
                             )
@@ -244,7 +243,7 @@ impl ModuleComponent for JsComponent {
                             .unwrap();
 
                         global
-                            .set("ProcessHandle", process_object)
+                            .set("zflow", process_object)
                             .expect("runtime error");
 
                         let console_module = r#"

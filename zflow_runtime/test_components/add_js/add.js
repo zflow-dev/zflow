@@ -1,10 +1,11 @@
 
 
-const inport = ProcessHandle.inport;
-const outport = ProcessHandle.outport;
+const inport = zflow.inport;
+const outport = zflow.outport;
 
 
 if(inport.left && inport.right){
-    console.log("hello world!");
-    outport.send({sum: Number(inport.left) + Number(inport.right)})
+    const result = Number(inport.left) + Number(inport.right);
+    console.log(result);
+    outport.send({sum: result})
 }
