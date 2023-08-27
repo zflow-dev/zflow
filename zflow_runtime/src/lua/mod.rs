@@ -155,6 +155,14 @@ impl ModuleComponent for LuaComponent {
                     .as_mut()
                     .map_err(|_| ProcessError(String::from("Process Handle has dropped")))?;
 
+                let controlled = inports.iter().filter(|(k, v)| v.control).map(|(k, _)| k).collect::<Vec<_>>();
+                        
+                let controlled_data = controlled.iter().map(|k| this.input().get(k.clone())).collect::<Vec<_>>();
+
+                if !controlled.is_empty() && controlled_data.contains(&None) {
+                    return Ok(ProcessResult::default());
+                }
+
                 lua_instance()
                     .try_lock()
                     .map_err(|err| {
@@ -307,9 +315,6 @@ mod tests {
         registry::ComponentSource, port::PortOptions,
     };
 
-    use std::time::Duration;
-
-    use super::LuaComponent;
 
     #[test]
     fn create_lua_component() {

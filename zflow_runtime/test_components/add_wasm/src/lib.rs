@@ -3,18 +3,25 @@
 use extism_pdk::{json::Value, *};
 use serde::{Deserialize, Serialize};
 
-extern "C" {
-    fn send(output: u64) -> u64;
-    fn send_done(output: u64) -> u64;
+
+#[host_fn]
+extern "ExtismHost" {
+    fn send(output: Json<Output>)-> Json<Output>;
 }
 
+
+// extern "C" {
+//     fn send(output: Json<Output>) -> u64;
+//     fn send_done(output: u64) -> u64;
+// }
+
+#[repr(C)]
 #[derive(Serialize, Deserialize)]
 pub struct Output {
     pub sum: i64,
 }
 
 impl Output {
-    #[cfg(not(tarpaulin_include))]
     #[inline(always)]
     pub fn as_ptr(&self) -> u64 {
         let mem = extism_pdk::Memory::from_bytes(json::to_string(self.clone()).unwrap().as_bytes());
@@ -22,26 +29,25 @@ impl Output {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Input {
     pub left: Value,
     pub right: Value,
 }
 
 #[plugin_fn]
-pub fn process(input: Json<Input>) -> FnResult<Json<Value>> {
+pub fn process(input: Json<Input>) -> FnResult<Json<Output>> {
     // because inputs are controlled, we wait for all of them
-    if input.0.left == Value::Null && input.0.right == Value::Null {
-        return Ok(Json(Value::Null));
-    }
-    let left = input.0.left.as_i64().unwrap();
-    let right = input.0.right.as_i64().unwrap();
+    if input.0.left != Value::Null && input.0.right != Value::Null {
+        let left = input.0.left.as_i64().unwrap();
+        let right = input.0.right.as_i64().unwrap();
 
-    let data_ptr = Output { sum: left + right }.as_ptr();
-    unsafe {
-        // send output to host
-        send(data_ptr);
+        let data = Output { sum: left + right };
+        unsafe {
+            // send output to host
+            send(Json(data))?;
+        }
     }
 
-    return Ok(Json(Value::Null));
+    return Ok(Json(Output { sum: 0 }));
 }

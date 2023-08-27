@@ -2,9 +2,9 @@ use std::{
     any::Any,
     borrow::BorrowMut,
     collections::HashMap,
-    fs,
+    ffi, fs,
     path::PathBuf,
-    sync::{Arc, Mutex}, ffi,
+    sync::{Arc, Mutex},
 };
 
 use is_url::is_url;
@@ -153,6 +153,21 @@ impl ModuleComponent for WrenComponent {
                     .as_mut()
                     .map_err(|_| ProcessError(String::from("Process Handle has dropped")))?;
 
+                let controlled = inports
+                    .iter()
+                    .filter(|(k, v)| v.control)
+                    .map(|(k, _)| k)
+                    .collect::<Vec<_>>();
+
+                let controlled_data = controlled
+                    .iter()
+                    .map(|k| this.input().get(k.clone()))
+                    .collect::<Vec<_>>();
+
+                if !controlled.is_empty() && controlled_data.contains(&None) {
+                    return Ok(ProcessResult::default());
+                }
+
                 let outports = this.output().clone();
                 let script_loader = BasicFileLoader::new().base_dir(base_dir.clone());
 
@@ -182,7 +197,7 @@ impl ModuleComponent for WrenComponent {
                             } else {
                                 None
                             };
-                         
+
                             if let Some(process) = unsafe { PROCESS_OUTPUT.get() } {
                                 process.clone().done(error.as_ref().map(|v| v as &dyn Any));
                             }
@@ -197,7 +212,7 @@ impl ModuleComponent for WrenComponent {
                     module => zflow
                 }
 
-                // Add the internal module as a wren library 
+                // Add the internal module as a wren library
                 let mut lib = ModuleLibrary::new();
                 zflow::publish_module(&mut lib);
 

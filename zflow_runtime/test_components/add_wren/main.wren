@@ -2,10 +2,9 @@ import "zflow" for ZFlow
 
 class Component {
     static process(input){
-        if(input["left"] != null && input["right"] != null){
-            var result = input["left"] + input["right"]
-            ZFlow.send("sum", result)
-        }
+        var result = input["left"] + input["right"]
+        System.print({"sum": result})
+        ZFlow.send("sum", result)
     }
 }
 

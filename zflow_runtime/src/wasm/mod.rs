@@ -1,13 +1,14 @@
-use std::{collections::HashMap, path::PathBuf, any::Any};
-
 use extism::{
-    manifest::Wasm, Context, CurrentPlugin, Function, Manifest, Plugin, UserData, Val, ValType,
+    manifest::Wasm, Context, CurrentPlugin, Function, InternalExt, Manifest, Plugin, UserData,
+    ValType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use std::fmt::Error;
+use std::{any::Any, collections::HashMap, path::PathBuf};
 
 use crate::{
-    component::{Component, ComponentOptions, ModuleComponent, GraphDefinition},
+    component::{Component, ComponentOptions, GraphDefinition, ModuleComponent},
     ip::IPType,
     port::{InPort, OutPort, PortOptions},
     process::{ProcessError, ProcessResult},
@@ -120,6 +121,21 @@ impl ModuleComponent for WasmComponent {
                 process: Some(Box::new(move |handle| {
                     let inputs: Vec<&String> = inports.keys().collect();
                     if let Ok(this) = handle.clone().try_lock().as_mut() {
+                        let controlled = inports
+                            .iter()
+                            .filter(|(k, v)| v.control)
+                            .map(|(k, _)| k)
+                            .collect::<Vec<_>>();
+
+                        let controlled_data = controlled
+                            .iter()
+                            .map(|k| this.input().get(k.clone()))
+                            .collect::<Vec<_>>();
+
+                        if !controlled.is_empty() && controlled_data.contains(&None) {
+                            return Ok(ProcessResult::default());
+                        }
+
                         let _inputs: HashMap<&String, Value> = HashMap::from_iter(
                             inputs
                                 .clone()
@@ -150,47 +166,14 @@ impl ModuleComponent for WasmComponent {
                             [ValType::I64],
                             [ValType::I64],
                             None,
-                            move |_plugin: &mut CurrentPlugin,
-                                  params: &[Val],
-                                  returns: &mut [Val],
-                                  _: UserData| {
-                                let data = _plugin.memory.get(params[0].unwrap_i64() as usize)?;
-
-                                if let Ok(result) =
-                                    serde_json::from_str::<Value>(std::str::from_utf8(data).expect(
-                                        "expected to decode output value from wasm component",
-                                    ))
-                                {
-                                    if let Some(res) = result.as_object() {
-                                        println!("wasm-output => {:?}", res);
-                                        output.clone().send(res).expect("expected output value");
-                                    }
-                                }
-                                returns[0] = params[0].clone();
-
-                                Ok(())
-                            },
-                        );
-
-                        let output = this.output();
-                        let send_buffer_fn = Function::new(
-                            "send_buffer",
-                            [ValType::I64],
-                            [ValType::I64],
-                            None,
-                            move |_plugin: &mut CurrentPlugin,
-                                  params: &[Val],
-                                  returns: &mut [Val],
-                                  _: UserData| {
-                                let port = _plugin.memory.get(params[0].unwrap_i64() as usize)?;
-                                let data = _plugin.memory.get(params[1].unwrap_i64() as usize)?;
-
-                                if let Ok(port) = std::str::from_utf8(port) {
-                                    output
-                                        .clone()
-                                        .send_buffer(port, data)
-                                        .expect("expected output value");
-                                }
+                            move |_plugin: &mut CurrentPlugin, params, returns, d: UserData| {
+                                let loc = params[0].unwrap_i64();
+                                let data = _plugin.memory_read_str(loc as u64)?;
+                                let data: Value = serde_json::from_str(data).unwrap();
+                                output
+                                    .clone()
+                                    .send(&data)
+                                    .expect("expected to send data from wasm component");
                                 returns[0] = params[0].clone();
 
                                 Ok(())
@@ -204,26 +187,14 @@ impl ModuleComponent for WasmComponent {
                             [ValType::I64],
                             [ValType::I64],
                             None,
-                            move |_plugin: &mut CurrentPlugin,
-                                  params: &[Val],
-                                  returns: &mut [Val],
-                                  _: UserData| {
-                                let data = _plugin.memory.get(params[0].unwrap_i64() as usize)?;
-
-                                if let Ok(result) =
-                                    serde_json::from_str::<Value>(std::str::from_utf8(data).expect(
-                                        "expected to decode output value from wasm component",
-                                    ))
-                                {
-                                    if let Some(res) = result.as_object() {
-                                        if let Err(x) = output.clone().send_done(res) {
-                                            output
-                                                .clone()
-                                                .send_done(&x)
-                                                .expect("expected to send error");
-                                        }
-                                    }
-                                }
+                            move |_plugin, params, returns, _: UserData| {
+                                let loc = params[0].unwrap_i64();
+                                let data = _plugin.memory_read_str(loc as u64)?;
+                                let data: Value = serde_json::from_str(data).unwrap();
+                                output
+                                    .clone()
+                                    .send_done(&data)
+                                    .expect("expected to send data from wasm component");
                                 returns[0] = params[0].clone();
 
                                 Ok(())
@@ -234,7 +205,7 @@ impl ModuleComponent for WasmComponent {
                         let plugin = Plugin::new_with_manifest(
                             &context,
                             &manifest,
-                            [&send_fn, &send_done_fn],
+                            [send_fn, send_done_fn],
                             false,
                         );
 
@@ -247,6 +218,7 @@ impl ModuleComponent for WasmComponent {
 
                         let x =
                             plugin.call("process", serde_json::to_string(&mapped_inputs).unwrap());
+
                         if x.is_err() {
                             return Err(ProcessError(format!(
                                 "Failed to call main function from wasm component: {}",
@@ -258,7 +230,7 @@ impl ModuleComponent for WasmComponent {
                                 .expect("expected to decode return value from wasm component"),
                         ) {
                             if let Some(res) = result.as_object() {
-                                this.output().send(res)?;
+                                return Ok(ProcessResult{data: json!(res.clone()), ..ProcessResult::default()})
                             }
                         }
                     }
@@ -272,11 +244,9 @@ impl ModuleComponent for WasmComponent {
 
 #[cfg(test)]
 mod tests {
-    use std::{thread, time::Duration};
-
     use zflow_graph::Graph;
 
-    use crate::network::{Network, NetworkOptions, BaseNetwork};
+    use crate::network::{BaseNetwork, Network, NetworkOptions};
 
     use super::*;
 
@@ -287,7 +257,8 @@ mod tests {
         let base_dir = base_dir.to_str().unwrap();
 
         let mut graph = Graph::new("wasm_graph", false);
-        graph.add_node("zflow", "add_wasm", None)
+        graph
+            .add_node("zflow", "add_wasm", None)
             .add_initial(json!(1), "zflow", "left", None)
             .add_initial(json!(2), "zflow", "right", None);
 
@@ -303,7 +274,6 @@ mod tests {
 
         if let Ok(nw) = network.connect().unwrap().try_lock().as_mut() {
             nw.start().unwrap();
-            thread::sleep(Duration::from_secs(2));
         }
     }
 }

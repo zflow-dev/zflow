@@ -1,11 +1,11 @@
 use array_tool::vec::Join;
+use is_url::is_url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::any::Any;
 use std::fs;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, path::PathBuf};
-use is_url::is_url;
 
 use rquickjs::{
     BuiltinLoader,
@@ -41,7 +41,6 @@ impl GraphDefinition for JsComponent {
 fn default_base_dir() -> String {
     "/".to_string()
 }
-
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct JsComponent {
@@ -105,7 +104,7 @@ impl JsComponent {
 impl ModuleComponent for JsComponent {
     fn as_component(&self) -> Result<Component, String> {
         let mut code = PathBuf::from(self.base_dir.clone());
-        let source = if is_url(&self.source) || self.base_dir != "/"  {
+        let source = if is_url(&self.source) || self.base_dir != "/" {
             code.push(self.source.clone());
             fs::read_to_string(code).expect("Could not read lua code")
         } else {
@@ -146,6 +145,20 @@ impl ModuleComponent for JsComponent {
             graph: None,
             process: Some(Box::new(move |handle: Arc<Mutex<ProcessHandle>>| {
                 if let Ok(this) = handle.clone().try_lock().as_mut() {
+                    let controlled = inports
+                        .iter()
+                        .filter(|(k, v)| v.control)
+                        .map(|(k, _)| k)
+                        .collect::<Vec<_>>();
+
+                    let controlled_data = controlled
+                        .iter()
+                        .map(|k| this.input().get(k.clone()))
+                        .collect::<Vec<_>>();
+
+                    if !controlled.is_empty() && controlled_data.contains(&None) {
+                        return Ok(ProcessResult::default());
+                    }
                     let rt = Runtime::new().expect("runtime error");
                     let context = Context::full(&rt).unwrap();
 
@@ -160,7 +173,7 @@ impl ModuleComponent for JsComponent {
                             ModuleLoader::default().with_module("builtin/console", JsConsole),
                         ),
                     );
-            
+
                     return context.with(|ctx| {
                         let global = ctx.globals();
 
@@ -242,9 +255,7 @@ impl ModuleComponent for JsComponent {
                             .set("outport", _outputs.as_value().clone())
                             .unwrap();
 
-                        global
-                            .set("zflow", process_object)
-                            .expect("runtime error");
+                        global.set("zflow", process_object).expect("runtime error");
 
                         let console_module = r#"
                             import {log, info, warn, error, debug} from "builtin/console";
@@ -258,7 +269,7 @@ impl ModuleComponent for JsComponent {
                                 console.get::<&str, rquickjs::Object>("default").unwrap(),
                             )
                             .expect("runtime error");
-                        
+
                         return match ctx.eval(source.clone()) {
                             Ok(val) => {
                                 if let Err(err) = this
