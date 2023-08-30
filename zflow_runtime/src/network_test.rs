@@ -160,8 +160,8 @@ mod tests {
                         let n = binding.as_mut().unwrap();
                         let res = n.add_node(
                             GraphNode {
-                                id: "add_wasm".to_string(),
-                                component: "add_wasm".to_string(),
+                                id: "add".to_string(),
+                                component: "add".to_string(),
                                 metadata: Some(json!({"foo": "Bar"}).as_object().cloned().unwrap()),
                                 ..GraphNode::default()
                             },
@@ -170,15 +170,13 @@ mod tests {
                         assert!(!res.is_err());
 
                         'and_then_it_should_have_registered_the_node_with_the_graph: {
-                            let node = n.get_node("add_wasm");
+                            let node = n.get_node("add");
                             assert!(node.is_some());
-                            assert_eq!(node.unwrap().component_name, "add_wasm");
+                            assert_eq!(node.unwrap().component_name, "add");
                         }
                         'and_then_it_should_have_transmitted_the_node_metadata_to_the_process: {
-                            // let binding = n.clone();
-                            // let n = binding.try_lock().unwrap();
                             if let Some(component) =
-                                n.get_processes().get("add_wasm").unwrap().component.clone()
+                                n.get_processes().get("add").unwrap().component.clone()
                             {
                                 let meta = component.clone().try_lock().unwrap().metadata.clone();
                                 assert!(meta.is_some());
@@ -189,10 +187,10 @@ mod tests {
                         }
                         'and_then_adding_the_same_node_again_should_be_a_noop: {
                             let processes = n.get_processes();
-                            let original_process = processes.get("add_wasm").clone().unwrap();
+                            let original_process = processes.get("add").clone().unwrap();
                             let binding = n.get_graph();
                             let graph = binding.try_lock().unwrap();
-                            let graph_node = graph.get_node("add_wasm").unwrap();
+                            let graph_node = graph.get_node("add").unwrap();
 
                             let binding = n.add_node(graph_node.clone(), None);
                             let res = binding.as_ref().unwrap();
@@ -202,7 +200,7 @@ mod tests {
                         }
                         'and_then_it_should_not_contain_the_node_after_removal: {
                             n.remove_node(GraphNode {
-                                id: "add_wasm".to_string(),
+                                id: "add".to_string(),
                                 ..GraphNode::default()
                             })
                             .unwrap();
@@ -210,13 +208,13 @@ mod tests {
 
                             'and_then_it_should_have_removed_the_node_from_the_graph: {
                                 if let Ok(graph) = n.get_graph().try_lock() {
-                                    assert!(graph.get_node("add_wasm").is_none());
+                                    assert!(graph.get_node("add").is_none());
                                 }
                             }
                             'and_then_it_should_fail_when_removing_the_removed_node_again: {
                                 assert!(n
                                     .remove_node(GraphNode {
-                                        id: "add_wasm".to_string(),
+                                        id: "add".to_string(),
                                         ..GraphNode::default()
                                     })
                                     .is_err());
