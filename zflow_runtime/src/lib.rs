@@ -21,3 +21,6 @@ pub mod wasm;
 pub mod wren;
 
 mod network_test;
+
+#[macro_use]
+extern crate go_engine as goengine;

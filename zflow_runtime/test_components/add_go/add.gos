@@ -1,0 +1,24 @@
+package main
+
+import (
+	"zflow"
+)
+
+
+
+func main() {
+	var in = zflow.Inputs()
+	// get inputs
+	data, ok := in.(map[string]interface{})
+	assert(ok)
+	left, ok := data["left"].(int)
+	assert(ok)
+	right, ok := data["right"].(int)
+	assert(ok)
+
+	// some calculation
+	total := left + right
+
+	packet := map[string]int{"sum": total}
+	zflow.Send(packet)
+}
