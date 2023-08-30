@@ -19,8 +19,11 @@ pub mod lua;
 pub mod wasm;
 #[cfg(feature = "wren_runtime")]
 pub mod wren;
+#[cfg(feature = "go_runtime")]
+pub mod go;
 
 mod network_test;
 
+#[cfg(feature = "go_runtime")]
 #[macro_use]
 extern crate go_engine as goengine;

@@ -36,6 +36,9 @@ use crate::lua::LuaComponent;
 #[cfg(feature="wren_runtime")]
 use crate::wren::WrenComponent;
 
+#[cfg(feature="go_runtime")]
+use crate::go::GoComponent;
+
 use std::fmt::Debug;
 
 use is_url::is_url;
@@ -377,6 +380,25 @@ impl ComponentLoader {
             ));
         }
 
+        #[cfg(feature = "go_runtime")]
+        // Load and create a go component
+        if let Some(go_component) = component.to_any().downcast_ref::<GoComponent>() {
+            let mut go = go_component.clone();
+            go.base_dir = if go.base_dir == "/" {
+                let mut buf = PathBuf::from(self.base_dir.clone());
+                buf.push(go.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir.clone()
+            };
+            return Ok(Component::from_instance(
+                go_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
         // check if it's source code
 
         if let Some(source) = component.to_any().downcast_ref::<ComponentSource>() {
@@ -398,6 +420,14 @@ impl ComponentLoader {
                     return self.create_component(
                         name,
                         &JsComponent::deserialize(json!(source)).map_err(|err| err.to_string())?,
+                        metadata,
+                    )
+                }
+                #[cfg(feature = "go_runtime")]
+                "go" | "gos" => {
+                    return self.create_component(
+                        name,
+                        &GoComponent::deserialize(json!(source)).map_err(|err| err.to_string())?,
                         metadata,
                     )
                 }

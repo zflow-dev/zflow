@@ -1,0 +1,20 @@
+{
+    "package_name": "zflow",
+    "components": [
+        {
+            "name": "add_go",
+            "inports": {
+                "left":{"trigerring": true, "control":true},
+                "right":{"trigerring":true, "control":true}
+            },
+            "outports": {
+                "sum":{}
+            },
+            "base_dir": "/",
+            "source": "add.gos",
+            "description": "sum of two numbers",
+            "language": "go",
+            "ordered": true
+        }
+    ]
+}

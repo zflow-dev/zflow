@@ -16,14 +16,10 @@ use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::any::Any;
-use std::borrow::{Borrow, BorrowMut};
-use std::cell::{Cell, RefCell};
+use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::future::Future;
-use std::io::{BufReader, BufWriter};
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
+use std::fs;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 fn default_base_dir() -> String {
@@ -98,7 +94,6 @@ impl GraphDefinition for GoComponent {
 
 impl ModuleComponent for GoComponent {
     fn as_component(&self) -> Result<Component, String> {
-        let node_name = self.name.clone();
         let mut code = PathBuf::from(&self.base_dir);
         // let base_dir = self.base_dir.clone();
 
@@ -158,12 +153,12 @@ impl ModuleComponent for GoComponent {
 
                 let controlled = inports
                     .iter()
-                    .filter(|(key, value)| value.control)
-                    .map(|(key, value)| key)
+                    .filter(|(_, value)| value.control)
+                    .map(|(key, _)| key)
                     .collect::<Vec<_>>();
                 let controlled_data = controlled
                     .iter()
-                    .map(|(key)| process_handler.input().get(key.clone()))
+                    .map(|key| process_handler.input().get(key.clone()))
                     .collect::<Vec<_>>();
 
                 // None can take a reference? interesting....
@@ -195,8 +190,8 @@ impl ModuleComponent for GoComponent {
                 static mut process_input: OnceCell<Value> = OnceCell::new();
 
                 unsafe {
-                    process_input.set(json!(_inputs));
-                    process_output.set(process_handler.output());
+                    process_input.set(json!(_inputs)).unwrap();
+                    process_output.set(process_handler.output()).unwrap();
                 }
 
                 // HERE BE DRAGONS. insha allah and vibes.
@@ -311,7 +306,7 @@ fn go_value_to_json_value(v: &GosValue) -> Result<Value, ProcessError> {
         }
         // is this feasible?
         ValueType::Array => {
-            let (array_obj, d) = v.as_array::<GosElem>();
+            let (array_obj, _) = v.as_array::<GosElem>();
 
             let mut value = vec![];
             for data in array_obj.borrow_data().iter() {
@@ -328,8 +323,8 @@ fn go_value_to_json_value(v: &GosValue) -> Result<Value, ProcessError> {
         ValueType::Slice => {
             let mut value = vec![];
             if let Some(s) = v.clone().as_slice::<GosElem>() {
-                let (slice_obj, d) = s.borrow();
-                let (array_obj, d) = slice_obj.array().as_array::<GosElem>();
+                let (slice_obj, _) = s.borrow();
+                let (array_obj, _) = slice_obj.array().as_array::<GosElem>();
                 for data in array_obj.borrow_data().iter() {
                     let d = data.clone().into_value(ValueType::Interface);
                     if let Ok(underlying) = d.iface_underlying() {

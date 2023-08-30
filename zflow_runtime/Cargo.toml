@@ -15,7 +15,8 @@ js_runtime  = ["dep:rquickjs"]
 wren_runtime = ["dep:ruwren"]
 lua_runtime = ["dep:rlua", "dep:rlua_serde"]
 wasm_runtime = ["dep:wasmtime", "dep:extism"]
-experimental = ["wasm_runtime"]
+go_runtime = ["dep:go-vm", "dep:go-engine", "dep:go-pmacro"]
+experimental = ["wasm_runtime", "go_runtime"]
 async = []
 
 [dependencies]
@@ -47,9 +48,9 @@ rlua = {version ="0.19.7", optional = true}
 once_cell = "1.18.0"
 rlua_serde = {git="https://github.com/darmie/rlua_serde", branch="master", optional = true}
 ruwren = {git="https://github.com/darmie/ruwren", optional = true}
-go-engine = {git="https://github.com/darmie/goscript", branch="temp-fix", features=["read_zip", "async"]}
-go-vm = {git="https://github.com/darmie/goscript", branch="temp-fix", features=["async"]}
-go-pmacro = {git="https://github.com/darmie/goscript", branch="temp-fix"}
+go-engine = {git="https://github.com/darmie/goscript", branch="temp-fix", features=["read_zip", "async"], optional = true}
+go-vm = {git="https://github.com/darmie/goscript", branch="temp-fix", features=["async"], optional = true}
+go-pmacro = {git="https://github.com/darmie/goscript", branch="temp-fix", optional = true}
 base64 = "0.21.3"
 borsh = "0.10.3"
 zip = { version = "0.6.2", features = ["deflate"], default-features = false }
