@@ -29,6 +29,9 @@ use crate::lua::LuaComponent;
 #[cfg(feature="wren_runtime")]
 use crate::wren::WrenComponent;
 
+#[cfg(feature="go_runtime")]
+use crate::go::GoComponent;
+
 use is_url::is_url;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -306,6 +309,31 @@ impl RuntimeRegistry for DefaultRegistry {
                                             definition,
                                         ));
                                     }
+                                    #[cfg(feature = "go_runtime")]
+                                    Some("go") |  Some("gos") => {
+                                        // Read go
+                                        let mut go_component = GoComponent::deserialize(component_meta)
+                                        .expect(
+                                            "expected to decode component metadata from zflow.json or package.json",
+                                        );
+
+                                        go_component.base_dir = entry
+                                            .path()
+                                            .parent()
+                                            .unwrap()
+                                            .as_os_str()
+                                            .to_str()
+                                            .unwrap()
+                                            .to_owned();
+                                        go_component.package_id = package_id.to_owned();
+
+                                        let definition: Box<dyn GraphDefinition> =
+                                            Box::new(go_component.clone());
+                                        return Some((
+                                            normalize_name(&go_component.package_id, &go_component.name),
+                                            definition,
+                                        ));
+                                    }
                                     _=>{
                                        return None
                                     }
@@ -373,6 +401,10 @@ impl RuntimeRegistry for DefaultRegistry {
                         }
                         #[cfg(feature = "lua_runtime")]
                         Some("lua") => {
+                            // build lua component
+                        }
+                        #[cfg(feature = "go_runtime")]
+                        Some("go")|Some("gos") => {
                             // build lua component
                         }
                         Some(&_) => return Err(format!("Unsupported component source")),
