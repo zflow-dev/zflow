@@ -10,8 +10,14 @@ mod port_test;
 pub mod process;
 pub mod registry;
 pub mod sockets;
-pub mod wasm;
+
+#[cfg(feature = "js_runtime")]
 pub mod js;
+#[cfg(feature = "lua_runtime")]
 pub mod lua;
+#[cfg(feature = "wasm_runtime")]
+pub mod wasm;
+#[cfg(feature = "wren_runtime")]
 pub mod wren;
+
 mod network_test;

@@ -13,11 +13,21 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     component::{Component, GraphDefinition, ModuleComponent},
-    js::JsComponent,
     loader::{normalize_name, ComponentLoader},
-    port::PortOptions,
-    wasm::WasmComponent, lua::LuaComponent, wren::WrenComponent,
+    port::PortOptions
 };
+
+#[cfg(feature="js_runtime")]
+use crate::js::JsComponent;
+
+#[cfg(feature = "wasm_runtime")]
+use crate::wasm::WasmComponent;
+
+#[cfg(feature="lua_runtime")]
+use crate::lua::LuaComponent;
+
+#[cfg(feature="wren_runtime")]
+use crate::wren::WrenComponent;
 
 use is_url::is_url;
 
@@ -198,6 +208,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                 let language = copy_meta.get("language").expect("component metadata must specify a language");
                                 metadata.remove("language");
                                 match language.as_str() {
+                                    #[cfg(feature = "wasm_runtime")]
                                     Some("wasm") => {
                                         // Read wasm
                                         let mut wasm_component = WasmComponent::deserialize(component_meta)
@@ -220,6 +231,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                             definition,
                                         ));
                                     }
+                                    #[cfg(feature = "js_runtime")]
                                     Some("js") | Some("ts") => {
                                         // Read js/ts
                                         let mut js_component = JsComponent::deserialize(component_meta)
@@ -244,6 +256,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                             definition,
                                         ));
                                     },
+                                    #[cfg(feature = "lua_runtime")]
                                     Some("lua") => {
                                         // Read lua
                                         let mut lua_component = LuaComponent::deserialize(component_meta)
@@ -268,6 +281,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                             definition,
                                         ));
                                     }
+                                    #[cfg(feature = "wren_runtime")]
                                     Some("wren") => {
                                         // Read lua
                                         let mut wren_component = WrenComponent::deserialize(component_meta)
@@ -300,7 +314,7 @@ impl RuntimeRegistry for DefaultRegistry {
                             None
                         }).filter(|component| component.is_some()).map(|component| component.unwrap());
 
-                        let mut components = HashMap::from_iter(components);
+                        let mut components:HashMap<String, Box<dyn GraphDefinition>> = HashMap::from_iter(components);
                         source_map.iter().for_each(|(k, v)|{
                             components.insert(k.clone(), Box::new(v.clone()));
                             
@@ -338,9 +352,11 @@ impl RuntimeRegistry for DefaultRegistry {
             if Path::new(path).is_file() {
                 if let Some(ext) = Path::new(path).extension() {
                     match ext.to_str() {
+                        #[cfg(feature = "js_runtime")]
                         Some("js") | Some("ts") => {
                             // build js component
                         }
+                        #[cfg(feature = "wasm_runtime")]
                         Some("wasm") => {
                             // build wasm component
                             if let Some(wasm) = WasmComponent::from_metadata(_options).as_mut() {
@@ -351,9 +367,11 @@ impl RuntimeRegistry for DefaultRegistry {
                                 return Ok(Component::from_instance(wasm.as_component()?));
                             }
                         }
+                        #[cfg(feature = "wren_runtime")]
                         Some("wren") => {
                             // build wren component
                         }
+                        #[cfg(feature = "lua_runtime")]
                         Some("lua") => {
                             // build lua component
                         }

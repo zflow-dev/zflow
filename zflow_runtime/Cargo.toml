@@ -8,6 +8,15 @@ description = "ZFlow FBP Graph Runtime"
 keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming"]
 
 
+[features]
+default = ["runtimes"]
+runtimes = ["lua_runtime", "js_runtime", "wren_runtime"]
+js_runtime  = ["dep:rquickjs"]
+wren_runtime = ["dep:ruwren"]
+lua_runtime = ["dep:rlua", "dep:rlua_serde"]
+wasm_runtime = ["dep:wasmtime", "dep:extism"]
+experimental = ["wasm_runtime"]
+
 [dependencies]
 zflow_graph = {path = "../zflow_graph"}
 serde_json = "1.0"
@@ -27,19 +36,16 @@ poll-promise = {git="https://github.com/EmbarkStudios/poll-promise", version="0.
 array_tool = "1.0.3"
 dyn-clone = "1.0.11"
 is-url = "1.0.4"
-extism = "0.5.0"
-wasmtime = "10.0.0"
+extism = {version="0.5.0", optional = true}
+wasmtime = {version="10.0.0", optional = true}
 anyhow = "1.0.71"
 bincode = "1.3.3"
-rquickjs = {version = "0.1.7", features = ["exports", "async-std", "rust-alloc", "loader", "dyn-load"]}
-rlua = "0.19.7"
+rquickjs = {version = "0.1.7", features = ["exports", "async-std", "rust-alloc", "loader", "dyn-load"], optional = true}
+rlua = {version ="0.19.7", optional = true}
 once_cell = "1.18.0"
-rlua_serde = {git="https://github.com/darmie/rlua_serde", branch="master"}
-ruwren = {git="https://github.com/darmie/ruwren"}
+rlua_serde = {git="https://github.com/darmie/rlua_serde", branch="master", optional = true}
+ruwren = {git="https://github.com/darmie/ruwren", optional = true}
 
 
 [lib]
 doctest = false
-
-
-

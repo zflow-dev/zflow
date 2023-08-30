@@ -7,17 +7,34 @@ use std::{
 
 use poll_promise::Promise;
 use regex::Regex;
-use serde::Deserialize;
-use serde_json::{Value, json};
+
+use serde_json::{json, Value};
 use zflow_graph::types::GraphJson;
 
 use crate::{
     component::{Component, GraphDefinition, ModuleComponent},
-    js::JsComponent,
-    lua::LuaComponent,
     registry::{ComponentSource, DefaultRegistry, RuntimeRegistry},
-    wasm::WasmComponent, wren::WrenComponent,
 };
+
+#[cfg(any(
+    feature = "js_runtime",
+    feature = "wasm_runtime",
+    feature = "lua_runtime",
+    feature = "wren_runtime"
+))]
+use serde::Deserialize;
+
+#[cfg(feature="js_runtime")]
+use crate::js::JsComponent;
+
+#[cfg(feature="wasm_runtime")]
+use crate::wasm::WasmComponent;
+
+#[cfg(feature="lua_runtime")]
+use crate::lua::LuaComponent;
+
+#[cfg(feature="wren_runtime")]
+use crate::wren::WrenComponent;
 
 use std::fmt::Debug;
 
@@ -38,7 +55,6 @@ pub struct ComponentLoaderOptions {
 /// available in the running system, as well as for instantiating
 /// them.
 ///
-
 pub struct ComponentLoader {
     pub(crate) components: Arc<Mutex<HashMap<String, Box<dyn GraphDefinition>>>>,
     pub options: ComponentLoaderOptions,
@@ -285,6 +301,7 @@ impl ComponentLoader {
             }
         }
 
+        #[cfg(feature = "wasm_runtime")]
         // Load and create a wasm component
         if let Some(wasm_component) = component.to_any().downcast_ref::<WasmComponent>() {
             let mut wasm = wasm_component.clone();
@@ -303,6 +320,7 @@ impl ComponentLoader {
             ));
         }
 
+        #[cfg(feature = "js_runtime")]
         // Load and create a js component
         if let Some(js_component) = component.to_any().downcast_ref::<JsComponent>() {
             let mut js = js_component.clone();
@@ -321,6 +339,7 @@ impl ComponentLoader {
             ));
         }
 
+        #[cfg(feature = "lua_runtime")]
         // Load and create a lua component
         if let Some(lua_component) = component.to_any().downcast_ref::<LuaComponent>() {
             let mut lua = lua_component.clone();
@@ -339,8 +358,9 @@ impl ComponentLoader {
             ));
         }
 
-          // Load and create a wren component
-          if let Some(wren_component) = component.to_any().downcast_ref::<WrenComponent>() {
+        #[cfg(feature = "wren_runtime")]
+        // Load and create a wren component
+        if let Some(wren_component) = component.to_any().downcast_ref::<WrenComponent>() {
             let mut wren = wren_component.clone();
             wren.base_dir = if wren.base_dir == "/" {
                 let mut buf = PathBuf::from(self.base_dir.clone());
@@ -357,21 +377,31 @@ impl ComponentLoader {
             ));
         }
 
-        // check if it's source code 
+        // check if it's source code
+
         if let Some(source) = component.to_any().downcast_ref::<ComponentSource>() {
             match source.language.as_str() {
-                "lua" =>{
-                    let comp = LuaComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
-                    return self.create_component(name, &comp, metadata)
+                #[cfg(feature = "lua_runtime")]
+                "lua" => {
+                    let comp =
+                        LuaComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
+                    return self.create_component(name, &comp, metadata);
                 }
-                "wren" =>{
-                    let comp = WrenComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
-                    return self.create_component(name, &comp, metadata)
+                #[cfg(feature = "wren_runtime")]
+                "wren" => {
+                    let comp =
+                        WrenComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
+                    return self.create_component(name, &comp, metadata);
                 }
-                "js" | "ts" =>{
-                    return self.create_component(name, &JsComponent::deserialize(json!(source)).map_err(|err| err.to_string())?, metadata)
+                #[cfg(feature = "js_runtime")]
+                "js" | "ts" => {
+                    return self.create_component(
+                        name,
+                        &JsComponent::deserialize(json!(source)).map_err(|err| err.to_string())?,
+                        metadata,
+                    )
                 }
-                _=> return Err(format!("Unsupported source language: {}", source.language))
+                _ => return Err(format!("Unsupported source language: {}", source.language)),
             }
         }
 
@@ -514,7 +544,7 @@ impl ComponentLoader {
         self.processing = Some(vec![loading_components]);
     }
 
-    /// With `set_source` you can replace a component's source code by providing. 
+    /// With `set_source` you can replace a component's source code by providing.
     /// Supported languages and techniques
     /// depend on the runtime environment registry provided
     pub fn set_source(
@@ -535,7 +565,7 @@ impl ComponentLoader {
                 components.insert(new_name, Box::new(source.clone()));
             }
             self.list_components()?;
-            return  Ok(());
+            return Ok(());
         }
         Err(format!(
             "Could not set code source for component '{}'",
@@ -594,8 +624,6 @@ pub fn normalize_name(package_id: &str, name: &str) -> String {
 
     f_name
 }
-
-
 
 #[cfg(test)]
 mod tests {
