@@ -2128,7 +2128,7 @@ dependencies = [
 [[package]]
 name = "go-codegen"
 version = "0.1.4"
-source = "git+https://github.com/darmie/goscript?branch=temp-fix#75246ad9f7b0b93f5954460dd5e9cd630aa776d4"
+source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
 dependencies = [
  "go-parser",
  "go-types",
@@ -2138,7 +2138,7 @@ dependencies = [
 [[package]]
 name = "go-engine"
 version = "0.1.4"
-source = "git+https://github.com/darmie/goscript?branch=temp-fix#75246ad9f7b0b93f5954460dd5e9cd630aa776d4"
+source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
 dependencies = [
  "futures-lite",
  "go-codegen",
@@ -2153,12 +2153,12 @@ dependencies = [
 [[package]]
 name = "go-parser"
 version = "0.1.1"
-source = "git+https://github.com/darmie/goscript?branch=temp-fix#75246ad9f7b0b93f5954460dd5e9cd630aa776d4"
+source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
 
 [[package]]
 name = "go-pmacro"
 version = "0.1.0"
-source = "git+https://github.com/darmie/goscript?branch=temp-fix#75246ad9f7b0b93f5954460dd5e9cd630aa776d4"
+source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
 dependencies = [
  "proc-macro2 1.0.56",
  "quote 1.0.27",
@@ -2168,7 +2168,7 @@ dependencies = [
 [[package]]
 name = "go-types"
 version = "0.1.2"
-source = "git+https://github.com/darmie/goscript?branch=temp-fix#75246ad9f7b0b93f5954460dd5e9cd630aa776d4"
+source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
 dependencies = [
  "go-parser",
  "num-bigint",
@@ -2180,7 +2180,7 @@ dependencies = [
 [[package]]
 name = "go-vm"
 version = "0.1.3"
-source = "git+https://github.com/darmie/goscript?branch=temp-fix#75246ad9f7b0b93f5954460dd5e9cd630aa776d4"
+source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
 dependencies = [
  "async-channel",
  "async-executor",

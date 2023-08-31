@@ -1,12 +1,11 @@
 mod go_std;
-// mod utils;
+mod utils;
 
 use crate::component::{Component, ComponentOptions, GraphDefinition, ModuleComponent};
-// use crate::go::utils::ZipReader;
+use crate::go::utils::{go_value_to_json_value, to_go_value, ZflowData, ZflowDataFfi};
 use crate::ip::IPType;
 use crate::port::{InPort, OutPort, PortOptions};
 use crate::process::{ProcessError, ProcessOutput, ProcessResult};
-
 
 use crate::goengine::ffi::*;
 
@@ -16,7 +15,6 @@ use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::any::Any;
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -237,7 +235,7 @@ impl ModuleComponent for GoComponent {
                                 .ok_or("Could not fetch process inputs".to_owned())?
                         };
 
-                        let go_map = to_go_value(ctx, v);
+                        let go_map = ZflowData::from_data(v).into_val();
                         Ok(go_map)
                     }
                 }
@@ -245,9 +243,10 @@ impl ModuleComponent for GoComponent {
 
                 // Register the package: needs more research
                 engine.register_extension("zflow.process", Rc::new(ZflowFfi {}));
+                engine.register_extension("zflow.data", Rc::new(ZflowDataFfi {}));
 
                 engine.set_std_io(cfg.std_in, cfg.std_out, cfg.std_err);
-            
+
                 let panic_handler: Option<Rc<dyn Fn(String, String)>> =
                     Some(Rc::new(move |msg: String, stack: String| {
                         eprintln!("{}\n", msg);
@@ -262,12 +261,16 @@ impl ModuleComponent for GoComponent {
                         panic_handler,
                     )
                     .map_err(|err| {
+                        err.borrow().iter().for_each(|e|{
+                            eprintln!("{}", e.msg);
+                        });
+
                         let errors = err
                             .borrow()
                             .iter()
                             .map(|v| v.msg.clone())
                             .collect::<Vec<_>>();
-                        eprintln!("{:?}", errors);
+                       
                         ProcessError(format!("GoScript Rumtime error: {:?}", errors))
                     })?;
 
@@ -275,139 +278,6 @@ impl ModuleComponent for GoComponent {
                 return Ok(ProcessResult::default());
             })),
         }));
-    }
-}
-
-fn go_value_to_json_value(v: &GosValue) -> Result<Value, ProcessError> {
-    // Todo: convert to serde_json::Value;
-    if v.is_nil() {
-        return Ok(Value::Null);
-    }
-    match v.typ() {
-        ValueType::Void => Ok(Value::Null),
-        ValueType::Bool => Ok(json!(*v.as_bool())),
-        ValueType::Int => Ok(json!(*v.as_int())),
-        ValueType::Int8 => Ok(json!(*v.as_int8())),
-        ValueType::Int16 => Ok(json!(*v.as_int16())),
-        ValueType::Int32 => Ok(json!(*v.as_int32())),
-        ValueType::Int64 => Ok(json!(*v.as_int64())),
-        ValueType::Uint => Ok(json!(*v.as_uint())),
-        ValueType::UintPtr => Ok(json!(*v.as_uint_ptr())),
-        ValueType::Uint8 => Ok(json!(*v.as_uint8())),
-        ValueType::Uint16 => Ok(json!(*v.as_uint16())),
-        ValueType::Uint32 => Ok(json!(*v.as_uint32())),
-        ValueType::Uint64 => Ok(json!(*v.as_uint64())),
-        ValueType::Float32 => Ok(json!(v.as_float32().0)),
-        ValueType::Float64 => Ok(json!(v.as_float64().0)),
-        ValueType::String => {
-            let go_str = v.as_string().as_str();
-            let string: &str = &go_str.as_ref();
-            Ok(json!(string))
-        }
-        // is this feasible?
-        ValueType::Array => {
-            let (array_obj, _) = v.as_array::<GosElem>();
-
-            let mut value = vec![];
-            for data in array_obj.borrow_data().iter() {
-                let d = data.clone().into_value(ValueType::Interface);
-                if let Ok(underlying) = d.iface_underlying() {
-                    if underlying.is_some() {
-                        value.push(go_value_to_json_value(underlying.as_ref().unwrap())?);
-                    }
-                }
-            }
-
-            Ok(json!(value))
-        }
-        ValueType::Slice => {
-            let mut value = vec![];
-            if let Some(s) = v.clone().as_slice::<GosElem>() {
-                let (slice_obj, _) = s.borrow();
-                let (array_obj, _) = slice_obj.array().as_array::<GosElem>();
-                for data in array_obj.borrow_data().iter() {
-                    let d = data.clone().into_value(ValueType::Interface);
-                    if let Ok(underlying) = d.iface_underlying() {
-                        if underlying.is_some() {
-                            value.push(go_value_to_json_value(underlying.as_ref().unwrap())?);
-                        }
-                    }
-                }
-            }
-            Ok(json!(value))
-        }
-        ValueType::Map => {
-            let mut m = Map::new();
-            if let Some((mp, _)) = v.as_map() {
-                let mp = mp.clone();
-                for (k, v) in mp.borrow_data_mut().clone().into_iter() {
-                    if k.typ() != ValueType::String {
-                        return Err(ProcessError(format!(
-                            "Hash Map should only be indexed by string"
-                        )));
-                    }
-                    let key = go_value_to_json_value(&k)?.as_str().unwrap().to_string();
-                    m.insert(key, go_value_to_json_value(&v)?);
-                }
-            }
-            Ok(json!(m))
-        }
-        ValueType::Interface => {
-            return go_value_to_json_value(v.as_interface().unwrap().underlying_value().unwrap())
-        }
-        _ => Err(ProcessError(format!("unsupported GoScript type"))),
-    }
-}
-
-fn map_go_types(v: Value) -> ValueType {
-    match v {
-        Value::Null => ValueType::Void,
-        Value::Bool(_) => ValueType::Bool,
-        Value::Number(n) => {
-            if n.is_f64() {
-                ValueType::Float64
-            } else if n.is_i64() {
-                ValueType::Int64
-            } else {
-                ValueType::Uint64
-            }
-        }
-        Value::String(_) => ValueType::String,
-        Value::Array(_) => ValueType::Array,
-        Value::Object(_) => ValueType::Map,
-    }
-}
-
-fn to_go_value(ctx: &FfiCtx, value: Value) -> GosValue {
-    match value.clone() {
-        Value::Null => FfiCtx::new_nil(ValueType::Void),
-        Value::Bool(b) => GosValue::from(b),
-        Value::Number(d) => {
-            if d.is_f64() {
-                return GosValue::from(d.as_f64().unwrap());
-            } else if d.is_u64() {
-                return GosValue::from(d.as_u64().unwrap());
-            }
-            return GosValue::from(d.as_i64().unwrap());
-        }
-        Value::String(s) => FfiCtx::new_string(&s),
-        Value::Array(a) => {
-            let data = a
-                .iter()
-                .map(|d| to_go_value(ctx, d.clone()))
-                .collect::<Vec<_>>();
-
-            ctx.new_array(data, map_go_types(value))
-        }
-        Value::Object(m) => {
-            let mp = MapObj::new();
-            for (k, v) in m {
-                let _val = FfiCtx::new_interface(to_go_value(ctx, v.clone()), None);
-                mp.insert(FfiCtx::new_string(&k), _val);
-            }
-
-            ctx.new_map(mp)
-        }
     }
 }
 
