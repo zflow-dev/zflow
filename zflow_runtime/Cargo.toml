@@ -47,7 +47,7 @@ rquickjs = {version = "0.1.7", features = ["full"], optional = true}
 rlua = {version ="0.19.7", optional = true}
 once_cell = "1.18.0"
 rlua_serde = {git="https://github.com/darmie/rlua_serde", branch="master", optional = true}
-ruwren = {git="https://github.com/darmie/ruwren", optional = true}
+ruwren = {git="https://github.com/darmie/ruwren", branch="fix-map-count", optional = true}
 go-engine = {git="https://github.com/darmie/goscript", branch="master", features=["read_zip", "async"], optional = true}
 go-vm = {git="https://github.com/darmie/goscript", branch="master", features=["async"], optional = true}
 go-pmacro = {git="https://github.com/darmie/goscript", branch="master", optional = true}

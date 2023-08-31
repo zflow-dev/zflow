@@ -10,8 +10,8 @@ use std::{
 use is_url::is_url;
 use once_cell::sync::OnceCell;
 use ruwren::{
-    create_module, get_slot_checked, BasicFileLoader, Class, FunctionSignature, Module,
-    ModuleLibrary, ModuleScriptLoader, VMConfig, VMWrapper, VM,
+    create_module, get_slot_checked, BasicFileLoader, Class, FunctionHandle, FunctionSignature,
+    Module, ModuleLibrary, ModuleScriptLoader, VMConfig, VMWrapper, VM,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -182,12 +182,13 @@ impl ModuleComponent for WrenComponent {
 
                     impl ZFlowModule {
                         fn send(vm: &VM) {
-                            let port = get_slot_checked!(vm => string 1);
-                            let value = to_json_value(vm, 2);
-                            let mut ip = Map::new();
-                            ip.insert(port, value);
+                            // let port = get_slot_checked!(vm => string 1);
+                            let value = to_json_value(vm, 1);
+                            println!("{:?}", value);
+                            // let mut ip = Map::new();
+                            // ip.insert(port, value);
                             if let Some(process) = unsafe { PROCESS_OUTPUT.get() } {
-                                process.clone().send(&ip).unwrap();
+                                process.clone().send(&value).unwrap();
                             }
                         }
                         fn done(vm: &VM) {
@@ -206,7 +207,7 @@ impl ModuleComponent for WrenComponent {
                 }
                 create_module! {
                     class("ZFlow") crate::wren::ZFlowModule => _zflow {
-                        static(fn "send", 2) send,
+                        static(fn "send", 1) send,
                         static(fn "done", 1) done
                     }
                     module => zflow
@@ -224,7 +225,7 @@ impl ModuleComponent for WrenComponent {
                             Some(
                                 "
                                 class ZFlow {
-                                    foreign static send(port, data)
+                                    foreign static send(data)
                                     foreign static done(error)
                                 }
                                 "
@@ -277,7 +278,7 @@ impl ModuleComponent for WrenComponent {
 
                 vm.execute(|vm| {
                     vm.ensure_slots(2);
-                    vm.get_variable("main", "Component", 0);
+                    assert!(vm.get_variable("main", "Main", 0));
                     to_wren_value(vm, 1, mapped_inputs);
                 });
 
@@ -348,8 +349,19 @@ fn to_json_value(vm: &VM, slot: usize) -> Value {
             json!(value)
         }
         ruwren::SlotType::Map => {
-            // Todo: figure out a way to serialize wren map to json/rust map
-            Value::Null
+            vm.ensure_slots(3);
+            let mut map = Map::new();
+            if let Some(count) = vm.get_map_count(slot) {
+                for i in 0..count {
+                    vm.ensure_slots(2);
+                    if let Some(key) = vm.get_slot_string(slot + i + 1) {
+                        vm.get_map_value(slot, slot + i + 1, slot + i + 2);
+                        let value = to_json_value(vm, slot + i + 2);
+                        map.insert(key, value);
+                    }
+                }
+            }
+            json!(map)
         }
         ruwren::SlotType::Null => Value::Null,
         ruwren::SlotType::String => {

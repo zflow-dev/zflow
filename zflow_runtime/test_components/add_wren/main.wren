@@ -1,10 +1,10 @@
 import "zflow" for ZFlow
 
-class Component {
+class Main {
     static process(input){
+        if(input == null) return
+        if(!input.containsKey("left") && !input.containsKey("right")) return
         var result = input["left"] + input["right"]
-        System.print({"sum": result})
-        ZFlow.send("sum", result)
+        ZFlow.send({"sum": result})
     }
 }
-

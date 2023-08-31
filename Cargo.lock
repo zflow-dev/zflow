@@ -3461,7 +3461,7 @@ dependencies = [
 [[package]]
 name = "ruwren"
 version = "0.4.2"
-source = "git+https://github.com/darmie/ruwren#4250337b5c7baaf51c375d6465dff654dce521f6"
+source = "git+https://github.com/darmie/ruwren?branch=fix-map-count#6aec70486cc5f5cd000cf4383eb9dd79bc46f23c"
 dependencies = [
  "ruwren-sys",
 ]
