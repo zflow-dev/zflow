@@ -180,8 +180,6 @@ impl ModuleComponent for JsComponent {
 
                     return context.with(|ctx| {
                         let global = ctx.globals();
-
-                        // let process_object = rquickjs::Object::new(ctx).unwrap();
                         let mut _inputs = rquickjs::Object::new(ctx).unwrap();
 
                         for key in inports.keys() {
@@ -199,7 +197,6 @@ impl ModuleComponent for JsComponent {
                                     .expect("runtime error");
                             }
                         }
-
 
                         let mut _outputs = rquickjs::Object::new(ctx).unwrap();
                         let output = this.output.clone();
@@ -252,20 +249,21 @@ impl ModuleComponent for JsComponent {
                             )
                             .expect("runtime error");
 
-
-                        global.set("zflow", _outputs.as_value().clone()).expect("runtime error");
-
                         let console_module = r#"
                             import {log, info, warn, error, debug} from "builtin/console";
                             export default  {log, info, warn, error, debug};
                         "#;
 
                         let console = ctx.compile("default", console_module).unwrap();
-                        global
+                        _outputs
                             .set(
                                 "console",
                                 console.get::<&str, rquickjs::Object>("default").unwrap(),
                             )
+                            .expect("runtime error");
+
+                        global
+                            .set("zflow", _outputs.as_value().clone())
                             .expect("runtime error");
 
                         let m = ctx
@@ -277,7 +275,8 @@ impl ModuleComponent for JsComponent {
                             .expect("runtime error");
 
                         let data = js_value_to_json_value(
-                            f.call::<(Object,), rquickjs::Value>((_inputs,)).expect("runtime error"),
+                            f.call::<(Object,), rquickjs::Value>((_inputs,))
+                                .expect("runtime error"),
                         )?;
                         Ok(ProcessResult {
                             data,
@@ -413,15 +412,19 @@ impl ModuleDef for JsConsole {
     ) -> rquickjs::Result<()> {
         fn fun(name: &'static str) -> impl Fn(rquickjs::Rest<rquickjs::Value>) {
             move |data: rquickjs::Rest<rquickjs::Value>| {
-                println!(
-                    "[console.{}] {:?}",
-                    name,
-                    data.0
-                        .iter()
-                        .map(|v| js_value_to_json_value(v.clone()).unwrap())
-                        .collect::<Vec<Value>>()
-                        .join(",")
-                );
+                print!("[console.{}] ", name);
+                data.0.iter().enumerate().for_each(|(i, v)| {
+                    let val = js_value_to_json_value(v.to_owned()).unwrap();
+                    if i == 0 {
+                        print!("{}", val.to_string());
+                    } else {
+                        if i == (data.0.len() - 1) {
+                            println!(",{}", val.to_string());
+                        } else {
+                            print!(",{}", val.to_string());
+                        }
+                    }
+                });
             }
         }
 

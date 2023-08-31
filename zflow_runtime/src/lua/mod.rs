@@ -2,7 +2,7 @@ use once_cell::sync::OnceCell;
 use serde_json::{Map, Value};
 use std::{any::Any, collections::HashMap, fs, path::PathBuf, sync::Mutex};
 
-use rlua::{Lua, ToLua, UserData, UserDataMethods};
+use rlua::{Lua, ToLua, UserData, UserDataMethods, Function, Table};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -197,6 +197,7 @@ impl ModuleComponent for LuaComponent {
                         let send: rlua::Function = lua_context
                             .create_function_mut(move |_, data: rlua::Value<'_>| {
                                 let data = rlua_serde::from_value::<Value>(data)?;
+                                println!("{:?}", data);
                                 output
                                     .clone()
                                     .send(&data)
@@ -244,8 +245,6 @@ impl ModuleComponent for LuaComponent {
 
                         let globals = lua_context.globals();
 
-                        let process_table = lua_context.create_table().unwrap();
-
                         let outports_table = lua_context.create_table().unwrap();
 
                         outports_table.set("send", send).map_err(|err| {
@@ -269,20 +268,8 @@ impl ModuleComponent for LuaComponent {
                                 ))
                             })?;
 
-                        process_table.set("inports", _inputs).map_err(|err| {
-                            ProcessError(format!("Could not load lua inports: {}", err))
-                        })?;
 
-                        process_table
-                            .set("outports", outports_table)
-                            .map_err(|err| {
-                                ProcessError(format!(
-                                    "Could not create lua outports table: {}",
-                                    err
-                                ))
-                            })?;
-
-                        globals.set("zflow", process_table).map_err(|err| {
+                        globals.set("zflow", outports_table).map_err(|err| {
                             ProcessError(format!("Could load zflow process: {}", err))
                         })?;
 
@@ -290,10 +277,11 @@ impl ModuleComponent for LuaComponent {
                             .load(&source)
                             .set_name(&node_name)
                             .map_err(|err| ProcessError(format!("Unexpected error: {}", err)))?;
-                        lua_code
-                            .exec()
-                            .map_err(|err| ProcessError(format!("Unexpected error: {}", err)))?;
-
+                        lua_code.eval().map_err(|err| ProcessError(format!("Unexpected error: {}", err)))?;
+                        let proc = globals.get::<&str, Table>("zflow").unwrap().get::<&str, Function>("process").map_err(|err| ProcessError(format!("Unexpected error: {}", err)))?;
+                       
+                        proc.call::<(Table, ), ()>((_inputs, )).map_err(|err| ProcessError(format!("Unexpected error: {}", err)))?;
+    
                         return Ok(ProcessResult::default());
                     })
             })),

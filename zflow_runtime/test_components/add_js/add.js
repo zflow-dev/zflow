@@ -1,9 +1,10 @@
 
-export const process = (inputs) => {
-    const data = inputs
-    if (data.left && data.right) {
-        const result = Number(data.left) + Number(data.right);
-       zflow.send({ sum: result })
-    //    return { sum: result }
+export const process = (data) => {
+    if(!data) return;
+    const left = data.left
+    const right = data.right
+    // zflow.console.log(left, right);
+    if (left && right) {
+       zflow.send({ sum: Number(left) + Number(right) })
     }
 }

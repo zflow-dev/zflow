@@ -1,5 +1,10 @@
-if zflow.inports["left"] ~= nil and zflow.inports["right"] ~= nil then
-    left = zflow.inports["left"]
-    right = zflow.inports["right"]
-    zflow.outports.send({sum= left + right})
+function zflow.process(data)
+    if data ~= nil then
+        local left = data.left
+        local right = data.right
+
+        if left ~= nil and right ~= nil then
+            zflow.send({ sum = left + right })
+        end
+    end
 end
