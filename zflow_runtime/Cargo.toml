@@ -9,7 +9,7 @@ keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming"]
 
 
 [features]
-default = ["runtimes", "experimental", "async"]
+default = ["runtimes","async"]
 runtimes = ["lua_runtime", "js_runtime", "wren_runtime"]
 js_runtime  = ["dep:rquickjs"]
 wren_runtime = ["dep:ruwren"]
