@@ -5,17 +5,16 @@ import "zflow"
 func main() {
 	// get inputs
 	var in = zflow.Inputs()
-	if !in.IsNil() {
-		data, ok := in.Map()
-		if !ok {
-			panic("could not read inputs")
-		}
-		left, _ := data["left"].I64()
-		right, _ := data["right"].I64()
-		// some calculation
-		total := left + right
-
-		packet := map[string]int64{"sum": total}
-		zflow.Send(packet)
+	
+	data, ok := in.Map()
+	if !ok {
+		panic("could not read inputs")
 	}
+	left, _ := data["left"].I64()
+	right, _ := data["right"].I64()
+	// some calculation
+	total := left + right
+
+	packet := map[string]int64{"sum": total}
+	zflow.Send(packet)	
 }

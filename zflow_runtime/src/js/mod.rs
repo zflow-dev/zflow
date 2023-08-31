@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, path::PathBuf};
 
 use rquickjs::{
+    AsArguments,
     BuiltinLoader,
     BuiltinResolver,
     // loader::{
@@ -17,9 +18,12 @@ use rquickjs::{
     Ctx,
     FileResolver,
     Func,
+    Function,
+    IntoJs,
     ModuleDef,
     ModuleLoader,
     NativeLoader,
+    Object,
     Runtime,
 };
 
@@ -177,7 +181,7 @@ impl ModuleComponent for JsComponent {
                     return context.with(|ctx| {
                         let global = ctx.globals();
 
-                        let process_object = rquickjs::Object::new(ctx).unwrap();
+                        // let process_object = rquickjs::Object::new(ctx).unwrap();
                         let mut _inputs = rquickjs::Object::new(ctx).unwrap();
 
                         for key in inports.keys() {
@@ -196,9 +200,6 @@ impl ModuleComponent for JsComponent {
                             }
                         }
 
-                        process_object
-                            .set("inport", _inputs.as_value().clone())
-                            .unwrap();
 
                         let mut _outputs = rquickjs::Object::new(ctx).unwrap();
                         let output = this.output.clone();
@@ -251,11 +252,8 @@ impl ModuleComponent for JsComponent {
                             )
                             .expect("runtime error");
 
-                        process_object
-                            .set("outport", _outputs.as_value().clone())
-                            .unwrap();
 
-                        global.set("zflow", process_object).expect("runtime error");
+                        global.set("zflow", _outputs.as_value().clone()).expect("runtime error");
 
                         let console_module = r#"
                             import {log, info, warn, error, debug} from "builtin/console";
@@ -270,19 +268,21 @@ impl ModuleComponent for JsComponent {
                             )
                             .expect("runtime error");
 
-                        return match ctx.eval(source.clone()) {
-                            Ok(val) => {
-                                if let Err(err) = this
-                                    .output
-                                    .send(&js_value_to_json_value(val).expect("runtime error"))
-                                {
-                                    Err(err)
-                                } else {
-                                    Ok(ProcessResult::default())
-                                }
-                            }
-                            Err(err) => Err(ProcessError(err.to_string())),
-                        };
+                        let m = ctx
+                            .compile("process", source.clone())
+                            .expect("runtime error");
+
+                        let f = m
+                            .get::<&str, rquickjs::Function>("process")
+                            .expect("runtime error");
+
+                        let data = js_value_to_json_value(
+                            f.call::<(Object,), rquickjs::Value>((_inputs,)).expect("runtime error"),
+                        )?;
+                        Ok(ProcessResult {
+                            data,
+                            ..ProcessResult::default()
+                        })
                     });
                 }
                 Ok(ProcessResult::default())

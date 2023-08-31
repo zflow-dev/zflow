@@ -93,7 +93,7 @@ impl GraphDefinition for GoComponent {
 impl ModuleComponent for GoComponent {
     fn as_component(&self) -> Result<Component, String> {
         let mut code = PathBuf::from(&self.base_dir);
-        // let base_dir = self.base_dir.clone();
+        let base_dir = self.base_dir.clone();
 
         let source = if is_url(&self.source) || self.base_dir != "/" {
             code.push(self.source.clone());
@@ -143,8 +143,6 @@ impl ModuleComponent for GoComponent {
                 let handle_binding = handle.clone();
                 let mut handle_binding = handle_binding.try_lock();
 
-                // todo: in order to make sense of the implementation, this variable is renamed to process_handler
-                // to remove before final PR approval/merge/submission
                 let process_handler = handle_binding.as_mut().map_err(|_| {
                     ProcessError(String::from("Process Handle dropped. Could not lock."))
                 })?;
@@ -216,6 +214,7 @@ impl ModuleComponent for GoComponent {
                         let data = go_value_to_json_value(&args).map_err(|err| err.0)?;
                         // get process handle
                         if let Some(process) = unsafe { process_output.get_mut() } {
+                            println!("{:?}", data);
                             process.send(&data).map_err(|err| err.0)?;
                         }
                         Ok(())
@@ -228,7 +227,7 @@ impl ModuleComponent for GoComponent {
                         }
                         Ok(())
                     }
-                    fn ffi_inputs(ctx: &FfiCtx) -> RuntimeResult<GosValue> {
+                    fn ffi_inputs() -> RuntimeResult<GosValue> {
                         let v = unsafe {
                             process_input
                                 .take()

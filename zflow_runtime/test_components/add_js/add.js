@@ -1,11 +1,9 @@
 
-
-const inport = zflow.inport;
-const outport = zflow.outport;
-
-
-if(inport.left && inport.right){
-    const result = Number(inport.left) + Number(inport.right);
-    console.log(result);
-    outport.send({sum: result})
+export const process = (inputs) => {
+    const data = inputs
+    if (data.left && data.right) {
+        const result = Number(data.left) + Number(data.right);
+       zflow.send({ sum: result })
+    //    return { sum: result }
+    }
 }
