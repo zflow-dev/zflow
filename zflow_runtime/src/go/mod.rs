@@ -295,9 +295,9 @@ mod tests {
 
         let mut graph = Graph::new("", false);
         graph
-            .add_node("zflow", "add_go", None)
-            .add_initial(json!(1), "zflow", "left", None)
-            .add_initial(json!(2), "zflow", "right", None);
+            .add_node("test/add_go", "add_go", None)
+            .add_initial(json!(1), "test/add_go", "left", None)
+            .add_initial(json!(2), "test/add_go", "right", None);
 
         let mut network = Network::create(
             graph.clone(),

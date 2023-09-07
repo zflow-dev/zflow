@@ -4,6 +4,7 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex},
     thread,
+    time::Duration,
 };
 
 use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
@@ -16,7 +17,7 @@ use fp_rust::{
 
 use log::{debug, log, Level};
 use serde::Deserialize;
-use serde_json::{json, Value, Map};
+use serde_json::{json, Map, Value};
 use zflow_graph::types::GraphJson;
 use zflow_graph::Graph;
 
@@ -33,10 +34,8 @@ use crate::{
         ProcessResult,
     },
     registry::RemoteComponent,
-    sockets::SocketEvent
+    sockets::SocketEvent,
 };
-
-
 
 #[derive(Debug, Clone, Default)]
 pub struct BracketContext {
@@ -51,7 +50,7 @@ pub enum ComponentEvent {
     Start,
     Ready,
     End,
-    Icon(Value)
+    Icon(Value),
 }
 
 pub trait ModuleComponent: DynClone + Send + Sync + 'static {
@@ -132,7 +131,7 @@ pub struct Component {
     tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
     pub(crate) graph: Option<Box<dyn GraphDefinition>>,
     pub(crate) ready: bool,
-    pub metadata: Option<Map<String, Value>>
+    pub metadata: Option<Map<String, Value>>,
 }
 
 impl Clone for Component {
@@ -207,7 +206,7 @@ impl Default for Component {
             network: Default::default(),
             loader: Default::default(),
             starting: Default::default(),
-            metadata: Default::default()
+            metadata: Default::default(),
         }
     }
 }
@@ -245,7 +244,7 @@ impl Component {
     }
     pub fn new(mut options: ComponentOptions) -> Self {
         let bus_handle = HandlerThread::new_with_mutex();
-      
+
         if options.graph.is_some() {
             options.in_ports.insert(
                 "graph".to_string(),
@@ -290,7 +289,7 @@ impl Component {
             // bus: Arc::new(Mutex::new(Publisher::new_with_handlers(Some(
             //     bus_handle.clone(),
             // )))),
-            bus:Arc::new(Mutex::new(Publisher::new())),
+            bus: Arc::new(Mutex::new(Publisher::new())),
             internal_thread: bus_handle.clone(),
             setup_fn: None,
             teardown_fn: None,
@@ -300,9 +299,9 @@ impl Component {
             network: None,
             loader: None,
             starting: false,
-            metadata: options.metadata
+            metadata: options.metadata,
         };
-    
+
         if let Some(process) = options.process {
             s.handle = Some(Arc::new(Mutex::new(Box::leak(process))));
         }
@@ -443,6 +442,7 @@ impl Component {
                 component.get_subscribers().iter().for_each(|signal| {
                     component
                         .get_publisher()
+                        .clone()
                         .try_lock()
                         .unwrap()
                         .unsubscribe(signal.clone());
@@ -500,7 +500,10 @@ impl Component {
         let mut handle = None;
         let mut handler_thread = None;
 
+        let mut node_id = "".to_owned();
+
         if let Ok(component) = _component.clone().try_lock().as_mut() {
+            node_id = component.get_node_id();
             if !port.options.triggering {
                 // If port is non-triggering, we can skip the process function call
                 return;
@@ -614,7 +617,7 @@ impl Component {
                     _ => {}
                 }
             }
-
+            // has_load = component.get_load() > 0;
             inports = component.get_inports();
             outports = component.get_outports();
             handle = component.get_handle();
@@ -626,14 +629,14 @@ impl Component {
         let context = Arc::new(Mutex::new(ProcessContext {
             ip: ip.clone(),
             result: result.clone(),
-            activated: false,
-            deactivated: true,
             ports: vec![port.clone().name],
             close_ip: None,
             source: "".to_owned(),
             data: Value::Null,
             scope: None,
             component: _component.clone(),
+            activated: false,
+            ..Default::default()
         }));
         if handle.is_none() {
             return;
@@ -670,7 +673,8 @@ impl Component {
             })));
             if res.is_ok() {
                 let data = res.ok().unwrap();
-                if !data.resolved && !data.data.is_null() {
+
+                if data.resolved {
                     if let Err(x) = output.clone().send_done(&data) {
                         output.clone().done(Some(&x));
                         let _component = _component.clone();
@@ -692,32 +696,32 @@ impl Component {
             }
         }
 
-        let _component = _component.clone();
-        if let Ok(component) = _component.clone().try_lock().as_mut() {
-            if context.clone().try_lock().unwrap().activated {
+        if let Ok(ctx) = context.clone().try_lock() {
+            if ctx.activated {
                 return;
             }
-            // If receiving an IP object didn't cause the component to
-            // activate, log that input conditions were not met
-            if port.clone().is_addressable() {
-                log!(
-                    Level::Debug,
-                    "zflow::component => {} packet on '{}[{}]' didn't match preconditions: {:?}",
-                    component.get_node_id(),
-                    port.clone().name,
-                    ip.clone().index.unwrap(),
-                    ip.clone().datatype
-                );
-                return;
-            }
+        }
+       
+        // If receiving an IP object didn't cause the component to
+        // activate, log that input conditions were not met
+        if port.clone().is_addressable() {
             log!(
                 Level::Debug,
-                "zflow::component => {} packet on '{}' didn't match preconditions: {:?}",
-                component.get_node_id(),
+                "zflow::component => {} packet on '{}[{}]' didn't match preconditions: {:?}",
+                node_id,
                 port.clone().name,
+                ip.clone().index.unwrap(),
                 ip.clone().datatype
             );
+            return;
         }
+        log!(
+            Level::Debug,
+            "zflow::component => {} packet on '{}' didn't match preconditions: {:?}",
+            node_id,
+            port.clone().name,
+            ip.clone().datatype
+        );
     }
 
     /// ### Setup
@@ -742,9 +746,8 @@ impl Component {
 
     /// Subscribe to component's events
     pub fn on(&mut self, callback: impl FnMut(Arc<ComponentEvent>) -> () + Send + Sync + 'static) {
-       let f =  self.bus.clone().try_lock().unwrap().subscribe_fn(callback);
-        self.tracked_signals
-            .push(f.clone());
+        let f = self.bus.clone().try_lock().unwrap().subscribe_fn(callback);
+        self.tracked_signals.push(f.clone());
     }
 
     pub fn prepare_forwarding(&mut self) {
@@ -1432,49 +1435,56 @@ impl Component {
     /// Signal that component has deactivated. There may be multiple
     /// deactivated contexts at the same time
     pub fn deactivate(&mut self, context: Arc<Mutex<ProcessContext>>) {
-        if let Ok(context) = context.clone().try_lock().as_mut() {
-            if context.deactivated {
-                return;
-            }
+        let context = context.clone();
+        let mut context = context.try_lock();
+        let context = context.as_mut().unwrap();
 
-            context.activated = false;
-            context.deactivated = true;
-
-            self.set_load(self.get_load() - 1);
-
-            if self.is_ordered() {
-                self.process_output_queue();
-            }
-
-            self.get_publisher()
-                .clone()
-                .try_lock()
-                .unwrap()
-                .publish(ComponentEvent::Deactivate(self.get_load()));
+        if context.deactivated {
+            return;
         }
+
+        context.activated = false;
+        context.deactivated = true;
+
+    
+        if self.is_ordered() {
+            self.process_output_queue();
+        }
+
+        self.load -= 1;
+        context.load -= 1;
+
+        self.get_publisher()
+            .clone()
+            .try_lock()
+            .unwrap()
+            .publish(ComponentEvent::Deactivate(context.load));
     }
     /// Signal that component has activated. There may be multiple
     /// activated contexts at the same time
     pub fn activate(&mut self, context: Arc<Mutex<ProcessContext>>) {
-        if let Ok(context) = context.clone().try_lock().as_mut() {
-            if context.activated {
-                return;
-            }
+        let context = context.clone();
+        let mut context = context.try_lock();
+        let context = context.as_mut().unwrap();
 
-            context.activated = true;
-            context.deactivated = false;
+        if context.activated {
+            return;
+        }
 
-            self.set_load(self.get_load() + 1);
+        context.activated = true;
+        context.deactivated = false;
 
-            self.get_publisher()
-                .try_lock()
-                .unwrap()
-                .publish(ComponentEvent::Activate(self.get_load()));
+        self.load += 1;
+        context.load += 1;
 
-            if self.is_ordered() || self.get_auto_ordering().is_some() {
-                self.get_output_queue_mut()
-                    .push_back(context.result.clone());
-            }
+        self.get_publisher()
+            .try_lock()
+            .unwrap()
+            .publish(ComponentEvent::Activate(context.load));
+
+        if self.is_ordered() || self.get_auto_ordering().is_some() {
+            self.get_output_queue_mut()
+                .push_back(context.result.clone());
         }
     }
 
@@ -1673,10 +1683,14 @@ impl Component {
 
     pub fn set_icon(&mut self, icon: &str) {
         self.icon = icon.to_string();
-        self.bus.clone().try_lock().unwrap().publish(ComponentEvent::Icon(json!({
-            "id": self.node_id,
-            "icon": icon
-        })));
+        self.bus
+            .clone()
+            .try_lock()
+            .unwrap()
+            .publish(ComponentEvent::Icon(json!({
+                "id": self.node_id,
+                "icon": icon
+            })));
     }
 
     pub fn get_bracket_context_val(&self) -> BracketContext {
@@ -2010,7 +2024,7 @@ pub struct ComponentOptions {
     pub forward_brackets: HashMap<String, Vec<String>>,
     pub graph: Option<Box<dyn GraphDefinition>>,
     pub process: Option<Box<ProcessFunc>>,
-    pub metadata: Option<Map<String, Value>>
+    pub metadata: Option<Map<String, Value>>,
 }
 
 impl Clone for ComponentOptions {
@@ -2030,7 +2044,7 @@ impl Clone for ComponentOptions {
         if let Some(graph) = &self.graph {
             s.graph = Some(dyn_clone::clone_box(&**graph));
         }
-     
+
         s
     }
 }

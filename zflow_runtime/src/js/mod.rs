@@ -28,7 +28,7 @@ use rquickjs::{
 };
 
 use crate::component::GraphDefinition;
-use crate::process::ProcessHandle;
+use crate::process::{ProcessContext, ProcessHandle};
 use crate::{
     component::{Component, ComponentOptions, ModuleComponent},
     ip::IPType,
@@ -93,6 +93,7 @@ impl JsComponent {
             if !meta.icon.is_empty() {
                 self.icon = meta.icon;
             }
+
             self.forward_brackets.extend(meta.forward_brackets);
             if !meta.base_dir.is_empty() {
                 self.base_dir = meta.base_dir;
@@ -148,143 +149,145 @@ impl ModuleComponent for JsComponent {
             forward_brackets: self.forward_brackets.clone(),
             graph: None,
             process: Some(Box::new(move |handle: Arc<Mutex<ProcessHandle>>| {
-                if let Ok(this) = handle.clone().try_lock().as_mut() {
-                    let controlled = inports
-                        .iter()
-                        .filter(|(k, v)| v.control)
-                        .map(|(k, _)| k)
-                        .collect::<Vec<_>>();
+                let handle_binding = handle.clone();
+                let mut handle_binding = handle_binding.try_lock();
+                let this = handle_binding
+                    .as_mut()
+                    .map_err(|_| ProcessError(String::from("Process Handle has dropped")))?;
 
-                    let controlled_data = controlled
-                        .iter()
-                        .map(|k| this.input().get(k.clone()))
-                        .collect::<Vec<_>>();
+                let controlled = inports
+                    .iter()
+                    .filter(|(k, v)| v.control)
+                    .map(|(k, _)| k)
+                    .collect::<Vec<_>>();
 
-                    if !controlled.is_empty() && controlled_data.contains(&None) {
-                        return Ok(ProcessResult::default());
-                    }
-                    let rt = Runtime::new().expect("runtime error");
-                    let context = Context::full(&rt).unwrap();
+                let controlled_data = controlled
+                    .iter()
+                    .map(|k| this.input().get(k.clone()))
+                    .collect::<Vec<_>>();
+     
+                if !controlled.is_empty() && controlled_data.contains(&None) {
+                    return Ok(ProcessResult::default())
+                }
 
-                    rt.set_loader(
-                        (
-                            BuiltinResolver::default().with_module("builtin/console"),
-                            FileResolver::default().with_native(),
-                        ),
-                        (
-                            NativeLoader::default(),
-                            BuiltinLoader::default(),
-                            ModuleLoader::default().with_module("builtin/console", JsConsole),
-                        ),
-                    );
+                let rt = Runtime::new().expect("runtime error");
+                let context = Context::full(&rt).unwrap();
 
-                    return context.with(|ctx| {
-                        let global = ctx.globals();
-                        let mut _inputs = rquickjs::Object::new(ctx).unwrap();
+                rt.set_loader(
+                    (
+                        BuiltinResolver::default().with_module("builtin/console"),
+                        FileResolver::default().with_native(),
+                    ),
+                    (
+                        NativeLoader::default(),
+                        BuiltinLoader::default(),
+                        ModuleLoader::default().with_module("builtin/console", JsConsole),
+                    ),
+                );
 
-                        for key in inports.keys() {
-                            let value = this.input().get(key);
-                            if let Some(value) = value {
-                                _inputs
-                                    .set(
-                                        key,
-                                        match value.datatype {
-                                            IPType::Data(v) => json_value_to_js_value(ctx, v)
-                                                .expect("runtime error"),
-                                            _ => ctx.eval("null").unwrap(),
-                                        },
-                                    )
-                                    .expect("runtime error");
-                            }
-                        }
+                return context.with(|ctx| {
+                    let global = ctx.globals();
+                    let mut _inputs = rquickjs::Object::new(ctx).unwrap();
 
-                        let mut _outputs = rquickjs::Object::new(ctx).unwrap();
-                        let output = this.output.clone();
-                        _outputs
-                            .set(
-                                "send",
-                                Func::new("", move |data: rquickjs::Value| {
-                                    let data = js_value_to_json_value(data).expect("runtime error");
-                                    output.clone().send(&data).unwrap();
-                                }),
-                            )
-                            .expect("runtime error");
-                        let output = this.output.clone();
-                        _outputs
-                            .set(
-                                "sendBuffer",
-                                Func::new(
-                                    "",
-                                    move |port: rquickjs::String, data: rquickjs::Array| {
-                                        let v = data
-                                            .into_iter()
-                                            .map(|d| d.unwrap().as_int().unwrap() as u8)
-                                            .collect::<Vec<u8>>();
-                                        output
-                                            .clone()
-                                            .send_buffer(
-                                                &port
-                                                    .to_string()
-                                                    .expect("expected port name to be string"),
-                                                &v,
-                                            )
-                                            .unwrap();
+                    for key in inports.keys() {
+                        let value = this.input().get(key);
+                        if let Some(value) = value {
+                            _inputs
+                                .set(
+                                    key,
+                                    match value.datatype {
+                                        IPType::Data(v) => {
+                                            json_value_to_js_value(ctx, v).expect("runtime error")
+                                        }
+                                        _ => ctx.eval("null").unwrap(),
                                     },
-                                ),
-                            )
-                            .expect("runtime error");
+                                )
+                                .expect("runtime error");
+                        }
+                    }
 
-                        let output = this.output.clone();
-                        _outputs
-                            .set(
-                                "sendDone",
-                                Func::new("", move |data: rquickjs::Value| {
-                                    output
-                                        .clone()
-                                        .send_done(
-                                            &js_value_to_json_value(data).expect("runtime error"),
-                                        )
-                                        .unwrap();
-                                }),
-                            )
-                            .expect("runtime error");
+                    let mut _outputs = rquickjs::Object::new(ctx).unwrap();
+                    let output = this.output.clone();
+                    _outputs
+                        .set(
+                            "send",
+                            Func::new("", move |data: rquickjs::Value| {
+                                let data = js_value_to_json_value(data).expect("runtime error");
+                                output.clone().send(&data).unwrap();
+                            }),
+                        )
+                        .expect("runtime error");
+                    let output = this.output.clone();
+                    _outputs
+                        .set(
+                            "sendBuffer",
+                            Func::new("", move |port: rquickjs::String, data: rquickjs::Array| {
+                                let v = data
+                                    .into_iter()
+                                    .map(|d| d.unwrap().as_int().unwrap() as u8)
+                                    .collect::<Vec<u8>>();
+                                output
+                                    .clone()
+                                    .send_buffer(
+                                        &port.to_string().expect("expected port name to be string"),
+                                        &v,
+                                    )
+                                    .unwrap();
+                            }),
+                        )
+                        .expect("runtime error");
 
-                        let console_module = r#"
+                    let output = this.output.clone();
+                    _outputs
+                        .set(
+                            "sendDone",
+                            Func::new("", move |data: rquickjs::Value| {
+                                output
+                                    .clone()
+                                    .send_done(
+                                        &js_value_to_json_value(data).expect("runtime error"),
+                                    )
+                                    .unwrap();
+                            }),
+                        )
+                        .expect("runtime error");
+
+                    let console_module = r#"
                             import {log, info, warn, error, debug} from "builtin/console";
                             export default  {log, info, warn, error, debug};
                         "#;
 
-                        let console = ctx.compile("default", console_module).unwrap();
-                        _outputs
-                            .set(
-                                "console",
-                                console.get::<&str, rquickjs::Object>("default").unwrap(),
-                            )
-                            .expect("runtime error");
+                    let console = ctx.compile("default", console_module).unwrap();
+                    _outputs
+                        .set(
+                            "console",
+                            console.get::<&str, rquickjs::Object>("default").unwrap(),
+                        )
+                        .expect("runtime error");
 
-                        global
-                            .set("zflow", _outputs.as_value().clone())
-                            .expect("runtime error");
+                    global
+                        .set("zflow", _outputs.as_value().clone())
+                        .expect("runtime error");
 
-                        let m = ctx
-                            .compile("process", source.clone())
-                            .expect("runtime error");
+                    let m = ctx
+                        .compile("process", source.clone())
+                        .expect("runtime error");
 
-                        let f = m
-                            .get::<&str, rquickjs::Function>("process")
-                            .expect("runtime error");
+                    let f = m
+                        .get::<&str, rquickjs::Function>("process")
+                        .expect("runtime error");
 
-                        let data = js_value_to_json_value(
-                            f.call::<(Object,), rquickjs::Value>((_inputs,))
-                                .expect("runtime error"),
-                        )?;
-                        Ok(ProcessResult {
-                            data,
-                            ..ProcessResult::default()
-                        })
-                    });
-                }
-                Ok(ProcessResult::default())
+
+                    let data = js_value_to_json_value(
+                        f.call::<(Object,), rquickjs::Value>((_inputs,))
+                            .expect("runtime error"),
+                    )?;
+                    Ok(ProcessResult {
+                        data,
+                        resolved: true,
+                        ..ProcessResult::default()
+                    })
+                });
             })),
             ..Default::default()
         }));
@@ -425,6 +428,7 @@ impl ModuleDef for JsConsole {
                         }
                     }
                 });
+                println!("");
             }
         }
 
@@ -442,6 +446,9 @@ rquickjs::module_init!(JsConsole);
 #[cfg(test)]
 mod tests {
 
+    use std::{thread, time::Duration};
+
+    use once_cell::sync::OnceCell;
     use zflow_graph::Graph;
 
     use crate::network::{BaseNetwork, Network, NetworkOptions};
@@ -456,15 +463,15 @@ mod tests {
 
         let mut graph = Graph::new("", false);
         graph
-            .add_node("zflow", "add", None)
-            .add_initial(json!(1), "zflow", "left", None)
-            .add_initial(json!(2), "zflow", "right", None);
+            .add_node("test/add", "add", None)
+            .add_initial(json!(5), "test/add", "left", None)
+            .add_initial(json!(2), "test/add", "right", None);
 
         let mut network = Network::create(
             graph.clone(),
             NetworkOptions {
                 subscribe_graph: false,
-                delay: true,
+                delay: false,
                 base_dir: base_dir.to_string(),
                 ..Default::default()
             },

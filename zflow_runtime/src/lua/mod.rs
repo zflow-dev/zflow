@@ -197,7 +197,6 @@ impl ModuleComponent for LuaComponent {
                         let send: rlua::Function = lua_context
                             .create_function_mut(move |_, data: rlua::Value<'_>| {
                                 let data = rlua_serde::from_value::<Value>(data)?;
-                                println!("{:?}", data);
                                 output
                                     .clone()
                                     .send(&data)
@@ -312,15 +311,15 @@ mod tests {
 
         let mut graph = Graph::new("", false);
         graph
-            .add_node("zflow", "add_lua", None)
-            .add_initial(json!(1), "zflow", "left", None)
-            .add_initial(json!(2), "zflow", "right", None);
+            .add_node("test/add_lua", "add_lua", None)
+            .add_initial(json!(1), "test/add_lua", "left", None)
+            .add_initial(json!(2), "test/add_lua", "right", None);
 
         let mut network = Network::create(
             graph.clone(),
             NetworkOptions {
                 subscribe_graph: false,
-                delay: true,
+                delay: false,
                 base_dir: base_dir.to_string(),
                 ..Default::default()
             },
@@ -339,22 +338,22 @@ mod tests {
 
         let mut graph = Graph::new("", false);
         graph
-            .add_node("zflow", "add_inline", None)
-            .add_initial(json!(1), "zflow", "left", None)
-            .add_initial(json!(2), "zflow", "right", None);
+            .add_node("test/add_inline", "add_inline", None)
+            .add_initial(json!(1), "test/add_inline", "left", None)
+            .add_initial(json!(2), "test/add_inline", "right", None);
 
         let mut network = Network::create(
             graph.clone(),
             NetworkOptions {
                 subscribe_graph: false,
-                delay: true,
+                delay: false,
                 base_dir: base_dir.to_string(),
                 ..Default::default()
             },
         );
 
         network
-                .get_loader().set_source("zflow", "add_inline", ComponentSource{
+                .get_loader().set_source("test", "add_inline", ComponentSource{
                     name: "add_inline".to_owned(),
                     language: "lua".to_owned(),
                     source: "if zflow.inports[\"left\"] ~= nil and zflow.inports[\"right\"] ~= nil then\n

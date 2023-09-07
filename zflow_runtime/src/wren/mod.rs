@@ -182,11 +182,7 @@ impl ModuleComponent for WrenComponent {
 
                     impl ZFlowModule {
                         fn send(vm: &VM) {
-                            // let port = get_slot_checked!(vm => string 1);
                             let value = to_json_value(vm, 1);
-                            println!("{:?}", value);
-                            // let mut ip = Map::new();
-                            // ip.insert(port, value);
                             if let Some(process) = unsafe { PROCESS_OUTPUT.get() } {
                                 process.clone().send(&value).unwrap();
                             }
@@ -388,15 +384,15 @@ mod tests {
 
         let mut graph = Graph::new("", false);
         graph
-            .add_node("zflow", "add_wren", None)
-            .add_initial(json!(1), "zflow", "left", None)
-            .add_initial(json!(2), "zflow", "right", None);
+            .add_node("test/add_wren", "add_wren", None)
+            .add_initial(json!(1), "test/add_wren", "left", None)
+            .add_initial(json!(2), "test/add_wren", "right", None);
 
         let mut network = Network::create(
             graph.clone(),
             NetworkOptions {
                 subscribe_graph: false,
-                delay: true,
+                delay: false,
                 base_dir: base_dir.to_string(),
                 ..Default::default()
             },

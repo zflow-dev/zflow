@@ -13,7 +13,7 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     component::{Component, GraphDefinition, ModuleComponent},
-    loader::{normalize_name, ComponentLoader},
+    loader::{normalize_name, ComponentLoader, build_node_id},
     port::PortOptions
 };
 
@@ -230,7 +230,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                         let definition: Box<dyn GraphDefinition> =
                                             Box::new(wasm_component.clone());
                                         return Some((
-                                            normalize_name(&wasm_component.package_id, &wasm_component.name),
+                                            build_node_id(&wasm_component.package_id, &wasm_component.name),
                                             definition,
                                         ));
                                     }
@@ -255,7 +255,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                         let definition: Box<dyn GraphDefinition> =
                                             Box::new(js_component.clone());
                                         return Some((
-                                            normalize_name(&js_component.package_id, &js_component.name),
+                                            build_node_id(&js_component.package_id, &js_component.name),
                                             definition,
                                         ));
                                     },
@@ -280,7 +280,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                         let definition: Box<dyn GraphDefinition> =
                                             Box::new(lua_component.clone());
                                         return Some((
-                                            normalize_name(&lua_component.package_id, &lua_component.name),
+                                            build_node_id(&lua_component.package_id, &lua_component.name),
                                             definition,
                                         ));
                                     }
@@ -305,7 +305,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                         let definition: Box<dyn GraphDefinition> =
                                             Box::new(wren_component.clone());
                                         return Some((
-                                            normalize_name(&wren_component.package_id, &wren_component.name),
+                                            build_node_id(&wren_component.package_id, &wren_component.name),
                                             definition,
                                         ));
                                     }
@@ -330,7 +330,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                         let definition: Box<dyn GraphDefinition> =
                                             Box::new(go_component.clone());
                                         return Some((
-                                            normalize_name(&go_component.package_id, &go_component.name),
+                                            build_node_id(&go_component.package_id, &go_component.name),
                                             definition,
                                         ));
                                     }

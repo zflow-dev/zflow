@@ -207,9 +207,12 @@ impl ComponentLoader {
             .try_lock()
             .expect("Expected component list container");
         if !components.contains_key(name) {
+            println!("contains? {:?}", components.keys());
             for i in 0..components.keys().len() {
                 if let Some(component_name) = components.keys().collect::<Vec<&String>>().get(i) {
-                    if component_name.split("/").collect::<Vec<&str>>()[1] == name {
+                    let split = component_name.split("/").collect::<Vec<&str>>();
+                    println!("{:?}", split);
+                    if split.len() > 1 && split[1] == name {
                         component = components.get(*component_name);
                         break;
                     }
@@ -545,13 +548,16 @@ impl ComponentLoader {
         if !self.ready {
             self.list_components()?;
         }
-        let f_name = normalize_name(namespace, name);
+
+        let f_name = build_node_id(namespace, name);
+       
         self.components
             .clone()
             .try_lock()
             .as_mut()
             .expect("Expected component list container")
             .insert(f_name, Box::new(component));
+
         Ok(())
     }
 
@@ -590,7 +596,7 @@ impl ComponentLoader {
         if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
             registry.set_source(namespace, name, source.clone())?;
             if let Ok(components) = self.components.clone().try_lock().as_mut() {
-                let new_name = normalize_name(namespace, name);
+                let new_name = build_node_id(namespace, name);
                 source.name = new_name.clone();
                 components.insert(new_name, Box::new(source.clone()));
             }
@@ -653,6 +659,21 @@ pub fn normalize_name(package_id: &str, name: &str) -> String {
     }
 
     f_name
+}
+
+pub fn build_node_id(package: &str, name: &str) -> String {
+    if package.is_empty() || package == name {
+        return name.to_owned();
+    }
+    if let Some(_name) = package.split("/").nth(1) {
+        if _name == name {
+            return package.to_owned()
+        }
+    }
+    
+    let mut prefix = PathBuf::from_str(package).unwrap();
+    prefix.push(name);
+    prefix.as_os_str().to_str().unwrap().to_string()
 }
 
 #[cfg(test)]

@@ -108,10 +108,9 @@ impl ProcessInput {
 
     /// When preconditions are met, set component state to `activated`
     pub fn activate(&mut self) {
-        if let Ok(context) = self.context.clone().try_lock() {
-            if context.activated {
-                return;
-            }
+        let activated =  self.context.clone().try_lock().unwrap().activated;
+        if activated {
+            return;
         }
 
         if let Ok(component) = self.component.clone().try_lock().as_mut() {
@@ -120,6 +119,7 @@ impl ProcessInput {
                 // so that it can be send when the order comes up
                 self.result.clone().try_lock().unwrap().resolved = false;
             }
+        
             component.activate(self.context.clone());
 
             if self.port.is_addressable() {
@@ -618,8 +618,6 @@ impl ProcessOutput {
             }
         }
 
-      
-
         if let Ok(component) = self.component.clone().try_lock().as_mut() {
             let mut _component = component.clone();
             let mut is_last = || {
@@ -757,6 +755,7 @@ impl ProcessOutput {
                 component.get_node_id(),
                 component.get_load()
             );
+          
             component.deactivate(self.context.clone());
         }
     }
@@ -774,6 +773,7 @@ pub struct ProcessContext {
     pub activated: bool,
     pub deactivated: bool,
     pub scope: Option<String>,
+    pub load: usize,
 }
 
 impl Default for ProcessContext {
@@ -789,6 +789,7 @@ impl Default for ProcessContext {
             activated: Default::default(),
             deactivated: Default::default(),
             scope: Default::default(),
+            load: Default::default()
         }
     }
 }

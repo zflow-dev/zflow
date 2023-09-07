@@ -1,5 +1,5 @@
 {
-    "package_name": "zflow",
+    "package_name": "test",
     "components": [
         {
             "name": "add_wasm",

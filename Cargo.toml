@@ -11,6 +11,7 @@ keywords = ["fbp", "DAG", "flowbased", "low-code", "no-code", "visual-programmin
 [dependencies]
 zflow_graph = {path = "./zflow_graph"}
 zflow_runtime = {path  ="./zflow_runtime"}
+serde_json = "1.0"
 
 [lib]
 doctest = false

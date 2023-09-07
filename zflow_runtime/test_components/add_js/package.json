@@ -1,13 +1,15 @@
 {
-    "name": "zflow",
+    "name": "test",
     "version": "1.0.0",
     "author": "Damilare Akinlaja",
     "components": [
         {
             "name": "add",
+            "forward_brackets":{},
+            "activate_on_input": true,
             "inports": {
-                "left":{"trigerring": true, "control":true},
-                "right":{"trigerring":true, "control":true}
+                "left":{"control":true},
+                "right":{"control":true}
             },
             "outports": {
                 "sum":{}

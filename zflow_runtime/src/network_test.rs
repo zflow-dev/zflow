@@ -160,7 +160,7 @@ mod tests {
                         let n = binding.as_mut().unwrap();
                         let res = n.add_node(
                             GraphNode {
-                                id: "add".to_string(),
+                                id: "test/add".to_string(),
                                 component: "add".to_string(),
                                 metadata: Some(json!({"foo": "Bar"}).as_object().cloned().unwrap()),
                                 ..GraphNode::default()
@@ -170,13 +170,13 @@ mod tests {
                         assert!(!res.is_err());
 
                         'and_then_it_should_have_registered_the_node_with_the_graph: {
-                            let node = n.get_node("add");
+                            let node = n.get_node("test/add");
                             assert!(node.is_some());
                             assert_eq!(node.unwrap().component_name, "add");
                         }
                         'and_then_it_should_have_transmitted_the_node_metadata_to_the_process: {
                             if let Some(component) =
-                                n.get_processes().get("add").unwrap().component.clone()
+                                n.get_processes().get("test/add").unwrap().component.clone()
                             {
                                 let meta = component.clone().try_lock().unwrap().metadata.clone();
                                 assert!(meta.is_some());
@@ -187,10 +187,10 @@ mod tests {
                         }
                         'and_then_adding_the_same_node_again_should_be_a_noop: {
                             let processes = n.get_processes();
-                            let original_process = processes.get("add").clone().unwrap();
+                            let original_process = processes.get("test/add").clone().unwrap();
                             let binding = n.get_graph();
                             let graph = binding.try_lock().unwrap();
-                            let graph_node = graph.get_node("add").unwrap();
+                            let graph_node = graph.get_node("test/add").unwrap();
 
                             let binding = n.add_node(graph_node.clone(), None);
                             let res = binding.as_ref().unwrap();
@@ -200,7 +200,7 @@ mod tests {
                         }
                         'and_then_it_should_not_contain_the_node_after_removal: {
                             n.remove_node(GraphNode {
-                                id: "add".to_string(),
+                                id: "test/add".to_string(),
                                 ..GraphNode::default()
                             })
                             .unwrap();
@@ -208,13 +208,13 @@ mod tests {
 
                             'and_then_it_should_have_removed_the_node_from_the_graph: {
                                 if let Ok(graph) = n.get_graph().try_lock() {
-                                    assert!(graph.get_node("add").is_none());
+                                    assert!(graph.get_node("test/add").is_none());
                                 }
                             }
                             'and_then_it_should_fail_when_removing_the_removed_node_again: {
                                 assert!(n
                                     .remove_node(GraphNode {
-                                        id: "add".to_string(),
+                                        id: "test/add".to_string(),
                                         ..GraphNode::default()
                                     })
                                     .is_err());
@@ -227,12 +227,15 @@ mod tests {
                     let mut binding = binding.try_lock();
                     let _n = binding.as_mut().unwrap();
                     _n.get_loader()
-                        .register_component("", "split", split)
+                        .register_component("A", "split", split.clone())
+                        .expect("expected to register component");
+                    _n.get_loader()
+                        .register_component("B", "split", split.clone())
                         .expect("expected to register component");
                     // drop(binding);
                     _n.add_node(
                         GraphNode {
-                            id: "A".to_string(),
+                            id: "A/split".to_string(),
                             component: "split".to_string(),
                             metadata: None,
                         },
@@ -241,7 +244,7 @@ mod tests {
                     .unwrap();
                     _n.add_node(
                         GraphNode {
-                            id: "B".to_string(),
+                            id: "B/split".to_string(),
                             component: "split".to_string(),
                             metadata: None,
                         },
@@ -253,12 +256,12 @@ mod tests {
                         _n.add_edge(
                             GraphEdge {
                                 from: GraphLeaf {
-                                    node_id: "A".to_string(),
+                                    node_id: "A/split".to_string(),
                                     port: "out".to_string(),
                                     index: None,
                                 },
                                 to: GraphLeaf {
-                                    node_id: "B".to_string(),
+                                    node_id: "B/split".to_string(),
                                     port: "in".to_string(),
                                     index: None,
                                 },
@@ -275,23 +278,23 @@ mod tests {
                             let from = socket.from.unwrap();
                             let to = socket.to.unwrap();
                             assert_eq!(from.port, "out");
-                            assert_json_eq!(from.process.id, _n.get_node("A").unwrap().id);
+                            assert_json_eq!(from.process.id, _n.get_node("A/split").unwrap().id);
                             assert!(Arc::ptr_eq(
                                 from.process.component.as_ref().unwrap(),
-                                _n.get_node("A").unwrap().component.as_ref().unwrap()
+                                _n.get_node("A/split").unwrap().component.as_ref().unwrap()
                             ));
 
                             assert_eq!(to.port, "in");
-                            assert_json_eq!(to.process.id, _n.get_node("B").unwrap().id);
+                            assert_json_eq!(to.process.id, _n.get_node("B/split").unwrap().id);
                             assert!(Arc::ptr_eq(
                                 to.process.component.as_ref().unwrap(),
-                                _n.get_node("B").unwrap().component.as_ref().unwrap()
+                                _n.get_node("B/split").unwrap().component.as_ref().unwrap()
                             ));
                         }
 
                         'and_then_it_should_have_registered_the_edge_with_the_graph: {
                             if let Ok(graph) = _n.get_graph().try_lock() {
-                                let edge = graph.get_edge("A", "out", "B", "in");
+                                let edge = graph.get_edge("A/split", "out", "B/split", "in");
                                 assert!(edge.is_some());
                             }
                         }
@@ -299,12 +302,12 @@ mod tests {
                         'and_then_it_should_not_contain_edge_after_removal: {
                             _n.remove_edge(GraphEdge {
                                 from: GraphLeaf {
-                                    node_id: "A".to_string(),
+                                    node_id: "A/split".to_string(),
                                     port: "out".to_string(),
                                     index: None,
                                 },
                                 to: GraphLeaf {
-                                    node_id: "B".to_string(),
+                                    node_id: "B/split".to_string(),
                                     port: "in".to_string(),
                                     index: None,
                                 },
@@ -315,12 +318,12 @@ mod tests {
 
                             // cleanup
                             _n.remove_node(GraphNode {
-                                id: "A".to_string(),
+                                id: "A/split".to_string(),
                                 ..Default::default()
                             })
                             .unwrap();
                             _n.remove_node(GraphNode {
-                                id: "B".to_string(),
+                                id: "B/split".to_string(),
                                 ..Default::default()
                             })
                             .unwrap();
@@ -340,7 +343,7 @@ mod tests {
                         NetworkOptions {
                             subscribe_graph: false,
                             delay: false,
-                            base_dir: base_dir.to_string(),
+                            // base_dir: base_dir.to_string(),
                             ..NetworkOptions::default()
                         },
                     );
