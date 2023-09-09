@@ -312,8 +312,7 @@ mod tests {
         let mut graph = Graph::new("", false);
         graph
             .add_node("test/add_lua", "add_lua", None)
-            .add_initial(json!(1), "test/add_lua", "left", None)
-            .add_initial(json!(2), "test/add_lua", "right", None);
+            .add_initial(json!({"left": 2, "right": 3}), "test/add_lua", "input", None);
 
         let mut network = Network::create(
             graph.clone(),
@@ -339,8 +338,7 @@ mod tests {
         let mut graph = Graph::new("", false);
         graph
             .add_node("test/add_inline", "add_inline", None)
-            .add_initial(json!(1), "test/add_inline", "left", None)
-            .add_initial(json!(2), "test/add_inline", "right", None);
+            .add_initial(json!({"left": 2, "right": 3}), "test/add_inline", "input", None);
 
         let mut network = Network::create(
             graph.clone(),
@@ -356,22 +354,23 @@ mod tests {
                 .get_loader().set_source("test", "add_inline", ComponentSource{
                     name: "add_inline".to_owned(),
                     language: "lua".to_owned(),
-                    source: "if zflow.inports[\"left\"] ~= nil and zflow.inports[\"right\"] ~= nil then\n
-                    left = zflow.inports[\"left\"]\n
-                    right = zflow.inports[\"right\"]\n
-                    zflow.outports.send({sum= left + right})\n
-                    end".to_owned(),
+                    source: "function zflow.process(data)\n
+                    if data.input ~= nil then
+                        local input = data.input
+                        local left = input.left
+                        local right = input.right
+                
+                        if left ~= nil and right ~= nil then
+                            zflow.send_done({ sum = left + right })
+                        end
+                    end
+                end".to_owned(),
                     inports: HashMap::from_iter(vec![
-                        ("left".to_owned(), PortOptions{
+                        ("input".to_owned(), PortOptions{
                             triggering: true,
                             control: true,
                             ..PortOptions::default()
                         }),
-                        ("right".to_owned(), PortOptions{
-                            triggering: true,
-                            control: true,
-                            ..PortOptions::default()
-                        })
                     ]),
                     outports: HashMap::from_iter(vec![
                         ("sum".to_owned(), PortOptions::default())

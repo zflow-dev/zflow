@@ -385,8 +385,7 @@ mod tests {
         let mut graph = Graph::new("", false);
         graph
             .add_node("test/add_wren", "add_wren", None)
-            .add_initial(json!(1), "test/add_wren", "left", None)
-            .add_initial(json!(2), "test/add_wren", "right", None);
+            .add_initial(json!({"left": 5, "right": 3}), "test/add_wren", "input", None);
 
         let mut network = Network::create(
             graph.clone(),

@@ -7,13 +7,9 @@ use serde::{Deserialize, Serialize};
 #[host_fn]
 extern "ExtismHost" {
     fn send(output: Json<Output>)-> Json<Output>;
+    fn send_done(output: Json<Output>)-> Json<Output>;
 }
 
-
-// extern "C" {
-//     fn send(output: Json<Output>) -> u64;
-//     fn send_done(output: u64) -> u64;
-// }
 
 #[repr(C)]
 #[derive(Serialize, Deserialize)]
@@ -30,22 +26,28 @@ impl Output {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct Packet {
+    pub input: Input,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Input {
     pub left: Value,
     pub right: Value,
 }
 
 #[plugin_fn]
-pub fn process(input: Json<Input>) -> FnResult<Json<Output>> {
+pub fn process(packet: Json<Packet>) -> FnResult<Json<Output>> {
     // because inputs are controlled, we wait for all of them
-    if input.0.left != Value::Null && input.0.right != Value::Null {
-        let left = input.0.left.as_i64().unwrap();
-        let right = input.0.right.as_i64().unwrap();
+    let input:Input = packet.0.input;
+    if input.left != Value::Null && input.right != Value::Null {
+        let left = input.left.as_i64().unwrap();
+        let right = input.right.as_i64().unwrap();
 
         let data = Output { sum: left + right };
         unsafe {
             // send output to host
-            send(Json(data))?;
+            send_done(Json(data))?;
         }
     }
 

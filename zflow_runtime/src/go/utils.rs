@@ -1,10 +1,9 @@
-use std::{borrow::Borrow, collections::HashMap, rc::Rc, cell::RefCell};
+use std::{borrow::Borrow, collections::HashMap, rc::Rc};
 
 use crate::{goengine::ffi::*, process::ProcessError};
 use serde_json::{json, Map, Value};
 
 pub(crate) fn go_value_to_json_value(v: &GosValue) -> Result<Value, ProcessError> {
-    // Todo: convert to serde_json::Value;
     if v.is_nil() {
         return Ok(Value::Null);
     }
@@ -80,6 +79,12 @@ pub(crate) fn go_value_to_json_value(v: &GosValue) -> Result<Value, ProcessError
         ValueType::Interface => {
             return go_value_to_json_value(v.as_interface().unwrap().underlying_value().unwrap())
         }
+        // ValueType::UnsafePtr => {
+        //     if let Some(data) = v.as_unsafe_ptr().unwrap().downcast_ref::<ZflowData>() {
+
+        //     }
+        //     return data.internal
+        // }
         _ => Err(ProcessError(format!("unsupported GoScript type"))),
     }
 }
@@ -119,15 +124,14 @@ pub(crate) fn to_go_value(ctx: &FfiCtx, value: Value) -> GosValue {
         Value::Array(a) => {
             let data = a
                 .iter()
-                .map(|d| FfiCtx::new_interface(to_go_value(ctx, d.clone()), None))
+                .map(|d| ZflowData::from_data(d.clone()).into_val())
                 .collect::<Vec<_>>();
-
-            ctx.new_array(data, map_go_types(value))
+            ctx.new_array(data, ValueType::UnsafePtr)
         }
         Value::Object(m) => ctx.new_map(
             m.into_iter()
                 .map(|(k, v)| {
-                    let _val = FfiCtx::new_interface(to_go_value(ctx, v.clone()), None);
+                    let _val = ZflowData::from_data(v.clone()).into_val();
                     (FfiCtx::new_string(&k), _val)
                 })
                 .collect(),
@@ -168,6 +172,20 @@ impl ZflowDataFfi {
             return Ok((GosValue::from(data), true.into()))
         }
         Ok((FfiCtx::new_nil(ValueType::Float64), false.into()))
+    }
+    pub fn ffi_boolean(ctx:&mut FfiCtx, ptr:GosValue) -> RuntimeResult<GosValue> {
+        let data = ptr.as_non_nil_unsafe_ptr()?.downcast_ref::<ZflowData>()?;
+        if let Some(data)= data.get_boolean() {
+            return Ok(GosValue::from(data))
+        }
+        Ok(false.into())
+    }
+    pub fn ffi_str(ctx:&mut FfiCtx, ptr:GosValue) -> RuntimeResult<(GosValue, GosValue)> {
+        let data = ptr.as_non_nil_unsafe_ptr()?.downcast_ref::<ZflowData>()?;
+        if let Some(data)= data.get_str() {
+            return Ok((GosValue::from(data.to_owned()), true.into()))
+        }
+        Ok((FfiCtx::new_nil(ValueType::String), false.into()))
     }
     pub fn ffi_object(ctx:&mut FfiCtx, ptr:GosValue) -> RuntimeResult<(GosValue, GosValue)> {
         let data = ptr.as_non_nil_unsafe_ptr()?.downcast_ref::<ZflowData>()?;
@@ -210,6 +228,12 @@ impl ZflowData {
     }
     pub (crate) fn get_u64(&self)-> Option<u64> {
         self.internal.as_u64()
+    }
+    pub (crate) fn get_str(&self)-> Option<&str> {
+        self.internal.as_str()
+    }
+    pub (crate) fn get_boolean(&self)-> Option<bool> {
+        self.internal.as_bool()
     }
     pub (crate) fn get_object(&self) -> Option<HashMap<GosValue, GosValue>> {
         let m = self.internal.as_object()?;

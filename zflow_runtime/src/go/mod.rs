@@ -212,9 +212,9 @@ impl ModuleComponent for GoComponent {
                     /// send function to send data out via the outport
                     fn ffi_send(args: GosValue) -> RuntimeResult<()> {
                         let data = go_value_to_json_value(&args).map_err(|err| err.0)?;
+                        
                         // get process handle
                         if let Some(process) = unsafe { process_output.get_mut() } {
-                            println!("{:?}", data);
                             process.send(&data).map_err(|err| err.0)?;
                         }
                         Ok(())
@@ -247,7 +247,7 @@ impl ModuleComponent for GoComponent {
                 engine.set_std_io(cfg.std_in, cfg.std_out, cfg.std_err);
 
                 let panic_handler: Option<Rc<dyn Fn(String, String)>> =
-                    Some(Rc::new(move |msg: String, stack: String| {
+                    Some(Rc::new(|msg: String, stack: String| {
                         eprintln!("{}\n", msg);
                         eprintln!("{}\n", stack);
                     }));
@@ -296,14 +296,13 @@ mod tests {
         let mut graph = Graph::new("", false);
         graph
             .add_node("test/add_go", "add_go", None)
-            .add_initial(json!(1), "test/add_go", "left", None)
-            .add_initial(json!(2), "test/add_go", "right", None);
+            .add_initial(json!({"left": 4, "right": 5}), "test/add_go", "input", None);
 
         let mut network = Network::create(
             graph.clone(),
             NetworkOptions {
                 subscribe_graph: false,
-                delay: true,
+                delay: false,
                 base_dir: base_dir.to_string(),
                 ..Default::default()
             },

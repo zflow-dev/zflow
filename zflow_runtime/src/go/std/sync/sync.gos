@@ -1,0 +1,81 @@
+package sync
+
+import "unsafe"
+
+var nativeMutex ffiMutex
+var nativeRWMutex ffiRWMutex
+
+func init() {
+	nativeMutex = ffi(ffiMutex, "sync.mutex")
+    nativeRWMutex = ffi(ffiRWMutex, "sync.rw_mutex")
+}
+
+type ffiMutex interface {
+    async_lock(*unsafe.Pointer)
+    async_unlock(unsafe.Pointer)
+}
+
+type ffiRWMutex interface {
+    async_r_lock(*unsafe.Pointer)
+    async_r_unlock(unsafe.Pointer)
+    async_w_lock(*unsafe.Pointer)
+    async_w_unlock(unsafe.Pointer)
+}
+
+// A Locker represents an object that can be locked and unlocked.
+type Locker interface {
+	Lock()
+	Unlock()
+}
+
+// A Mutex is a mutual exclusion lock.
+// The zero value for a Mutex is an unlocked mutex.
+//
+// A Mutex must not be copied after first use.
+type Mutex struct {
+    handle unsafe.Pointer
+}
+
+// Lock locks m.
+// If the lock is already in use, the calling goroutine
+// blocks until the mutex is available.
+func (m *Mutex) Lock() {
+    nativeMutex.async_lock(&m.handle)
+}
+
+
+// Unlock unlocks m.
+// It is a run-time error if m is not locked on entry to Unlock.
+//
+// A locked Mutex is not associated with a particular goroutine.
+// It is allowed for one goroutine to lock a Mutex and then
+// arrange for another goroutine to unlock it.
+func (m *Mutex) Unlock() {
+   nativeMutex.async_unlock(m.handle)
+}
+
+
+// A RWMutex is a reader/writer mutual exclusion lock.
+// The lock can be held by an arbitrary number of readers or a single writer.
+// The zero value for a RWMutex is an unlocked mutex.
+//
+// A RWMutex must not be copied after first use.
+type RWMutex struct {
+    handle unsafe.Pointer
+}
+
+func (rw *RWMutex) RLock() {
+    nativeRWMutex.async_r_lock(&rw.handle)
+}
+
+func (rw *RWMutex) RUnlock() {
+    nativeRWMutex.async_r_unlock(rw.handle)
+}
+
+func (rw *RWMutex) Lock() {
+    nativeRWMutex.async_w_lock(&rw.handle)
+}
+
+func (rw *RWMutex) Unlock() {
+    nativeRWMutex.async_w_unlock(rw.handle)
+}
