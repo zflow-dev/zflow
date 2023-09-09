@@ -1,0 +1,94 @@
+package zflow 
+
+import "unsafe"
+
+type ffiZflow interface {
+    send(a interface{})
+    send_done(a interface{})
+    inputs() unsafe.Pointer
+}
+
+var datatype ffiZflowData
+
+type ffiZflowData interface {
+    is_nil(unsafe.Pointer) bool
+    i64(unsafe.Pointer) (int64, bool)
+    u64(unsafe.Pointer) (uint64, bool)
+    f64(unsafe.Pointer) (float64, bool)
+    str(unsafe.Pointer) (string, bool)
+    boolean(unsafe.Pointer) bool
+    object(unsafe.Pointer) (map[string]unsafe.Pointer, bool)
+    array(unsafe.Pointer) ([]unsafe.Pointer, bool)
+}
+
+func init() {
+	datatype = ffi(ffiZflowData, "zflow.data")
+}
+
+type Data struct {
+    internal unsafe.Pointer
+}
+
+func Get(d unsafe.Pointer) *Data  {
+    return &Data{
+        internal: d,
+    }
+}
+
+func (d *Data) IsNil() bool {
+    return datatype.is_nil(d.internal)
+}
+
+func (d *Data) I64() (int64, bool) {
+    return datatype.i64(d.internal)
+}
+func (d *Data) U64() (uint64, bool) {
+    return datatype.u64(d.internal)
+}
+func (d *Data) F64() (float64, bool) {
+    return datatype.f64(d.internal)
+}
+func (d *Data) Bool() bool {
+    return datatype.boolean(d.internal)
+}
+func (d *Data) String() (string, bool) {
+    return datatype.str(d.internal)
+}
+func (d *Data) Map() (map[string]*Data, bool) {
+    m, ok := datatype.object(d.internal)
+    if !ok {
+       return nil, false
+    }
+    res := map[string]*Data{}
+    for key, element := range m {
+        res[key] = Get(element)
+    }
+    return res, true
+}
+func (d *Data) Array() ([]*Data, bool) {
+   a, ok := datatype.array(d.internal)
+   if !ok {
+       return nil, false
+   }
+   res := []*Data{}
+   for i, e := range a {
+	    res[i] = Get(e)
+   }
+   return res, true
+}
+
+func Send(v interface{}) {
+    var f = ffi(ffiZflow, "zflow.process")
+    f.send(v)
+}
+
+func SendDone(v interface{}) {
+    var f = ffi(ffiZflow, "zflow.process")
+    f.send_done(v)
+}
+
+func Inputs() *Data {
+    var f = ffi(ffiZflow, "zflow.process")
+    inputs := Get(f.inputs())
+    return inputs
+}
