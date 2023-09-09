@@ -10,9 +10,10 @@ func main() {
 	if !ok {
 		panic("could not read inputs")
 	}
-	left, _ := data["left"].I64()
-	right, _ := data["right"].I64()
-	// some calculation
+	input, _ := data["input"].Map()
+	left, _ := input["left"].I64()
+	right, _ := input["right"].I64()
+	// some calculations
 	total := left + right
 
 	packet := map[string]int64{"sum": total}

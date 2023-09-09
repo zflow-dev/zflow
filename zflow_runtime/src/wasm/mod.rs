@@ -259,8 +259,7 @@ mod tests {
         let mut graph = Graph::new("wasm_graph", false);
         graph
             .add_node("test/add_wasm", "add_wasm", None)
-            .add_initial(json!(1), "test/add_wasm", "left", None)
-            .add_initial(json!(2), "test/add_wasm", "right", None);
+            .add_initial(json!({"left": 4, "rigth": 6}), "test/add_wasm", "input", None);
 
         let mut network = Network::create(
             graph.clone(),

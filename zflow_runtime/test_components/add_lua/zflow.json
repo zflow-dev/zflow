@@ -4,8 +4,7 @@
         {
             "name": "add_lua",
             "inports": {
-                "left":{"trigerring": true, "control":true},
-                "right":{"trigerring":true, "control":true}
+                "input":{"trigerring": true, "control":true}
             },
             "outports": {
                 "sum":{}

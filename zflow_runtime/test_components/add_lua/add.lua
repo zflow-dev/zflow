@@ -1,10 +1,11 @@
 function zflow.process(data)
-    if data ~= nil then
-        local left = data.left
-        local right = data.right
+    if data.input ~= nil then
+        local input = data["input"]
+        local left = input.left
+        local right = input.right
 
         if left ~= nil and right ~= nil then
-            zflow.send({ sum = left + right })
+            zflow.send_done({ sum = left + right })
         end
     end
 end

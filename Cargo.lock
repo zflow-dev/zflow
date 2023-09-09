@@ -2045,7 +2045,8 @@ dependencies = [
 [[package]]
 name = "go-codegen"
 version = "0.1.4"
-source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f5771ebefb29dbd272be1b6f9ef6a36ea300c86214b51b32efa15e2d7a11781"
 dependencies = [
  "go-parser",
  "go-types",
@@ -2055,7 +2056,8 @@ dependencies = [
 [[package]]
 name = "go-engine"
 version = "0.1.4"
-source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6501c9c0d2b84788118a793378cf71666bfb6dd69cd68a69d1ce21a3c04d93ac"
 dependencies = [
  "futures-lite",
  "go-codegen",
@@ -2069,13 +2071,15 @@ dependencies = [
 
 [[package]]
 name = "go-parser"
-version = "0.1.1"
-source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cbfbe21b19b73f35845c32750460937647c722b19047ba690184591583836a6"
 
 [[package]]
 name = "go-pmacro"
-version = "0.1.0"
-source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e8f00eb35012c1bd1a1ec2b9ded7d4438c54088168252aa0d5ef1e6e363442a"
 dependencies = [
  "proc-macro2 1.0.56",
  "quote 1.0.27",
@@ -2084,8 +2088,9 @@ dependencies = [
 
 [[package]]
 name = "go-types"
-version = "0.1.2"
-source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "461f6ad174a1b0926f31414a41483181ae22667c917351de75822fb92e8ea3f1"
 dependencies = [
  "go-parser",
  "num-bigint",
@@ -2096,8 +2101,9 @@ dependencies = [
 
 [[package]]
 name = "go-vm"
-version = "0.1.3"
-source = "git+https://github.com/darmie/goscript?branch=master#aef0bef88b931f1f41cb751cad815912f8789765"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b75fcdb2711217023fdada49b362b12b4529289cf72844613a36029d1cd54c55"
 dependencies = [
  "async-channel",
  "async-executor",

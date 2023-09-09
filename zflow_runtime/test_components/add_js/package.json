@@ -8,8 +8,7 @@
             "forward_brackets":{},
             "activate_on_input": true,
             "inports": {
-                "left":{"control":true},
-                "right":{"control":true}
+                "input":{"control":true}
             },
             "outports": {
                 "sum":{}
