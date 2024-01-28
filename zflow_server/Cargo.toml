@@ -1,0 +1,16 @@
+[package]
+name = "zflow_server"
+version = "0.1.0"
+edition = "2021"
+authors = ["Damilare Akinlaja <dreakinlaja@gmail.com>"]
+license = "MIT"
+description = "ZFlow FBP Graph Server"
+keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming", "server"]
+
+[dependencies]
+zflow_graph = {path = "../zflow_graph"}
+zflow_runtime = {path = "../zflow_runtime"}
+tokio = { version = "1.16", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+# serde_json = { version = "1" }
+jsonrpsee = {version="0.21.0", features = ["full"]}

@@ -17,6 +17,6 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Run runtime tests
-      run: cd zflow_runtime && cargo test --verbose -- --skip network_test
+      run: ZFLOW_QUICKJS_RUNNER_LIB=../zflow_js_runner/bin/libzflow_js_runner.dylib cargo test --package zflow_runtime --verbose -- --skip network_test
     - name: Run network tests
-      run: cd zflow_runtime && cargo test network_test --verbose
+      run: ZFLOW_QUICKJS_RUNNER_LIB=../zflow_js_runner/bin/libzflow_js_runner.dylib cargo test --package zflow_runtime --verbose  --lib -- 'network_test::tests::test_network'

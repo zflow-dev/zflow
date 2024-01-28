@@ -2,5 +2,6 @@
     "rust-analyzer.linkedProjects": [
         "./zflow_graph/Cargo.toml",
         "./Cargo.toml",
+        "./zflow_runtime/Cargo.toml"
     ]
 }

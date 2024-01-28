@@ -1,0 +1,28 @@
+{
+    "package_id": "test",
+    "version": "1.0.0",
+    "author": "Damilare Akinlaja",
+    "components": [
+        {
+            "name": "add",
+            "forward_brackets":{},
+            "activate_on_input": true,
+            "inports": {
+                "a":{},
+                "b":{}
+            },
+            "outports": {
+                "result":{}
+            },
+            "source_dir": "/",
+            "source": "add.js",
+            "description": "sum of two numbers",
+            "ordered": true,
+            "runtime": {
+                "provider_id": "@zflow/builtin",
+                "runner_id": "@zflow/quickjs",
+                "platform": "System"
+            }
+        }
+    ]
+  }

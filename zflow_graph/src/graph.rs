@@ -541,14 +541,14 @@ impl Graph {
     pub fn rename_group(&mut self, old_name: &str, new_name: &str) -> &mut Self {
         self.check_transaction_start();
         for i in 0..self.groups.len() {
-            let mut group = &mut self.groups[i];
+            let group = &mut self.groups[i];
             if group.name == old_name {
                 (*group).name = new_name.to_owned();
                 self.emit(
                     "rename_group",
                     json!({
-                        "old": old_name.clone(),
-                        "new": new_name.clone()
+                        "old": old_name,
+                        "new": new_name
                     }),
                 );
             }
@@ -567,7 +567,7 @@ impl Graph {
             .filter(|v| {
                 if v.name == group_name.to_owned() {
                     self.set_group_metadata(group_name, Map::new());
-                    self.emit("remove_group", json!(v.clone()));
+                    self.emit("remove_group", json!(v));
                     return false;
                 }
                 return true;
@@ -615,7 +615,7 @@ impl Graph {
     /// Adding a node to the graph
     /// Nodes are identified by an ID unique to the graph. Additionally,
     /// a node may contain information on what FBP component it is and
-    /// possible display coordinates.
+    /// possibly display coordinates.
     /// ```no_run
     /// let mut metadata = Map::new();
     /// metadata.insert("x".to_string(), 91);
@@ -631,7 +631,6 @@ impl Graph {
         self.check_transaction_start();
         let node = GraphNode {
             id: id.to_owned(),
-            // uid: guid(),
             component: component.to_owned(),
             metadata,
         };
@@ -766,8 +765,8 @@ impl Graph {
             self.emit(
                 "rename_node",
                 json!({
-                    "old": old_id.clone(),
-                    "new": new_id.clone(),
+                    "old": old_id,
+                    "new": new_id,
                 }),
             );
             self.check_transaction_end();
@@ -994,7 +993,7 @@ impl Graph {
                             edge.to.port.as_str(),
                             Map::new(),
                         );
-                        self.emit("remove_edge", json!(edge.clone()));
+                        self.emit("remove_edge", json!(edge));
                         return false;
                     }
                 } else if (edge.from.node_id.as_str() == node && edge.from.port == out_port)
@@ -1008,7 +1007,7 @@ impl Graph {
                         Map::new(),
                     );
 
-                    self.emit("remove_edge", json!(edge.clone()));
+                    self.emit("remove_edge", json!(edge));
                     return false;
                 }
                 true

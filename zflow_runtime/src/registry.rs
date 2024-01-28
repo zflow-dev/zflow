@@ -1,38 +1,38 @@
 use std::{
+    any::Any,
     collections::HashMap,
     fs::{self, DirEntry, File},
     io::{self, BufReader},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex}, any::Any,
+    sync::{Arc, Mutex},
 };
 
+use libloading::Library;
 use poll_promise::Promise;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::{
     component::{Component, GraphDefinition, ModuleComponent},
-    loader::{normalize_name, ComponentLoader, build_node_id},
-    port::PortOptions
+    loader::{build_node_id, normalize_name, ComponentLoader},
+    port::PortOptions,
 };
 
-#[cfg(feature="js_runtime")]
+#[cfg(feature = "js_runtime")]
 use crate::js::JsComponent;
 
 #[cfg(feature = "wasm_runtime")]
 use crate::wasm::WasmComponent;
 
-#[cfg(feature="lua_runtime")]
+#[cfg(feature = "lua_runtime")]
 use crate::lua::LuaComponent;
 
-#[cfg(feature="wren_runtime")]
+#[cfg(feature = "wren_runtime")]
 use crate::wren::WrenComponent;
 
-#[cfg(feature="go_runtime")]
+#[cfg(feature = "go_runtime")]
 use crate::go::GoComponent;
-
-use is_url::is_url;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RemoteComponent {
@@ -54,13 +54,52 @@ pub struct RemoteComponent {
     pub package_id: String,
 }
 
+fn default_base_dir() -> String {
+    "/".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanguageRuntime {
+    #[serde(default = "default_base_dir")]
+    /// Base directory for code runners
+    pub base_dir: String,
+    /// Map of code file extensions mapped to their runners
+    pub runners: Vec<HashMap<String, String>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentSource {
     pub name: String,
     pub inports: HashMap<String, PortOptions>,
     pub outports: HashMap<String, PortOptions>,
+    #[serde(default)]
+    /// Set the default component description
+    pub description: String,
+    #[serde(default)]
+    /// Set the default component icon
+    pub icon: String,
+    #[serde(default)]
+    /// Whether the component should keep send packets
+    /// out in the order they were received
+    pub ordered: bool,
+    #[serde(default)]
+    /// Whether the component should activate when it receives packets
+    pub activate_on_input: bool,
+    #[serde(default)]
+    /// Bracket forwarding rules. By default we forward
+    pub forward_brackets: HashMap<String, Vec<String>>,
+    #[serde(default = "default_base_dir")]
+    /// Base directory of source packages
+    pub base_dir: String,
+    /// Path to code source
     pub source: String,
+    /// Source language
     pub language: String,
+    #[serde(default)]
+    pub package_id: String,
+    #[serde(default)]
+    pub metadata: Map<String, Value>,
+    // pub runtime: LanguageRuntime,
 }
 
 impl GraphDefinition for ComponentSource {
@@ -70,6 +109,8 @@ impl GraphDefinition for ComponentSource {
 }
 /// Registry is a way to tell the Component Loader where to discover, load and execute custom components
 pub trait RuntimeRegistry {
+    fn set_base_dir(&mut self, dir: &str);
+    fn get_base_dir(&self) -> &str;
     fn set_source(
         &mut self,
         namespace: &str,
@@ -78,6 +119,10 @@ pub trait RuntimeRegistry {
     ) -> Result<(), String>;
     fn get_source(&self, component_name: &str) -> Option<ComponentSource>;
     fn get_languages(&mut self) -> Result<Vec<String>, String>;
+    
+    fn register_runner(&mut self, language:&str, runner: Library);
+
+    fn get_runner(self, language:&str) -> Option<Library>;
 
     /// Register custom component loaders
     fn register(
@@ -85,16 +130,26 @@ pub trait RuntimeRegistry {
         loader: &mut ComponentLoader,
     ) -> Promise<Result<HashMap<String, Box<dyn GraphDefinition>>, String>>;
 
+    /// Dynamically load a component from sourc or path
     fn dynamic_load(
         &mut self,
         component_name: &str,
-        path: &str,
+        source: ComponentSource,
         options: Value,
+    ) -> Result<Arc<Mutex<Component>>, String>;
+
+    /// Factory function to creates an instance of a component that can be executed by this runtime.
+    fn create_component(
+        &mut self,
+        name: &str,
+        component: &dyn GraphDefinition,
+        metadata: Value,
     ) -> Result<Arc<Mutex<Component>>, String>;
 }
 
 #[derive(Clone)]
 pub struct DefaultRegistry {
+    base_dir: PathBuf,
     supported_languages: Vec<String>,
     source_map: HashMap<String, ComponentSource>,
 }
@@ -102,6 +157,7 @@ pub struct DefaultRegistry {
 impl Default for DefaultRegistry {
     fn default() -> Self {
         Self {
+            base_dir: PathBuf::default(),
             supported_languages: vec![
                 "Javascript".to_owned(),
                 "Typescript".to_owned(),
@@ -140,6 +196,9 @@ fn visit_dirs(
 }
 
 impl RuntimeRegistry for DefaultRegistry {
+    fn set_base_dir(&mut self, dir: &str) {
+        self.base_dir = PathBuf::from(dir);
+    }
     fn set_source(
         &mut self,
         namespace: &str,
@@ -171,7 +230,7 @@ impl RuntimeRegistry for DefaultRegistry {
         Promise::spawn_thread("register_components", move || {
             let base_dir = PathBuf::from_str(dir.as_str()).unwrap();
             // Recursively look up all component directories
-            let mut components = visit_dirs(&base_dir, &|entry| {
+            let components = visit_dirs(&base_dir, &|entry| {
                 if entry.path().is_file()
                     && (entry.path().file_name().unwrap() == "zflow.json"
                         || entry.path().file_name().unwrap() == "package.json")
@@ -183,17 +242,37 @@ impl RuntimeRegistry for DefaultRegistry {
                     let mut de = serde_json::Deserializer::from_reader(reader);
                     if let Ok(metadata) = Value::deserialize(&mut de).as_mut() {
                         let _metadata = metadata.clone();
-                        let package_id = if _metadata.as_object().unwrap().contains_key("package_name") {
-                            _metadata
-                            .get("package_name").unwrap().as_str().expect("expected name to be string")
-                        } else if _metadata.as_object().unwrap().contains_key("name") {
-                            _metadata
-                            .get("name").unwrap().as_str().expect("expected name to be string")
-                        } else {
-                            ""
-                        };
+                        let package_id =
+                            if _metadata.as_object().unwrap().contains_key("package_name") {
+                                _metadata
+                                    .get("package_name")
+                                    .unwrap()
+                                    .as_str()
+                                    .expect("expected name to be string")
+                            } else if _metadata.as_object().unwrap().contains_key("name") {
+                                _metadata
+                                    .get("name")
+                                    .unwrap()
+                                    .as_str()
+                                    .expect("expected name to be string")
+                            } else {
+                                ""
+                            };
 
                         let mut _metadata = metadata.clone();
+
+                        let mut runners = None;
+
+                        if let Some(runtime) = _metadata
+                            .get("components")
+                            .expect("Invalid metadata, config should have components field")
+                            .as_object()
+                        {
+                            
+                            let runtime_dir = runtime.get("base_dir").or(Some(&json!(dir.as_str()))).unwrap().as_str().unwrap();
+                            runners = runtime.get("runners").or(Some(&json!({}))).unwrap().as_object();
+                        }
+
                         let components = _metadata
                             .get_mut("components")
                             .expect("Invalid metadata, zflow.js should have components field")
@@ -235,7 +314,7 @@ impl RuntimeRegistry for DefaultRegistry {
                                         ));
                                     }
                                     #[cfg(feature = "js_runtime")]
-                                    Some("js") | Some("ts") => {
+                                    Some("js") | Some("javascript") | Some("ts") => {
                                         // Read js/ts
                                         let mut js_component = JsComponent::deserialize(component_meta)
                                         .expect(
@@ -342,82 +421,208 @@ impl RuntimeRegistry for DefaultRegistry {
                             None
                         }).filter(|component| component.is_some()).map(|component| component.unwrap());
 
-                        let mut components:HashMap<String, Box<dyn GraphDefinition>> = HashMap::from_iter(components);
-                        source_map.iter().for_each(|(k, v)|{
+                        let mut components: HashMap<String, Box<dyn GraphDefinition>> =
+                            HashMap::from_iter(components);
+                        source_map.iter().for_each(|(k, v)| {
                             components.insert(k.clone(), Box::new(v.clone()));
-                            
                         });
                         return Some(components);
                     }
                 }
                 None
             });
-            
+
             if components.is_err() {
                 return Err(format!("{}", components.err().unwrap().to_string()));
             }
-           
+
             Ok(components.ok().unwrap())
         })
     }
 
     fn dynamic_load(
         &mut self,
-        component_name: &str,
-        path: &str,
-        _options: Value,
+        name: &str,
+        source: ComponentSource,
+        metadata: Value,
     ) -> Result<Arc<Mutex<Component>>, String> {
-        let options: Option<&Map<String, Value>> = _options.as_object();
-        if is_url(path) {
-            // fetch remote component and instantiate it
-        }
-
-        if is_url(path) && !Path::new(path).exists() {
-            return Err(format!("Could not find component at {}", path));
-        }
-        if path.contains(std::path::is_separator) {
-            // fetch local component and instantiate
-            if Path::new(path).is_file() {
-                if let Some(ext) = Path::new(path).extension() {
-                    match ext.to_str() {
-                        #[cfg(feature = "js_runtime")]
-                        Some("js") | Some("ts") => {
-                            // build js component
-                        }
-                        #[cfg(feature = "wasm_runtime")]
-                        Some("wasm") => {
-                            // build wasm component
-                            if let Some(wasm) = WasmComponent::from_metadata(_options).as_mut() {
-                                let path = Path::new(path);
-                                wasm.base_dir = path.parent().unwrap().to_str().unwrap().to_owned();
-                                wasm.source =
-                                    path.file_name().unwrap().to_str().unwrap().to_owned();
-                                return Ok(Component::from_instance(wasm.as_component()?));
-                            }
-                        }
-                        #[cfg(feature = "wren_runtime")]
-                        Some("wren") => {
-                            // build wren component
-                        }
-                        #[cfg(feature = "lua_runtime")]
-                        Some("lua") => {
-                            // build lua component
-                        }
-                        #[cfg(feature = "go_runtime")]
-                        Some("go")|Some("gos") => {
-                            // build lua component
-                        }
-                        Some(&_) => return Err(format!("Unsupported component source")),
-                        None => return Err(format!("Could not detect resource type")),
-                    }
-                }
+        match source.language.as_str() {
+            #[cfg(feature = "lua_runtime")]
+            "lua" => {
+                let comp =
+                    LuaComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
+                return self.create_component(name, &comp, metadata);
             }
-
-            if Path::new(path).is_dir() {
-                // todo: find and parse zflow manifest to locate component or subgraph
+            #[cfg(feature = "wren_runtime")]
+            "wren" => {
+                let comp =
+                    WrenComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
+                return self.create_component(name, &comp, metadata);
             }
+            #[cfg(feature = "js_runtime")]
+            "js" | "javascript" | "ts" => {
+                return self.create_component(
+                    name,
+                    &JsComponent::deserialize(json!(source)).map_err(|err| err.to_string())?,
+                    metadata,
+                )
+            }
+            #[cfg(feature = "go_runtime")]
+            "go" | "gos" => {
+                return self.create_component(
+                    name,
+                    &GoComponent::deserialize(json!(source)).map_err(|err| err.to_string())?,
+                    metadata,
+                )
+            }
+            _ => return Err(format!("Unsupported source language: {}", source.language)),
+        }
+    }
+
+    fn create_component(
+        &mut self,
+        name: &str,
+        component: &dyn GraphDefinition,
+        metadata: Value,
+    ) -> Result<Arc<Mutex<Component>>, String> {
+        // If a string was specified, attempt to load it dynamically
+        if let Some(source) = component.to_any().downcast_ref::<ComponentSource>() {
+            return self.dynamic_load(name, source.clone(), metadata);
         }
 
-        todo!()
+        #[cfg(feature = "wasm_runtime")]
+        // Load and create a wasm component
+        if let Some(wasm_component) = component.to_any().downcast_ref::<WasmComponent>() {
+            let mut wasm = wasm_component.clone();
+            wasm.base_dir = if wasm.base_dir == "/" {
+                let mut buf = PathBuf::from(self.base_dir.clone());
+                buf.push(wasm.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir
+                    .clone()
+                    .as_os_str()
+                    .to_str()
+                    .expect("expected valid path string")
+                    .to_owned()
+            };
+            return Ok(Component::from_instance(
+                wasm_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
+        #[cfg(feature = "js_runtime")]
+        // Load and create a js component
+        if let Some(js_component) = component.to_any().downcast_ref::<JsComponent>() {
+            let mut js = js_component.clone();
+            js.base_dir = if js.base_dir == "/" {
+                let mut buf = self.base_dir.clone();
+                buf.push(js.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir
+                    .clone()
+                    .as_os_str()
+                    .to_str()
+                    .expect("expected valid path string")
+                    .to_owned()
+            };
+            return Ok(Component::from_instance(
+                js_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
+        #[cfg(feature = "lua_runtime")]
+        // Load and create a lua component
+        if let Some(lua_component) = component.to_any().downcast_ref::<LuaComponent>() {
+            let mut lua = lua_component.clone();
+            lua.base_dir = if lua.base_dir == "/" {
+                let mut buf = self.base_dir.clone();
+                buf.push(lua.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir
+                    .clone()
+                    .as_os_str()
+                    .to_str()
+                    .expect("expected valid path string")
+                    .to_owned()
+            };
+            return Ok(Component::from_instance(
+                lua_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
+        #[cfg(feature = "wren_runtime")]
+        // Load and create a wren component
+        if let Some(wren_component) = component.to_any().downcast_ref::<WrenComponent>() {
+            let mut wren = wren_component.clone();
+            wren.base_dir = if wren.base_dir == "/" {
+                let mut buf = self.base_dir.clone();
+                buf.push(wren.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir
+                    .clone()
+                    .as_os_str()
+                    .to_str()
+                    .expect("expected valid path string")
+                    .to_owned()
+            };
+            return Ok(Component::from_instance(
+                wren_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
+        #[cfg(feature = "go_runtime")]
+        // Load and create a go component
+        if let Some(go_component) = component.to_any().downcast_ref::<GoComponent>() {
+            let mut go = go_component.clone();
+            go.base_dir = if go.base_dir == "/" {
+                let mut buf = self.base_dir.clone();
+                buf.push(go.base_dir);
+                buf.to_str().unwrap().to_owned()
+            } else {
+                self.base_dir
+                    .clone()
+                    .as_os_str()
+                    .to_str()
+                    .expect("expected valid path string")
+                    .to_owned()
+            };
+            return Ok(Component::from_instance(
+                go_component
+                    .clone()
+                    .with_metadata(metadata)
+                    .as_component()?,
+            ));
+        }
+
+        // check if it's a component instance
+        if let Some(instance) = component.to_any().downcast_ref::<Component>() {
+            let mut instance = instance.clone();
+            if let Some(meta) = metadata.as_object() {
+                instance.metadata = Some(meta.clone());
+            }
+            return Ok(Component::from_instance(instance));
+        }
+
+        Err("".to_owned())
+    }
+
+    fn get_base_dir(&self) -> &str {
+        self.base_dir.to_str().or(Some("/")).unwrap()
     }
 }

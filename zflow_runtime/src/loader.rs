@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     str::FromStr,
     sync::{Arc, Mutex},
 };
@@ -8,40 +8,16 @@ use std::{
 use poll_promise::Promise;
 use regex::Regex;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use zflow_graph::types::GraphJson;
 
 use crate::{
-    component::{Component, GraphDefinition, ModuleComponent},
+    component::{Component, GraphDefinition},
     registry::{ComponentSource, DefaultRegistry, RuntimeRegistry},
 };
 
-#[cfg(any(
-    feature = "js_runtime",
-    feature = "wasm_runtime",
-    feature = "lua_runtime",
-    feature = "wren_runtime"
-))]
-use serde::Deserialize;
-
-#[cfg(feature="js_runtime")]
-use crate::js::JsComponent;
-
-#[cfg(feature="wasm_runtime")]
-use crate::wasm::WasmComponent;
-
-#[cfg(feature="lua_runtime")]
-use crate::lua::LuaComponent;
-
-#[cfg(feature="wren_runtime")]
-use crate::wren::WrenComponent;
-
-#[cfg(feature="go_runtime")]
-use crate::go::GoComponent;
-
 use std::fmt::Debug;
 
-use is_url::is_url;
 
 #[derive(Debug, Default, Clone)]
 pub struct ComponentLoaderOptions {
@@ -118,16 +94,12 @@ impl Default for ComponentLoader {
 }
 
 impl ComponentLoader {
-    pub fn new(
-        base_dir: &str,
-        options: ComponentLoaderOptions,
-        registry: Option<Arc<Mutex<dyn RuntimeRegistry + Send>>>,
-    ) -> Self {
-        let mut _registry: Arc<Mutex<dyn RuntimeRegistry + Send>> =
-            Arc::new(Mutex::new(DefaultRegistry::default()));
-        if let Some(reg) = registry {
-            _registry = reg.clone();
-        }
+    pub fn new(base_dir: &str, options: ComponentLoaderOptions) -> Self {
+        let mut _registry = DefaultRegistry::default();
+        _registry.set_base_dir(base_dir);
+
+        let mut _registry: Arc<Mutex<dyn RuntimeRegistry + Send>> = Arc::new(Mutex::new(_registry));
+
         Self {
             components: Arc::new(Mutex::new(HashMap::new())),
             options,
@@ -136,6 +108,22 @@ impl ComponentLoader {
             processing: None,
             ready: false,
             registry: _registry,
+        }
+    }
+
+    pub fn from_registry<T: RuntimeRegistry + Send + 'static>(
+        options: ComponentLoaderOptions,
+        registry: T,
+    ) -> Self {
+        let base_dir = registry.get_base_dir();
+        Self {
+            components: Arc::new(Mutex::new(HashMap::new())),
+            options,
+            base_dir: String::from(base_dir),
+            library_icons: HashMap::new(),
+            processing: None,
+            ready: false,
+            registry: Arc::new(Mutex::new(registry)),
         }
     }
 
@@ -285,168 +273,9 @@ impl ComponentLoader {
         component: &dyn GraphDefinition,
         metadata: Value,
     ) -> Result<Arc<Mutex<Component>>, String> {
-        // If a string was specified, attempt to load it dynamically
-        if let Some(path) = component.to_any().downcast_ref::<String>() {
-            if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
-                if !is_url(path) {
-                    return registry.dynamic_load(name, path, metadata);
-                }
-
-                if Path::new(path).extension().is_some() || path.contains(std::path::is_separator) {
-                    if let Ok(buf) = PathBuf::from_str(&self.base_dir).as_mut() {
-                        buf.push(path);
-                        return registry.dynamic_load(
-                            name,
-                            buf.as_os_str()
-                                .to_str()
-                                .expect("expected valid path string"),
-                            metadata,
-                        );
-                    }
-                }
-            }
+        if let Ok(registry) = self.registry.clone().try_lock().as_mut() {
+            return registry.create_component(name, component, metadata);
         }
-
-        #[cfg(feature = "wasm_runtime")]
-        // Load and create a wasm component
-        if let Some(wasm_component) = component.to_any().downcast_ref::<WasmComponent>() {
-            let mut wasm = wasm_component.clone();
-            wasm.base_dir = if wasm.base_dir == "/" {
-                let mut buf = PathBuf::from(self.base_dir.clone());
-                buf.push(wasm.base_dir);
-                buf.to_str().unwrap().to_owned()
-            } else {
-                self.base_dir.clone()
-            };
-            return Ok(Component::from_instance(
-                wasm_component
-                    .clone()
-                    .with_metadata(metadata)
-                    .as_component()?,
-            ));
-        }
-
-        #[cfg(feature = "js_runtime")]
-        // Load and create a js component
-        if let Some(js_component) = component.to_any().downcast_ref::<JsComponent>() {
-            let mut js = js_component.clone();
-            js.base_dir = if js.base_dir == "/" {
-                let mut buf = PathBuf::from(self.base_dir.clone());
-                buf.push(js.base_dir);
-                buf.to_str().unwrap().to_owned()
-            } else {
-                self.base_dir.clone()
-            };
-            return Ok(Component::from_instance(
-                js_component
-                    .clone()
-                    .with_metadata(metadata)
-                    .as_component()?,
-            ));
-        }
-
-        #[cfg(feature = "lua_runtime")]
-        // Load and create a lua component
-        if let Some(lua_component) = component.to_any().downcast_ref::<LuaComponent>() {
-            let mut lua = lua_component.clone();
-            lua.base_dir = if lua.base_dir == "/" {
-                let mut buf = PathBuf::from(self.base_dir.clone());
-                buf.push(lua.base_dir);
-                buf.to_str().unwrap().to_owned()
-            } else {
-                self.base_dir.clone()
-            };
-            return Ok(Component::from_instance(
-                lua_component
-                    .clone()
-                    .with_metadata(metadata)
-                    .as_component()?,
-            ));
-        }
-
-        #[cfg(feature = "wren_runtime")]
-        // Load and create a wren component
-        if let Some(wren_component) = component.to_any().downcast_ref::<WrenComponent>() {
-            let mut wren = wren_component.clone();
-            wren.base_dir = if wren.base_dir == "/" {
-                let mut buf = PathBuf::from(self.base_dir.clone());
-                buf.push(wren.base_dir);
-                buf.to_str().unwrap().to_owned()
-            } else {
-                self.base_dir.clone()
-            };
-            return Ok(Component::from_instance(
-                wren_component
-                    .clone()
-                    .with_metadata(metadata)
-                    .as_component()?,
-            ));
-        }
-
-        #[cfg(feature = "go_runtime")]
-        // Load and create a go component
-        if let Some(go_component) = component.to_any().downcast_ref::<GoComponent>() {
-            let mut go = go_component.clone();
-            go.base_dir = if go.base_dir == "/" {
-                let mut buf = PathBuf::from(self.base_dir.clone());
-                buf.push(go.base_dir);
-                buf.to_str().unwrap().to_owned()
-            } else {
-                self.base_dir.clone()
-            };
-            return Ok(Component::from_instance(
-                go_component
-                    .clone()
-                    .with_metadata(metadata)
-                    .as_component()?,
-            ));
-        }
-
-        // check if it's source code
-
-        if let Some(source) = component.to_any().downcast_ref::<ComponentSource>() {
-            match source.language.as_str() {
-                #[cfg(feature = "lua_runtime")]
-                "lua" => {
-                    let comp =
-                        LuaComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
-                    return self.create_component(name, &comp, metadata);
-                }
-                #[cfg(feature = "wren_runtime")]
-                "wren" => {
-                    let comp =
-                        WrenComponent::deserialize(json!(source)).map_err(|err| err.to_string())?;
-                    return self.create_component(name, &comp, metadata);
-                }
-                #[cfg(feature = "js_runtime")]
-                "js" | "ts" => {
-                    return self.create_component(
-                        name,
-                        &JsComponent::deserialize(json!(source)).map_err(|err| err.to_string())?,
-                        metadata,
-                    )
-                }
-                #[cfg(feature = "go_runtime")]
-                "go" | "gos" => {
-                    return self.create_component(
-                        name,
-                        &GoComponent::deserialize(json!(source)).map_err(|err| err.to_string())?,
-                        metadata,
-                    )
-                }
-                _ => return Err(format!("Unsupported source language: {}", source.language)),
-            }
-        }
-
-        // check if it's a component instance
-        if let Some(instance) = component.to_any().downcast_ref::<Component>() {
-            let mut instance = instance.clone();
-            if let Some(meta) = metadata.as_object() {
-                instance.metadata = Some(meta.clone());
-            }
-            return Ok(Component::from_instance(instance));
-        }
-
         Err("".to_owned())
     }
 
@@ -550,7 +379,7 @@ impl ComponentLoader {
         }
 
         let f_name = build_node_id(namespace, name);
-       
+
         self.components
             .clone()
             .try_lock()
@@ -667,10 +496,10 @@ pub fn build_node_id(package: &str, name: &str) -> String {
     }
     if let Some(_name) = package.split("/").nth(1) {
         if _name == name {
-            return package.to_owned()
+            return package.to_owned();
         }
     }
-    
+
     let mut prefix = PathBuf::from_str(package).unwrap();
     prefix.push(name);
     prefix.as_os_str().to_str().unwrap().to_string()

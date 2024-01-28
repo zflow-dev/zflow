@@ -1,0 +1,4 @@
+[env]
+ZFLOW_WASM_RUNNER_LIB = {value="../../zflow_wasm_runner/bin/libzflow_wasm_runner.dylib", relative=true}
+ZFLOW_QUICKJS_RUNNER_LIB = {value="../../zflow_js_runner/bin/libzflow_js_runner.dylib", relative=true}
+

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+cargo build --target wasm32-wasi --release
+
+cp ./bin/wasm32-wasi/release/maths_provider.wasm ./bin/maths_provider.wasm

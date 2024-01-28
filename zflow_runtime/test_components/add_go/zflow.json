@@ -1,5 +1,5 @@
 {
-    "package_name": "test",
+    "package_id": "test",
     "components": [
         {
             "name": "add_go",
@@ -9,11 +9,15 @@
             "outports": {
                 "sum":{}
             },
-            "base_dir": "/",
+            "source_dir": "/",
             "source": "add.gos",
             "description": "sum of two numbers",
-            "language": "go",
-            "ordered": true
+            "ordered": true,
+            "runtime": {
+                "provider_id": "@zflow/builtin",
+                "runner_id": "@zflow/goscript",
+                "platform": "System"
+            }
         }
     ]
 }

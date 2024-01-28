@@ -3,8 +3,6 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
     sync::{Arc, Mutex},
-    thread,
-    time::Duration,
 };
 
 use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
@@ -23,17 +21,17 @@ use zflow_graph::Graph;
 
 use crate::{
     ip::{IPOptions, IPType, IP},
-    loader::ComponentLoader,
-    network::{BaseNetwork, NetworkEvent, NetworkProcess},
+    // loader::ComponentLoader,
+    network::{BaseNetwork, Network, NetworkEvent, NetworkProcess},
     port::{
         normalize_port_name, BasePort, InPort, InPorts, InPortsOptions, OutPort, OutPorts,
-        OutPortsOptions, PortOptions, PortsTrait,
+        OutPortsOptions, PortsTrait,
     },
     process::{
         ProcessContext, ProcessError, ProcessFunc, ProcessHandle, ProcessInput, ProcessOutput,
         ProcessResult,
     },
-    registry::RemoteComponent,
+    // registry::RemoteComponent,
     sockets::SocketEvent,
 };
 
@@ -43,7 +41,7 @@ pub struct BracketContext {
     pub out: HashMap<String, HashMap<String, Vec<Arc<Mutex<ProcessContext>>>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ComponentEvent {
     Activate(usize),
     Deactivate(usize),
@@ -67,11 +65,11 @@ impl GraphDefinition for Component {
     }
 }
 
-impl GraphDefinition for RemoteComponent {
-    fn to_any(&self) -> &dyn Any {
-        Box::leak(Box::new(self.clone())) as &dyn Any
-    }
-}
+// impl GraphDefinition for RemoteComponent {
+//     fn to_any(&self) -> &dyn Any {
+//         Box::leak(Box::new(self.clone())) as &dyn Any
+//     }
+// }
 
 impl GraphDefinition for Graph {
     fn to_any(&self) -> &dyn Any {
@@ -93,8 +91,8 @@ impl GraphDefinition for String {
 /// ZFlow Process Component
 // #[derive(Clone)]
 pub struct Component {
-    pub loader: Option<ComponentLoader>,
-    pub network: Option<Arc<Mutex<dyn BaseNetwork + Send + Sync + 'static>>>,
+    // pub loader: Option<ComponentLoader>,
+    pub network: Option<*mut Network>, //Option<*mut (dyn BaseNetwork + Send + Sync + 'static)>,
     pub in_ports: InPorts,
     pub out_ports: OutPorts,
     /// Set the default component description
@@ -122,12 +120,10 @@ pub struct Component {
     pub(crate) bus: Arc<Mutex<Publisher<ComponentEvent>>>,
     pub(crate) internal_thread: Arc<Mutex<HandlerThread>>,
     pub auto_ordering: Option<bool>,
-    setup_fn: Option<
-        Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>,
-    >,
-    teardown_fn: Option<
-        Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>,
-    >,
+    setup_fn:
+        Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static>>>,
+    teardown_fn:
+        Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static>>>,
     tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
     pub(crate) graph: Option<Box<dyn GraphDefinition>>,
     pub(crate) ready: bool,
@@ -137,7 +133,7 @@ pub struct Component {
 impl Clone for Component {
     fn clone(&self) -> Self {
         let mut s = Self {
-            loader: self.loader.clone(),
+            // loader: self.loader.clone(),
             network: self.network.clone(),
             in_ports: self.in_ports.clone(),
             out_ports: self.out_ports.clone(),
@@ -204,7 +200,7 @@ impl Default for Component {
             graph: Default::default(),
             ready: false,
             network: Default::default(),
-            loader: Default::default(),
+            // loader: Default::default(),
             starting: Default::default(),
             metadata: Default::default(),
         }
@@ -242,26 +238,8 @@ impl Component {
     pub fn to_static(&mut self) -> &'static Self {
         Box::leak(Box::new(self.clone()))
     }
-    pub fn new(mut options: ComponentOptions) -> Self {
+    pub fn new(options: ComponentOptions) -> Self {
         let bus_handle = HandlerThread::new_with_mutex();
-
-        if options.graph.is_some() {
-            options.in_ports.insert(
-                "graph".to_string(),
-                InPort::new(PortOptions {
-                    description: "ZFlow graph definition to be used with the subgraph component"
-                        .to_owned(),
-                    required: true,
-                    ..PortOptions::default()
-                }),
-            );
-
-            options.description = if options.description.is_empty() {
-                "ZFlow graph definition to be used with the subgraph component".to_owned()
-            } else {
-                options.description
-            };
-        }
 
         let mut s = Self {
             out_ports: OutPorts::new(OutPortsOptions {
@@ -286,9 +264,6 @@ impl Component {
             handle: None,
             auto_ordering: None,
             node_id: String::from(""),
-            // bus: Arc::new(Mutex::new(Publisher::new_with_handlers(Some(
-            //     bus_handle.clone(),
-            // )))),
             bus: Arc::new(Mutex::new(Publisher::new())),
             internal_thread: bus_handle.clone(),
             setup_fn: None,
@@ -297,7 +272,6 @@ impl Component {
             graph: options.graph,
             ready: false,
             network: None,
-            loader: None,
             starting: false,
             metadata: options.metadata,
         };
@@ -351,31 +325,34 @@ impl Component {
 
         let _component = component.clone();
         component.clone().try_lock().as_mut().unwrap().setup_fn =
-            Some(Arc::new(Mutex::new(move |this: Arc<Mutex<Self>>| {
+            Some(Arc::new(Mutex::new(move |this| {
                 let _s = _component.clone();
                 if let Ok(s) = _s.try_lock().as_mut() {
                     let setup_f = s.setup_fn.as_mut();
                     if let Some(setup_fn) = setup_f.cloned() {
                         if let Ok(setup_fn) = setup_fn.clone().try_lock().as_mut() {
-                            (setup_fn)(this.clone())?;
+                            (setup_fn)(this)?;
                         }
                     }
                 }
-                return Component::graph_set_up(this.clone());
+
+                let mut this = unsafe { this.read() };
+                return this.graph_set_up();
             })));
         let _component = component.clone();
         component.clone().try_lock().as_mut().unwrap().teardown_fn =
-            Some(Arc::new(Mutex::new(move |this: Arc<Mutex<Self>>| {
+            Some(Arc::new(Mutex::new(move |this| {
                 let _s = _component.clone();
                 if let Ok(s) = _s.try_lock().as_mut() {
                     let teardown_f = s.teardown_fn.as_mut();
                     if let Some(tear_down_fn) = teardown_f.cloned() {
                         if let Ok(tear_down_fn) = tear_down_fn.try_lock().as_mut() {
-                            (tear_down_fn)(this.clone())?;
+                            (tear_down_fn)(this)?;
                         }
                     }
                 }
-                return Component::graph_tear_down(this.clone());
+                let mut this = unsafe { this.read() };
+                return this.graph_tear_down();
             })));
     }
 
@@ -383,28 +360,22 @@ impl Component {
     ///
     /// Called when network starts. This calls the setUp
     /// method and sets the component to a started state.
-    pub fn start(_component: Arc<Mutex<Component>>) -> Result<(), String> {
-        if let Some(setup_fn) = _component
-            .clone()
-            .try_lock()
-            .as_mut()
-            .unwrap()
-            .get_setup_function()
-        {
-            if let Ok(setup_fn) = setup_fn.clone().try_lock().as_mut() {
-                (setup_fn)(_component.clone())?;
-            }
+    pub fn start(&mut self) -> Result<(), String> {
+        if self.is_started() {
+            return Ok(());
         }
-        let binding = _component.clone();
-        let mut binding = binding.try_lock();
-        let component = binding.as_mut().unwrap();
-        component.set_started(true);
-        component
-            .get_publisher()
+        self.set_started(true);
+        self.get_publisher()
             .clone()
             .try_lock()
             .unwrap()
             .publish(ComponentEvent::Start);
+
+        if let Some(setup_fn) = self.get_setup_function() {
+            if let Ok(setup_fn) = setup_fn.clone().try_lock().as_mut() {
+                (setup_fn)(self)?;
+            }
+        }
         Ok(())
     }
 
@@ -413,43 +384,48 @@ impl Component {
     /// Called when network is shut down. This calls the
     /// teardown function and sets the component back to a
     /// non-started state.
-    pub fn shutdown(_component: Arc<Mutex<Component>>) -> Result<(), String> {
+    pub fn shutdown(&mut self) -> Result<(), String> {
         // Tell the component that it is time to shut down
-        if let Some(teardown_fn) = _component
-            .clone()
-            .try_lock()
-            .as_mut()
-            .unwrap()
-            .get_teardown_function()
-            .clone()
-        {
-            if let Ok(teardown_fn) = teardown_fn.clone().try_lock().as_mut() {
-                (teardown_fn)(_component.clone())?;
+        if let Some(teardown_fn) = self.get_teardown_function() {
+            if let Ok(teardown_fn) = teardown_fn.try_lock().as_mut() {
+                (teardown_fn)(self)?;
             }
         }
 
-        thread::spawn(move || {
-            if let Ok(component) = _component.clone().try_lock().as_mut() {
-                while component.get_load() > 0
-                    || component
-                        .get_handler_thread()
-                        .try_lock()
-                        .unwrap()
-                        .is_alive()
-                {
-                    // Some in-flight processes, wait for them to finish
-                }
-                component.get_subscribers().iter().for_each(|signal| {
-                    component
-                        .get_publisher()
-                        .clone()
-                        .try_lock()
-                        .unwrap()
-                        .unsubscribe(signal.clone());
-                });
-                component.reset();
-            }
+        // thread::spawn(move || {
+        //     // if let Ok(component) = _component.clone().try_lock().as_mut() {
+        //     //     while component.get_load() > 0
+        //     //         || component
+        //     //             .get_handler_thread()
+        //     //             .try_lock()
+        //     //             .unwrap()
+        //     //             .is_alive()
+        //     //     {
+        //     //         // Some in-flight processes, wait for them to finish
+        //     //     }
+        //     //     component.get_subscribers().iter().for_each(|signal| {
+        //     //         component
+        //     //             .get_publisher()
+        //     //             .clone()
+        //     //             .try_lock()
+        //     //             .unwrap()
+        //     //             .unsubscribe(signal.clone());
+        //     //     });
+        //     //     component.reset();
+        //     // }
+        // });
+
+        while self.get_load() > 0 || self.get_handler_thread().try_lock().unwrap().is_alive() {
+            // Some in-flight processes, wait for them to finish
+        }
+        self.get_subscribers().iter().for_each(|signal| {
+            self.get_publisher()
+                .clone()
+                .try_lock()
+                .unwrap()
+                .unsubscribe(signal.clone());
         });
+        self.reset();
 
         Ok(())
     }
@@ -462,7 +438,7 @@ impl Component {
 
         _component.prepare_forwarding();
         _component.get_inports().ports.keys().for_each(move |name| {
-            let mut port = _component.get_inports_mut().ports.get_mut(name).unwrap();
+            let port = _component.get_inports_mut().ports.get_mut(name).unwrap();
             if port.name.is_empty() {
                 (*port).name = name.to_string();
             }
@@ -701,7 +677,7 @@ impl Component {
                 return;
             }
         }
-       
+
         // If receiving an IP object didn't cause the component to
         // activate, log that input conditions were not met
         if port.clone().is_addressable() {
@@ -729,7 +705,7 @@ impl Component {
     /// Called at network start-up.
     pub fn setup(
         &mut self,
-        setup_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static,
+        setup_fn: impl FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static,
     ) {
         self.setup_fn = Some(Arc::new(Mutex::new(setup_fn)));
     }
@@ -739,7 +715,7 @@ impl Component {
     /// Called at network shutdown.
     pub fn teardown(
         &mut self,
-        teardown_fn: impl FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static,
+        teardown_fn: impl FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static,
     ) {
         self.teardown_fn = Some(Arc::new(Mutex::new(teardown_fn)));
     }
@@ -1446,7 +1422,6 @@ impl Component {
         context.activated = false;
         context.deactivated = true;
 
-    
         if self.is_ordered() {
             self.process_output_queue();
         }
@@ -1649,14 +1624,14 @@ impl Component {
 
     pub fn get_teardown_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>
+    ) -> Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static>>>
     {
         self.teardown_fn.clone()
     }
 
     pub fn get_setup_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut(Arc<Mutex<Self>>) -> Result<(), String> + Send + Sync + 'static>>>
+    ) -> Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static>>>
     {
         self.setup_fn.clone()
     }
@@ -1735,13 +1710,13 @@ impl Component {
         self.internal_thread.clone()
     }
 
-    pub fn get_network(&self) -> Option<Arc<Mutex<dyn BaseNetwork + Send + Sync>>> {
-        self.network.clone()
-    }
+    // pub fn get_network(&self) -> Option<Arc<Mutex<dyn BaseNetwork + Send + Sync>>> {
+    //     self.network.clone()
+    // }
 
-    pub fn set_loader(&mut self, loader: ComponentLoader) {
-        self.loader = Some(loader);
-    }
+    // pub fn set_loader(&mut self, loader: ComponentLoader) {
+    //     // self.loader = Some(loader);
+    // }
 
     pub fn setup_graph(
         component: Arc<Mutex<Component>>,
@@ -1794,28 +1769,27 @@ impl Component {
     }
 
     pub fn subscribe_network(
-        component: Arc<Mutex<Component>>,
-        network: Arc<Mutex<dyn BaseNetwork + Send + Sync>>,
+        &mut self,
+        network: &mut Network,
     ) {
-        if let Ok(network) = network.clone().try_lock() {
-            network
+        let bus = self.get_publisher();
+        network
                 .get_publisher()
                 .try_lock()
                 .expect("expected network publisher")
                 .subscribe_fn(move |event| {
-                    if let Ok(_) = component.clone().try_lock().as_mut() {
-                        match event.as_ref() {
-                            NetworkEvent::Start(_) => {
-                                // activate
-                            }
-                            NetworkEvent::End(_) => {
-                                // deactivate
-                            }
-                            _ => {}
+                    match event.as_ref() {
+                        NetworkEvent::Start(_) => {
+                            // activate
+                            bus.clone().try_lock().unwrap().publish(ComponentEvent::Activate(0));
                         }
+                        NetworkEvent::End(_) => {
+                            // deactivate
+                            bus.clone().try_lock().unwrap().publish(ComponentEvent::Deactivate(0))
+                        }
+                        _ => {}
                     }
                 });
-        }
     }
 
     pub fn is_exported_inport(
@@ -1828,7 +1802,8 @@ impl Component {
             return None;
         }
         // First we check disambiguated exported ports
-        if let Ok(network) = self.network.clone().unwrap().try_lock().as_mut() {
+        if let Some(network) = self.network {
+            let network = unsafe { network.read() };
             if let Ok(graph) = network.get_graph().try_lock() {
                 for key in graph.inports.keys() {
                     if let Some(priv_port) = graph.inports.get(key) {
@@ -1853,7 +1828,8 @@ impl Component {
             return None;
         }
         // First we check disambiguated exported ports
-        if let Ok(network) = self.network.clone().unwrap().try_lock().as_mut() {
+        if let Some(network) = self.network {
+            let network = unsafe { network.read() };
             if let Ok(graph) = network.get_graph().try_lock() {
                 for key in graph.outports.keys() {
                     if let Some(priv_port) = graph.outports.get(key) {
@@ -1905,7 +1881,7 @@ impl Component {
                     .get_mut(&target_port_name)
                     .unwrap()
                     .on(move |event| {
-                        let p_binding = binding.clone();
+                        //let p_binding = binding.clone();
                         let mut binding = binding.try_lock();
                         match event.as_ref() {
                             SocketEvent::Connect(_) => {
@@ -1915,11 +1891,12 @@ impl Component {
                                     {
                                         return;
                                     }
-                                    if let Ok(network) =
-                                        graph_component.network.clone().unwrap().try_lock().as_mut()
-                                    {
-                                        if network.is_started() {
-                                            return;
+                                    if let Some(network) = graph_component.network {
+                                        let mut network = unsafe { network.read() };
+                                        if let Ok(manager) = network.manager.clone().try_lock() {
+                                            if manager.is_started() {
+                                                return;
+                                            }
                                         }
 
                                         if network.get_startup_time().is_some() {
@@ -1929,7 +1906,7 @@ impl Component {
                                         }
 
                                         // Network was never started, start properly
-                                        let _ = Component::graph_set_up(p_binding.clone());
+                                        let _ = graph_component.graph_set_up();
                                     }
                                 }
                             }
@@ -1958,53 +1935,44 @@ impl Component {
         return true;
     }
 
-    pub(crate) fn graph_set_up(component: Arc<Mutex<Self>>) -> Result<(), String> {
-        let binding = component.clone();
-        let mut binding = binding.try_lock();
-        let _component = binding.as_mut().unwrap();
-        _component.starting = true;
+    pub(crate) fn graph_set_up(&mut self) -> Result<(), String> {
+        self.starting = true;
 
-        if !_component.is_ready() {
-            if let Ok(publisher) = _component.bus.clone().try_lock().as_mut() {
+        if !self.is_ready() {
+            if let Ok(publisher) = self.bus.clone().try_lock().as_mut() {
                 publisher.subscribe_fn(move |event| {
-                    let mut binding = component.try_lock();
-                    let _component = binding.as_mut().unwrap();
-                    match event.as_ref() {
-                        ComponentEvent::Ready => {
-                            if !_component.is_ready() {
-                                Component::graph_set_up(component.clone())
-                                    .expect("expected graph component to setup");
-                            }
-                        }
-                        _ => {}
-                    }
+
+                    // match event.as_ref() {
+                    //     ComponentEvent::Ready => {
+                    //         if !_component.is_ready() {
+                    //             Component::graph_set_up(component.clone())
+                    //                 .expect("expected graph component to setup");
+                    //         }
+                    //     }
+                    //     _ => {}
+                    // }
                 });
             }
         }
-        if _component.network.is_none() {
+        if self.network.is_none() {
             return Ok(());
         }
 
-        if let Ok(network) = _component.network.clone().unwrap().try_lock().as_mut() {
-            network.start()?;
-            _component.starting = false;
-        }
+        let mut network = unsafe { self.network.unwrap().read() };
+
+        network.start()?;
+        self.starting = false;
 
         Ok(())
     }
 
-    pub fn graph_tear_down(component: Arc<Mutex<Self>>) -> Result<(), String> {
-        let binding = component.clone();
-        let mut binding = binding.try_lock();
-        let _component = binding.as_mut().unwrap();
-        if _component.network.is_none() {
+    pub fn graph_tear_down(&mut self) -> Result<(), String> {
+        if self.network.is_none() {
             return Ok(());
         }
-        if let Ok(network) = _component.network.clone().unwrap().try_lock().as_mut() {
-            return network.stop();
-        }
 
-        Err("Faled to teardown graph component".to_owned())
+        let mut network = unsafe { self.network.unwrap().read() };
+        return network.stop();
     }
 }
 

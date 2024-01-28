@@ -1,0 +1,48 @@
+{
+    "provider_id": "@test/provider",
+    "platform": "System",
+    "workspace": "/",
+    "type": "Wasi",
+    "source": {
+        "path": "./bin/maths_provider.wasm"
+    },
+    "logo": "",
+    "packages": [
+        {
+            "package_name": "math",
+            "base_dir": "/",
+            "components": [
+                {
+                    "name": "math/add",
+                    "inports": {
+                        "input": {
+                            "trigerring": true,
+                            "control": true
+                        }
+                    },
+                    "outports": {
+                        "sum": {}
+                    },
+                    "process": "add",
+                    "description": "Addition of two numbers",
+                    "ordered": true
+                },
+                {
+                    "name": "math/sub",
+                    "inports": {
+                        "input": {
+                            "trigerring": true,
+                            "control": true
+                        }
+                    },
+                    "outports": {
+                        "result": {}
+                    },
+                    "process": "sub",
+                    "description": "Substraction of two numbers",
+                    "ordered": true
+                }
+            ]
+        }
+    ]
+}

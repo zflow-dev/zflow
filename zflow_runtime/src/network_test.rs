@@ -3,23 +3,22 @@ mod tests {
     use crate::{
         component::{Component, ComponentOptions},
         ip::IPType,
-        network::{BaseNetwork, Network, NetworkEvent, NetworkOptions},
+        network::{Network, NetworkEvent, NetworkOptions},
         port::{BasePort, InPort, OutPort, PortOptions},
         process::ProcessResult,
     };
     use assert_json_diff::assert_json_eq;
     use beady::scenario;
     use serde_json::json;
-    use std::sync::Arc;
-    use std::{
-        collections::HashMap,
-        sync::RwLock,
-    };
+    use std::sync::{Arc, Mutex};
     use zflow_graph::{
         types::{GraphEdge, GraphLeaf, GraphNode},
         Graph,
     };
 
+    use std::collections::HashMap;
+
+    use crate::network::BaseNetwork;
     #[scenario]
     #[test]
     fn test_network() {
@@ -83,7 +82,7 @@ mod tests {
                     NetworkOptions {
                         subscribe_graph: false,
                         delay: true,
-                        base_dir: base_dir.to_string(),
+                        workspace_dir: base_dir.to_string(),
                         ..NetworkOptions::default()
                     },
                 );
@@ -91,36 +90,26 @@ mod tests {
                 let n = n.connect().unwrap();
 
                 'then_it_should_initially_be_marked_as_stopped: {
-                    let binding = n.clone();
-                    let n = binding.try_lock().unwrap();
-                    assert!(!n.is_started());
+                    let manager = n.manager.clone();
+                    let m = manager.try_lock().unwrap();
+                    assert!(!(*m).is_started());
                 }
                 'then_it_should_initially_have_no_process: {
-                    let binding = n.clone();
-                    let n = binding.try_lock().unwrap();
                     assert!(n.get_processes().is_empty());
                 }
 
                 'then_it_should_initially_have_no_active_process: {
-                    let binding = n.clone();
-                    let n = binding.try_lock().unwrap();
                     assert!(n.get_active_processes().is_empty());
                 }
 
                 'then_it_should_initially_have_no_connections: {
-                    let binding = n.clone();
-                    let n = binding.try_lock().unwrap();
                     assert!(n.get_connections().is_empty());
                 }
 
                 'then_it_should_initially_have_no_iips: {
-                    let binding = n.clone();
-                    let n = binding.try_lock().unwrap();
                     assert!(n.get_initials().is_empty());
                 }
                 'then_it_should_have_reference_to_graph: {
-                    let binding = n.clone();
-                    let n = binding.try_lock().unwrap();
                     if let Ok(graph) = n.get_graph().try_lock() {
                         assert!(true);
                     } else {
@@ -128,36 +117,17 @@ mod tests {
                     }
                 }
                 'then_it_know_its_base_dir: {
-                    let binding = n.clone();
-                    let n = binding.try_lock().unwrap();
-                    assert!(!n.get_base_dir().is_empty());
+                    assert!(!n.get_workspace_dir().is_empty());
                 }
                 'then_it_should_be_able_to_list_components: {
-                    let binding = n.clone();
-                    let mut binding = binding.try_lock();
-                    let n = binding.as_mut().unwrap();
-                    if let Ok(components) = n
-                        .get_loader()
-                        .list_components()
-                        .expect("expected list of components")
-                        .try_lock()
-                    {
-                        assert!(true);
-                    } else {
-                        assert!(false);
-                    }
+                    assert!(!n.list_components().is_empty())
                 }
                 'then_it_should_have_an_uptime: {
-                    let binding = n.clone();
-                    let n = binding.try_lock().unwrap();
                     assert_eq!(n.uptime(), 0);
                 }
 
                 'then_when_with_new_node: {
                     'and_then_it_should_contain_node: {
-                        let binding = n.clone();
-                        let mut binding = binding.try_lock();
-                        let n = binding.as_mut().unwrap();
                         let res = n.add_node(
                             GraphNode {
                                 id: "test/add".to_string(),
@@ -167,6 +137,7 @@ mod tests {
                             },
                             None,
                         );
+
                         assert!(!res.is_err());
 
                         'and_then_it_should_have_registered_the_node_with_the_graph: {
@@ -223,17 +194,22 @@ mod tests {
                     }
                 }
                 'then_when_with_new_edge: {
-                    let binding = n.clone();
-                    let mut binding = binding.try_lock();
-                    let _n = binding.as_mut().unwrap();
-                    _n.get_loader()
-                        .register_component("A", "split", split.clone())
+                    let mut n = Network::create(
+                        g.clone(),
+                        NetworkOptions {
+                            subscribe_graph: false,
+                            delay: true,
+                            workspace_dir: base_dir.to_string(),
+                            ..NetworkOptions::default()
+                        },
+                    );
+
+                    n.register_component("A", "split", split.clone())
                         .expect("expected to register component");
-                    _n.get_loader()
-                        .register_component("B", "split", split.clone())
+                    n.register_component("B", "split", split.clone())
                         .expect("expected to register component");
-                    // drop(binding);
-                    _n.add_node(
+
+                    n.add_node(
                         GraphNode {
                             id: "A/split".to_string(),
                             component: "split".to_string(),
@@ -242,7 +218,7 @@ mod tests {
                         None,
                     )
                     .unwrap();
-                    _n.add_node(
+                    n.add_node(
                         GraphNode {
                             id: "B/split".to_string(),
                             component: "split".to_string(),
@@ -253,7 +229,7 @@ mod tests {
                     .unwrap();
 
                     'and_then_it_should_contain_edge: {
-                        _n.add_edge(
+                        n.add_edge(
                             GraphEdge {
                                 from: GraphLeaf {
                                     node_id: "A/split".to_string(),
@@ -271,36 +247,35 @@ mod tests {
                         )
                         .unwrap();
 
-                      
-                        assert!(!_n.get_connections().is_empty());
-                        if let Ok(socket) = _n.get_connections()[0].clone().try_lock() {
+                        assert!(!n.get_connections().is_empty());
+                        if let Ok(socket) = n.get_connections()[0].clone().try_lock() {
                             let socket = socket.clone();
                             let from = socket.from.unwrap();
                             let to = socket.to.unwrap();
                             assert_eq!(from.port, "out");
-                            assert_json_eq!(from.process.id, _n.get_node("A/split").unwrap().id);
+                            assert_json_eq!(from.process.id, n.get_node("A/split").unwrap().id);
                             assert!(Arc::ptr_eq(
                                 from.process.component.as_ref().unwrap(),
-                                _n.get_node("A/split").unwrap().component.as_ref().unwrap()
+                                n.get_node("A/split").unwrap().component.as_ref().unwrap()
                             ));
 
                             assert_eq!(to.port, "in");
-                            assert_json_eq!(to.process.id, _n.get_node("B/split").unwrap().id);
+                            assert_json_eq!(to.process.id, n.get_node("B/split").unwrap().id);
                             assert!(Arc::ptr_eq(
                                 to.process.component.as_ref().unwrap(),
-                                _n.get_node("B/split").unwrap().component.as_ref().unwrap()
+                                n.get_node("B/split").unwrap().component.as_ref().unwrap()
                             ));
                         }
 
                         'and_then_it_should_have_registered_the_edge_with_the_graph: {
-                            if let Ok(graph) = _n.get_graph().try_lock() {
+                            if let Ok(graph) = n.get_graph().try_lock() {
                                 let edge = graph.get_edge("A/split", "out", "B/split", "in");
                                 assert!(edge.is_some());
                             }
                         }
 
                         'and_then_it_should_not_contain_edge_after_removal: {
-                            _n.remove_edge(GraphEdge {
+                            n.remove_edge(GraphEdge {
                                 from: GraphLeaf {
                                     node_id: "A/split".to_string(),
                                     port: "out".to_string(),
@@ -314,15 +289,15 @@ mod tests {
                                 metadata: None,
                             })
                             .unwrap();
-                            assert!(_n.get_connections().is_empty());
+                            assert!(n.get_connections().is_empty());
 
                             // cleanup
-                            _n.remove_node(GraphNode {
+                            n.remove_node(GraphNode {
                                 id: "A/split".to_string(),
                                 ..Default::default()
                             })
                             .unwrap();
-                            _n.remove_node(GraphNode {
+                            n.remove_node(GraphNode {
                                 id: "B/split".to_string(),
                                 ..Default::default()
                             })
@@ -348,132 +323,115 @@ mod tests {
                         },
                     );
 
-                    let loader = n.get_loader();
-                    loader.register_component("", "Split", split).unwrap();
-                    loader.register_component("", "Merge", merge).unwrap();
-                    loader.register_component("", "Callback", callback).unwrap();
+                    n.register_component("", "Split", split.clone()).unwrap();
+                    n.register_component("", "Merge", merge.clone()).unwrap();
+                    n.register_component("", "Callback", callback.clone()).unwrap();
 
-                    let n = n.connect().unwrap();
+                    let n = n.connect();
+                    assert!(!n.is_err());
+                    let n = n.unwrap();
 
                     'and_then_it_should_send_some_initials_when_started: {
-                        let binding = n.clone();
-                        let mut binding = binding.try_lock();
-                        let network = binding.as_mut().unwrap();
-                        assert!(!network.get_initials().is_empty());
-                        assert!(network.start().is_ok());
-                        assert!(network.is_started());
+                        assert!(!n.get_initials().is_empty());
+                        assert!(n.start().is_ok());
+                        let manager = n.manager.clone();
+                        let m = manager.try_lock().unwrap();
+                        assert!((m).is_started());
                     }
                     'and_then_it_should_contain_two_processes: {
-                        if let Ok(network) = n.clone().try_lock() {
-                            assert!(!network.get_processes().is_empty());
-                            assert!(network.get_processes().get("Merge").is_some());
-                            assert!(network.get_processes().get("Callback").is_some());
-                        }
+                        assert!(!n.get_processes().is_empty());
+                        assert!(n.get_processes().get("Merge").is_some());
+                        assert!(n.get_processes().get("Callback").is_some());
                     }
                     'and_then_the_port_of_the_processes_should_know_the_node_names: {
-                        if let Ok(network) = n.clone().try_lock() {
-                            if let Ok(component) = network
-                                .get_processes()
-                                .get("Callback")
-                                .unwrap()
-                                .component
-                                .clone()
-                                .unwrap()
-                                .try_lock()
-                            {
-                                component
-                                    .get_inports()
-                                    .ports
-                                    .iter()
-                                    .for_each(|(name, port)| {
-                                        assert_eq!(&port.name, name);
-                                        assert_eq!(&port.node, "Callback");
-                                        assert_eq!(
-                                            port.get_id(),
-                                            format!("Callback {}", name.to_uppercase())
-                                        );
-                                    });
+                        if let Ok(component) = n
+                            .get_processes()
+                            .get("Callback")
+                            .unwrap()
+                            .component
+                            .clone()
+                            .unwrap()
+                            .try_lock()
+                        {
+                            component
+                                .get_inports()
+                                .ports
+                                .iter()
+                                .for_each(|(name, port)| {
+                                    assert_eq!(&port.name, name);
+                                    assert_eq!(&port.node, "Callback");
+                                    assert_eq!(
+                                        port.get_id(),
+                                        format!("Callback {}", name.to_uppercase())
+                                    );
+                                });
 
-                                component
-                                    .get_outports()
-                                    .ports
-                                    .iter()
-                                    .for_each(|(name, port)| {
-                                        assert_eq!(&port.name, name);
-                                        assert_eq!(&port.node, "Callback");
-                                        assert_eq!(
-                                            port.get_id(),
-                                            format!("Callback {}", name.to_uppercase())
-                                        );
-                                    });
-                            }
+                            component
+                                .get_outports()
+                                .ports
+                                .iter()
+                                .for_each(|(name, port)| {
+                                    assert_eq!(&port.name, name);
+                                    assert_eq!(&port.node, "Callback");
+                                    assert_eq!(
+                                        port.get_id(),
+                                        format!("Callback {}", name.to_uppercase())
+                                    );
+                                });
                         }
                     }
                     'and_then_it_should_contain_1_connection_between_processes_and_2_for_iips: {
-                        if let Ok(network) = n.clone().try_lock() {
-                            assert!(!network.get_connections().is_empty());
-                            assert_eq!(network.get_connections().len(), 3);
-                        }
+                        assert!(!n.get_connections().is_empty());
+                        assert_eq!(n.get_connections().len(), 3);
                     }
 
                     'and_then_with_renamed_node: {
                         'and_then_it_should_have_the_process_in_a_new_location: {
-                            if let Ok(network) = n.clone().try_lock().as_mut() {
-                                assert!(network.rename_node("Callback", "Func").is_ok());
-                                assert!(network.get_processes().get("Func").is_some());
-                            }
+                            assert!(n.rename_node("Callback", "Func").is_ok());
+                            assert!(n.get_processes().get("Func").is_some());
+
                             'and_then_it_should_not_have_the_process_in_the_old_location: {
-                                if let Ok(network) = n.clone().try_lock().as_mut() {
-                                    assert!(network.get_processes().get("Callback").is_none());
-                                }
+                                assert!(n.get_processes().get("Callback").is_none());
                             }
                             'and_then_it_should_fail_to_rename_with_the_old_name: {
-                                if let Ok(network) = n.clone().try_lock().as_mut() {
-                                    assert!(network.rename_node("Callback", "Func").is_err());
-                                }
+                                assert!(n.rename_node("Callback", "Func").is_err());
                             }
                             'and_then_it_should_have_informed_the_ports_of_their_new_node_name: {
-                                if let Ok(network) = n.clone().try_lock().as_mut() {
-                                    if let Ok(component) = network
-                                        .get_processes()
-                                        .get("Func")
-                                        .unwrap()
-                                        .component
-                                        .clone()
-                                        .unwrap()
-                                        .try_lock()
-                                    {
-                                        component.get_inports().ports.iter().for_each(
-                                            |(name, port)| {
-                                                assert_eq!(&port.name, name);
-                                                assert_eq!(&port.node, "Func");
-                                                assert_eq!(
-                                                    port.get_id(),
-                                                    format!("Func {}", name.to_uppercase())
-                                                );
-                                            },
-                                        );
-                                        component.get_outports().ports.iter().for_each(
-                                            |(name, port)| {
-                                                assert_eq!(&port.name, name);
-                                                assert_eq!(&port.node, "Func");
-                                                assert_eq!(
-                                                    port.get_id(),
-                                                    format!("Func {}", name.to_uppercase())
-                                                );
-                                            },
-                                        );
-                                    }
+                                if let Ok(component) = n
+                                    .get_processes()
+                                    .get("Func")
+                                    .unwrap()
+                                    .component
+                                    .clone()
+                                    .unwrap()
+                                    .try_lock()
+                                {
+                                    component.get_inports().ports.iter().for_each(
+                                        |(name, port)| {
+                                            assert_eq!(&port.name, name);
+                                            assert_eq!(&port.node, "Func");
+                                            assert_eq!(
+                                                port.get_id(),
+                                                format!("Func {}", name.to_uppercase())
+                                            );
+                                        },
+                                    );
+                                    component.get_outports().ports.iter().for_each(
+                                        |(name, port)| {
+                                            assert_eq!(&port.name, name);
+                                            assert_eq!(&port.node, "Func");
+                                            assert_eq!(
+                                                port.get_id(),
+                                                format!("Func {}", name.to_uppercase())
+                                            );
+                                        },
+                                    );
                                 }
                             }
 
                             'and_then_with_icon_change: {
                                 'and_then_it_should_emit_an_icon_change_event: {
-                                    let _binding = n.clone();
-                                    let mut binding = _binding.lock();
-                                    let network = binding.as_mut().unwrap();
-
-                                    network.on(Box::new(|event| match event.as_ref() {
+                                    n.on(Box::new(|event| match event.as_ref() {
                                         NetworkEvent::Custom(ev, data) => {
                                             if ev == "icon" {
                                                 assert!(data.is_object());
@@ -494,7 +452,7 @@ mod tests {
                                     }));
 
                                     {
-                                        let binding = network
+                                        let binding = n
                                             .get_processes()
                                             .get("Func")
                                             .unwrap()
@@ -505,25 +463,22 @@ mod tests {
                                         let component = binding.as_mut().unwrap();
 
                                         component.set_icon("flask");
-                                        drop(network);
                                     }
                                 }
                             }
 
                             'and_then_when_stopped: {
-                                let _binding = n.clone();
-                                let mut binding = _binding.lock();
-                                let network = binding.as_mut().unwrap();
-                                assert!(network.stop().is_ok());
-                                assert!(network.is_stopped());
-                                drop(binding);
+                                assert!(n.stop().is_ok());
+                                let manager = n.manager.clone();
+                                let m = manager.try_lock().unwrap();
+                                assert!((m).is_stopped());
                             }
                         }
                     }
                 }
 
                 'then_when_with_nodes_containing_default_ports: {
-                    let found_data = Arc::new(RwLock::new(json!(null)));
+                    let found_data = Arc::new(Mutex::new(json!(null)));
                     let mut c = Component::new(ComponentOptions {
                         in_ports: HashMap::from_iter([(
                             "in".to_string(),
@@ -557,8 +512,9 @@ mod tests {
                                 if let Some(data) = this.input().get("in") {
                                     match data.datatype {
                                         IPType::Data(value) => {
-                                            let mut w = _found_data.write().unwrap();
-                                            *w = value;
+                                            let fdata = _found_data.clone();
+                                            let mut _found_data = fdata.lock().unwrap();
+                                            *_found_data = value.into();
                                         }
                                         _ => {}
                                     }
@@ -574,6 +530,8 @@ mod tests {
                         .add_node("Cb", "Cb", None)
                         .add_edge("Def", "out", "Cb", "in", None);
 
+                    let data_binding = found_data.clone();
+
                     // This test blocks some times
                     'and_then_it_should_send_default_values_without_an_edge: {
                         let mut n = Network::create(
@@ -581,23 +539,23 @@ mod tests {
                             NetworkOptions {
                                 subscribe_graph: false,
                                 delay: true,
-                                base_dir: base_dir.to_string(),
+                                workspace_dir: base_dir.to_string(),
                                 ..Default::default()
                             },
                         );
-                        n.get_loader()
-                            .register_component("", "Def", c.clone())
-                            .unwrap();
-                        n.get_loader()
-                            .register_component("", "Cb", cb.clone())
-                            .unwrap();
 
-                        let binding = n.connect().unwrap();
-                        let mut binding = binding.try_lock();
-                        let nw = binding.as_mut().unwrap();
+                    
+                        n.register_component("", "Def", c.clone()).unwrap();
+                        n.register_component("", "Cb", cb.clone()).unwrap();
+                     
+
+                        let nw = n.connect().unwrap();
+
                         let _ = nw.start();
                         // drop(binding);
-                        assert_eq!(*found_data.clone().read().unwrap(), json!("default-value"));
+
+                        let mut data = data_binding.lock().unwrap();
+                        assert_eq!(data.take(), json!("default-value"));
                         let _ = nw.stop();
                     }
                 }

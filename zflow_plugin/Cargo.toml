@@ -1,0 +1,13 @@
+[package]
+name = "zflow_plugin"
+version = "0.1.0"
+edition = "2021"
+authors = ["Damilare Akinlaja <dreakinlaja@gmail.com>"]
+license = "MIT"
+description = "ZFlow FBP Graph Runtime"
+keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming"]
+
+[dependencies]
+extism-pdk = "1.0.0"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }

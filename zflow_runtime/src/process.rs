@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use fp_rust::handler::HandlerThread;
 use log::{log, Level};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{json,  Value};
 
 use crate::component::Component;
 use crate::ip::{IPOptions, IPType, IP};
@@ -15,15 +15,17 @@ use std::fmt::Debug;
 
 pub type ValidatorFn = Box<dyn (FnMut(IP) -> bool) + Send + Sync>;
 
+#[repr(C)]
 #[derive(Debug, Clone, Default)]
 pub struct ProcessError(pub String);
 
+#[repr(C)]
 #[derive(Clone, Default)]
 pub struct ProcessHandle {
-    pub(crate) context: Arc<Mutex<ProcessContext>>,
-    pub(crate) handler_thread: Arc<Mutex<HandlerThread>>,
-    pub(crate) input: ProcessInput,
-    pub(crate) output: ProcessOutput,
+    pub context: Arc<Mutex<ProcessContext>>,
+    pub handler_thread: Arc<Mutex<HandlerThread>>,
+    pub input: ProcessInput,
+    pub output: ProcessOutput,
 }
 
 impl ProcessHandle {
@@ -46,6 +48,7 @@ impl ProcessHandle {
 pub type ProcessFunc =
     dyn (FnMut(Arc<Mutex<ProcessHandle>>) -> Result<ProcessResult, ProcessError>) + Sync + Send;
 
+#[repr(C)]
 #[derive(Clone, Default)]
 pub struct ProcessResult {
     pub resolved: bool,
@@ -94,18 +97,7 @@ impl Debug for ProcessInput {
 }
 
 impl ProcessInput {
-    // pub fn new(
-    //     in_ports: InPorts,
-    //     context: Arc<Mutex<ProcessContext<T>>>,
-    //     component: Arc<Mutex<T>>,
-    // ) -> Arc<Mutex<Self>> {
-    //     Arc::new(Mutex::new(Self {
-    //         in_ports,
-    //         context: context.clone(),
-    //         component: component.clone(),
-    //     }))
-    // }
-
+ 
     /// When preconditions are met, set component state to `activated`
     pub fn activate(&mut self) {
         let activated =  self.context.clone().try_lock().unwrap().activated;
@@ -173,6 +165,7 @@ impl ProcessInput {
     pub fn has(&mut self, port: &str, validator: Option<ValidatorFn>) -> bool {
         let normalize = normalize_port_name(port.to_string());
         let name = normalize.name;
+        
         let idx = normalize.index;
         if let Some(port_impl) = self.in_ports.ports.get_mut(&name) {
             if port_impl.is_addressable() {
@@ -414,17 +407,6 @@ impl Debug for ProcessOutput {
 }
 
 impl ProcessOutput {
-    // pub fn new(
-    //     out_ports: OutPorts,
-    //     context: Arc<Mutex<ProcessContext<T>>>,
-    //     component: Arc<Mutex<T>>,
-    // ) -> Arc<Mutex<Self>> {
-    //     Arc::new(Mutex::new(Self {
-    //         out_ports,
-    //         context: context.clone(),
-    //         component: component.clone(),
-    //     }))
-    // }
 
     /// Sends an error object
     pub fn error(&mut self, err: &dyn Any) -> Result<(), ProcessError> {
@@ -542,7 +524,34 @@ impl ProcessOutput {
         let component_ports = &mut vec![];
         let mut maps_in_ports = false;
         let out_ports = self.out_ports.clone();
-        if let Some(ports) = packet.downcast_ref::<Map<String, Value>>() {
+        if let Some(v) = packet.downcast_ref::<Value>() {
+            if let Some(ports) = v.as_object() {
+                out_ports.ports.keys().for_each(|port| {
+                    if (port != "error") && (port != "ports") {
+                        component_ports.push(port);
+                    }
+                    if !maps_in_ports && ports.contains_key(port.clone().as_str()) {
+                        maps_in_ports = true;
+                    }
+                });
+    
+                if (component_ports.len() == 1) && !maps_in_ports {
+                    return self.send_ip(component_ports.clone()[0], &json!(ports.clone()));
+                }
+                if (component_ports.len() > 1) && !maps_in_ports {
+                    return Err(ProcessError(format!("Port must be specified for sending output")));
+                }
+                for port in out_ports.ports.keys() {
+                    let key = port.clone();
+                    let packet = ports.get(&key).unwrap();
+                    self.send_ip(port, packet).expect(format!("expected to send IP to port {}", port).as_str());
+                }
+            }
+            return Ok(())
+        }
+       
+        
+        if let Some(ports) = packet.downcast_ref::<HashMap<&str, Value>>() {
             out_ports.ports.keys().for_each(|port| {
                 if (port != "error") && (port != "ports") {
                     component_ports.push(port);
@@ -555,18 +564,26 @@ impl ProcessOutput {
             if (component_ports.len() == 1) && !maps_in_ports {
                 return self.send_ip(component_ports.clone()[0], &json!(ports.clone()));
             }
+            if (component_ports.len() > 1) && !maps_in_ports {
+                return Err(ProcessError(format!("Port must be specified for sending output")));
+            }
+            for port in out_ports.ports.keys() {
+                let key = port.clone();
+                let packet = ports.get(key.as_str()).unwrap();
+                self.send_ip(port, packet).expect(format!("expected to send IP to port {}", port).as_str());
+            }
+            return Ok(())
         }
-        
-        if let Some(ports) = packet.downcast_ref::<HashMap<&str, Value>>() {
-            let outports = self.out_ports.clone();
-            for port in outports.ports.keys() {
+
+        if let Some(ports) = packet.downcast_ref::<HashMap<String, Value>>() {
+            out_ports.ports.keys().for_each(|port| {
                 if (port != "error") && (port != "ports") {
                     component_ports.push(port);
                 }
-                if !maps_in_ports && ports.contains_key(port.as_str()) {
+                if !maps_in_ports && ports.contains_key(port.clone().as_str()) {
                     maps_in_ports = true;
                 }
-            }
+            });
 
             if (component_ports.len() == 1) && !maps_in_ports {
                 return self.send_ip(component_ports.clone()[0], &json!(ports.clone()));
@@ -574,6 +591,12 @@ impl ProcessOutput {
             if (component_ports.len() > 1) && !maps_in_ports {
                 return Err(ProcessError(format!("Port must be specified for sending output")));
             }
+            for port in out_ports.ports.keys() {
+                let key = port.clone();
+                let packet = ports.get(key.as_str()).unwrap();
+                self.send_ip(port, packet).expect(format!("expected to send IP to port {}", port).as_str());
+            }
+            return Ok(())
         }
         
         if let Some((port, data)) = packet.downcast_ref::<(&str, Value)>() {
@@ -626,7 +649,7 @@ impl ProcessOutput {
                     .get_output_queue_mut()
                     .iter()
                     .filter(|q| {
-                        if let Ok(q) = q.clone().try_lock().as_mut() {
+                        if let Ok(q) = q.try_lock().as_mut() {
                             if !q.resolved {
                                 return true;
                             }
@@ -761,6 +784,7 @@ impl ProcessOutput {
     }
 }
 
+#[repr(C)]
 #[derive(Clone)]
 pub struct ProcessContext {
     pub close_ip: Option<IP>,
@@ -812,20 +836,6 @@ impl Debug for ProcessContext {
 }
 
 impl ProcessContext {
-    // pub fn new(ip: IP, port: InPort<T>, result: Arc<Mutex<ProcessResult<T>>>) -> Arc<Mutex<Self>> {
-    //     Arc::new(Mutex::new(Self {
-    //         ip,
-    //         component: None,
-    //         result: result.clone(),
-    //         activated: false,
-    //         deactivated: true,
-    //         ports: vec![port.name],
-    //         close_ip: None,
-    //         source: "".to_owned(),
-    //         data: Value::Null,
-    //         scope: None,
-    //     }))
-    // }
 
     pub fn activate(_context: Arc<Mutex<ProcessContext>>, _component: Arc<Mutex<Component>>) {
         if let Ok(context) = _context.clone().try_lock().as_mut() {
@@ -834,7 +844,7 @@ impl ProcessContext {
                     || component
                         .get_output_queue()
                         .iter()
-                        .find(|ctx| Arc::ptr_eq(ctx.clone(), &context.result))
+                        .find(|ctx| Arc::ptr_eq(ctx, &context.result))
                         .is_some()
                 {
                     context.result = Arc::new(Mutex::new(ProcessResult::default()));

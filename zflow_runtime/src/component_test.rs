@@ -318,12 +318,13 @@ mod tests {
                             }
                         });
 
-                    let c = std::sync::Arc::new(std::sync::Mutex::new(c.clone()));
-                    let _ = Component::start(c.clone());
-                    assert!(c.clone().try_lock().unwrap().started);
-                    let _ = Component::shutdown(c.clone());
+                   
+                   let _ = c.start();
+                   
+                    assert!(c.started);
+                    let _ = c.shutdown();
                     sleep(Duration::from_millis(10));
-                    assert!(!c.clone().try_lock().unwrap().is_started());
+                    assert!(!c.is_started());
                 }
             }
             'when_with_object_based_ips: {

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+cargo build  --release 
+
+cp ./bin/release/libzflow_js_runner.dylib ./bin/libzflow_js_runner.dylib 

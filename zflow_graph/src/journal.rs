@@ -668,7 +668,7 @@ impl Journal for Graph {
         self.set_subscribed(false);
         if rev_id > self.get_current_rev() {
             // Forward replay journal to revId
-            let (mut r, mut start, end, asc) = {
+            let (mut r, _start, end, asc) = {
                 let start = self.get_current_rev() + 1;
                 let r = start;
                 let end = rev_id;

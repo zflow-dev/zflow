@@ -9,7 +9,9 @@ use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
 
 use foreach::ForEach;
 use fp_rust::{common::SubscriptionFunc, publisher::Publisher};
-use futures::{executor::block_on, Future};
+use futures::{executor::block_on, future::join_all, Future, FutureExt, TryFutureExt};
+use log::log;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -143,7 +145,7 @@ impl BasePort for InPort {
         if !self.is_addressable() || index.is_none() {
             idx = Some(self.sockets.len());
         }
-        
+
         if let Ok(socket) = socket.clone().try_lock().as_mut() {
             socket.index = idx.unwrap();
             let _ = socket.connect();
@@ -289,9 +291,7 @@ impl BasePort for InPort {
                     .expect("expected inport bus instance")
                     .publish(event.as_ref().clone()),
             });
-           
         }
-        
 
         self.attach_socket(socket.clone(), idx.unwrap());
         if self.is_addressable() {
@@ -308,8 +308,9 @@ impl BasePort for InPort {
                 IPType::All(data) | IPType::Data(data) => data,
                 _ => Value::Null,
             };
-            
-            socket.clone()
+
+            socket
+                .clone()
                 .try_lock()
                 .as_mut()
                 .expect("expected socket instance")
@@ -948,7 +949,7 @@ impl BasePort for OutPort {
 
     fn detach(&mut self, socket_id: usize) {
         self.sockets.clone().iter().enumerate().find(|(i, socket)| {
-            if socket.clone().try_lock().unwrap().index == socket_id {
+            if socket.try_lock().unwrap().index == socket_id {
                 self.sockets.remove(*i);
                 self.bus
                     .clone()
@@ -1088,25 +1089,42 @@ impl OutPort {
     }
 
     pub async fn connect(&mut self, index: Option<usize>) -> Result<(), String> {
-        let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(), String>>>>> = Vec::new();
         let sockets = self.get_sockets(index).expect("expected list of sockets");
         self.check_required()?;
-        sockets.iter().for_each(|socket| {
+
+        let futures = join_all(sockets.iter().map(|socket| {
             let socket = socket.clone();
-            futures.push(Box::pin(async move {
+            return async move {
                 if let Ok(socket) = socket.try_lock().as_mut() {
                     socket.connect()?;
                 }
                 Ok(())
-            }));
-        });
+            }
+            .boxed_local();
+        }));
 
-        async_transform(futures).await
+        let errors = futures
+            .await
+            .iter()
+            .map(|c| {
+                if c.is_err() {
+                    Some(c.clone().err().unwrap())
+                } else {
+                    None
+                }
+            })
+            .filter(|err| err.is_some())
+            .map(|err| err.unwrap())
+            .collect::<Vec<String>>();
+        if errors.len() > 0 {
+            return Err(errors.join("\n"));
+        }
+
+        return Ok(());
     }
 
     /// Send data from outport
-    pub async fn send(&mut self, data: &dyn Any, index: Option<usize>) -> Result<(), String>
-    {
+    pub async fn send(&mut self, data: &dyn Any, index: Option<usize>) -> Result<(), String> {
         let ip = if let Some(ip) = data.downcast_ref::<IP>() {
             ip.clone()
         } else if let Some(data) = data.downcast_ref::<IPType>() {
@@ -1121,15 +1139,9 @@ impl OutPort {
             panic!("packet type should be either IP or Value");
         };
 
-        let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(), String>>>>> = Vec::new();
-        let sockets = if let Ok(sockets) = self.get_sockets(index) {
-            sockets
-        } else {
-            return Err("Expected list of sockets".to_string());
-        };
         self.check_required()?;
         if self.is_caching() {
-            if let Some(_data) = self.cache.get(&format!("{:?}", index)) {
+            if let Some(_data) = self.cache.clone().get(&format!("{:?}", index)) {
                 if !assert_json_matches_no_panic(&ip, _data, Config::new(CompareMode::Strict))
                     .is_ok()
                 {
@@ -1139,10 +1151,16 @@ impl OutPort {
                 self.cache.insert(format!("{:?}", index), ip.clone());
             }
         }
-        sockets.clone().iter().for_each(|socket| {
+        let sockets = if let Ok(sockets) = self.get_sockets(index) {
+            sockets
+        } else {
+            return Err("Expected list of sockets".to_string());
+        };
+
+        let futures = join_all(sockets.iter().map(|socket| {
             let socket = socket.clone();
             let ip = ip.clone();
-            futures.push(Box::pin(async move {
+            return async move {
                 if let Ok(socket) = socket.try_lock().as_mut() {
                     if let Ok(_) = socket.send(Some(&ip)).await {
                     } else {
@@ -1150,10 +1168,28 @@ impl OutPort {
                     }
                 }
                 Ok(())
-            }));
-        });
+            }
+            .boxed_local();
+        }));
 
-        async_transform(futures).await
+        let errors = futures
+            .await
+            .iter()
+            .map(|c| {
+                if c.is_err() {
+                    Some(c.clone().err().unwrap())
+                } else {
+                    None
+                }
+            })
+            .filter(|err| err.is_some())
+            .map(|err| err.unwrap())
+            .collect::<Vec<String>>();
+        if errors.len() > 0 {
+            return Err(errors.join("\n"));
+        }
+
+        Ok(())
     }
 
     /// Send data you don't want to serialize as JSON values. Uses Bincode to encode data
@@ -1164,17 +1200,16 @@ impl OutPort {
         match bincode::serialize(&data) {
             Ok(v) => {
                 let ip = IP::new(IPType::Buffer(v), IPOptions::default());
-                let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(), String>>>>> = Vec::new();
-                let sockets = if let Ok(sockets) = self.get_sockets(index) {
-                    sockets
-                } else {
-                    return Err("No sockets attached to this port".to_string());
-                };
+
                 self.check_required()?;
                 if self.is_caching() {
                     if let Some(_data) = self.cache.get(&format!("{:?}", index)) {
-                        if !assert_json_matches_no_panic(&ip, _data, Config::new(CompareMode::Strict))
-                            .is_ok()
+                        if !assert_json_matches_no_panic(
+                            &ip,
+                            _data,
+                            Config::new(CompareMode::Strict),
+                        )
+                        .is_ok()
                         {
                             self.cache.insert(format!("{:?}", index), ip.clone());
                         }
@@ -1182,10 +1217,17 @@ impl OutPort {
                         self.cache.insert(format!("{:?}", index), ip.clone());
                     }
                 }
-                sockets.clone().iter().for_each(|socket| {
+
+                let sockets = if let Ok(sockets) = self.get_sockets(index) {
+                    sockets
+                } else {
+                    return Err("No sockets attached to this port".to_string());
+                };
+
+                let futures = join_all(sockets.clone().iter().map(|socket| {
                     let socket = socket.clone();
                     let ip = ip.clone();
-                    futures.push(Box::pin(async move {
+                    return async move {
                         if let Ok(socket) = socket.try_lock().as_mut() {
                             if let Ok(_) = socket.send(Some(&ip)).await {
                             } else {
@@ -1193,67 +1235,126 @@ impl OutPort {
                             }
                         }
                         Ok(())
-                    }));
-                });
-        
-                async_transform(futures).await
+                    };
+                }));
+
+                let errors = futures
+                    .await
+                    .iter()
+                    .map(|c| {
+                        if c.is_err() {
+                            Some(c.clone().err().unwrap())
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|err| err.is_some())
+                    .map(|err| err.unwrap())
+                    .collect::<Vec<String>>();
+                if errors.len() > 0 {
+                    return Err(errors.join("\n"));
+                }
+                Ok(())
             }
-            Err(x) =>{
-                Err(format!("{:?}", x))
-            }
+            Err(x) => Err(format!("{:?}", x)),
         }
-       
     }
 
     pub async fn begin_group(&mut self, group: Value, index: Option<usize>) -> Result<(), String> {
-        let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(), String>>>>> = Vec::new();
+        // let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(), String>>>>> = Vec::new();
         let sockets = self.get_sockets(index).expect("expected list of sockets");
         self.check_required()?;
-        sockets.iter().foreach(|socket, _| {
+        let futures = join_all(sockets.iter().map(|socket| {
             let socket = socket.clone();
             let group = group.clone();
-            futures.push(Box::pin(async move {
+            return async move {
                 if let Ok(socket) = socket.try_lock().as_mut() {
                     socket.begin_group(group)?;
                 }
                 Ok(())
-            }));
-        });
+            };
+        }));
 
-        async_transform(futures).await
+        let errors = futures
+            .await
+            .iter()
+            .map(|c| {
+                if c.is_err() {
+                    Some(c.clone().err().unwrap())
+                } else {
+                    None
+                }
+            })
+            .filter(|err| err.is_some())
+            .map(|err| err.unwrap())
+            .collect::<Vec<String>>();
+        if errors.len() > 0 {
+            return Err(errors.join("\n"));
+        }
+        Ok(())
     }
     pub async fn end_group(&mut self, index: Option<usize>) -> Result<(), String> {
-        let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(), String>>>>> = Vec::new();
         let sockets = self.get_sockets(index).expect("expected list of sockets");
         self.check_required()?;
-        sockets.iter().foreach(|socket, _| {
+        let futures = join_all(sockets.iter().map(|socket| {
             let socket = socket.clone();
-            futures.push(Box::pin(async move {
+            return async move {
                 if let Ok(socket) = socket.try_lock().as_mut() {
                     socket.end_group()?;
                 }
                 Ok(())
-            }))
-        });
+            };
+        }));
 
-        async_transform(futures).await
+        let errors = futures
+            .await
+            .iter()
+            .map(|c| {
+                if c.is_err() {
+                    Some(c.clone().err().unwrap())
+                } else {
+                    None
+                }
+            })
+            .filter(|err| err.is_some())
+            .map(|err| err.unwrap())
+            .collect::<Vec<String>>();
+        if errors.len() > 0 {
+            return Err(errors.join("\n"));
+        }
+        Ok(())
     }
 
     pub async fn disconnect(&mut self, index: Option<usize>) -> Result<(), String> {
-        let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(), String>>>>> = Vec::new();
         let sockets = self.get_sockets(index).expect("expected list of sockets");
         self.check_required()?;
-        sockets.iter().for_each(|socket| {
+        let futures = join_all(sockets.iter().map(|socket| {
             let socket = socket.clone();
-            futures.push(Box::pin(async move {
+            return async move {
                 if let Ok(socket) = socket.clone().try_lock().as_mut() {
                     socket.disconnect()?;
                 }
                 Ok(())
-            }));
-        });
+            };
+        }));
 
-        async_transform(futures).await
+        let errors = futures
+            .await
+            .iter()
+            .map(|c| {
+                if c.is_err() {
+                    Some(c.clone().err().unwrap())
+                } else {
+                    None
+                }
+            })
+            .filter(|err| err.is_some())
+            .map(|err| err.unwrap())
+            .collect::<Vec<String>>();
+        if errors.len() > 0 {
+            return Err(errors.join("\n"));
+        }
+        Ok(())
     }
 
     pub fn get_data_type(&self) -> IPType {
@@ -1304,7 +1405,9 @@ impl OutPort {
         sockets.iter().for_each(move |socket| {
             if let Ok(socket) = socket.clone().try_lock().as_mut() {
                 if pristine {
-                    let _ = socket.post(Some(ip.clone()), auto_connect).expect("expected socket to post");
+                    let _ = socket
+                        .post(Some(ip.clone()), auto_connect)
+                        .expect("expected socket to post");
                     pristine = false;
                 } else {
                     if ip.can_fake_clone() {
@@ -1419,7 +1522,7 @@ impl OutPorts {
     pub async fn connect(&mut self, name: &str, socket_id: Option<usize>) -> Result<(), String> {
         let port = self
             .ports
-            .get_mut(name)
+            .get_mut(name.clone())
             .expect(format!("Port {} not available", name).as_str());
         port.connect(socket_id).await
     }

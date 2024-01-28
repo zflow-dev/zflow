@@ -1,15 +1,17 @@
 use std::{
-    borrow::BorrowMut,
+any,
+    borrow::{Borrow, BorrowMut},
     collections::{HashMap, VecDeque},
-    ops::Add,
-    sync::{mpsc, Arc, Mutex, RwLock},
-    time::{SystemTime, Duration}, thread,
+    io::Read,
+    sync::{mpsc, Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    time::Instant,
 };
 
 use array_tool::vec::Shift;
+use cast_trait_object::DynCastExt;
 use fp_rust::{handler::Handler, publisher::Publisher};
 use futures::executor::block_on;
-use once_cell::sync::OnceCell;
+use log::Level;
 use rayon::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -17,11 +19,13 @@ use zflow_graph::types::{GraphEdge, GraphIIP, GraphNode};
 use zflow_graph::Graph;
 
 use crate::{
-    component::{Component, ComponentEvent},
+    component::{Component, ComponentEvent, ComponentOptions},
     ip::{IPOptions, IPType, IP},
-    loader::{normalize_name, ComponentLoader, ComponentLoaderOptions},
-    port::BasePort,
-    registry::DefaultRegistry,
+    network_manager::NetworkManager,
+    port::{BasePort, InPort, OutPort},
+    process::{ProcessError, ProcessResult},
+    provider::{build_node_id, BuiltInProvider, Provider},
+    runner::RunFunc,
     sockets::{InternalSocket, SocketConnection, SocketEvent},
 };
 
@@ -48,7 +52,9 @@ pub enum NetworkEvent {
     IP(Value),
     Error(Value),
     Custom(String, Value),
-    ComponentDeactivated,
+    ComponentDeactivated { id: String },
+    ComponentActivated { id: String },
+    ComponentEvent { id: String, event: ComponentEvent },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -56,8 +62,8 @@ pub struct NetworkOptions {
     pub subscribe_graph: bool,
     pub debug: bool,
     pub delay: bool,
-    pub base_dir: String,
-    pub loader: Option<ComponentLoader>,
+    pub workspace_dir: String,
+    // pub loader: Option<ComponentLoader>,
 }
 
 /// ## The ZFlow Network
@@ -71,12 +77,23 @@ pub struct NetworkOptions {
 /// of Initial Information Packets.
 pub trait BaseNetwork {
     fn get_publisher(&self) -> Arc<Mutex<Publisher<NetworkEvent>>>;
-    fn is_started(&self) -> bool;
-    fn is_stopped(&self) -> bool;
-    fn is_running(&self) -> bool;
     fn set_started(&mut self, started: bool);
 
-    fn get_loader(&mut self) -> &mut ComponentLoader;
+    // fn get_loader(&mut self) -> &mut ComponentLoader;
+
+    /// List all available components in the network
+    fn list_components(&mut self) -> Vec<String>;
+
+    /// With the `register_component` method you can register
+    /// a ZFlow Component constructor or subgraph to the Network
+    ///
+    /// WARNING: If component of the same namespace and name exists, this function will override it
+    fn register_component(
+        &mut self,
+        namespace: &str,
+        name: &str,
+        component: Component,
+    ) -> Result<(), anyhow::Error>;
 
     fn get_connections(&self) -> Vec<Arc<Mutex<InternalSocket>>>;
     fn get_connections_mut(&mut self) -> &mut Vec<Arc<Mutex<InternalSocket>>>;
@@ -93,52 +110,40 @@ pub trait BaseNetwork {
     fn get_processes(&self) -> HashMap<String, NetworkProcess>;
     fn get_processes_mut(&mut self) -> &mut HashMap<String, NetworkProcess>;
 
-    /// This is an expensive operation. Use sparringly!
-    fn get_active_processes(&self) -> Vec<String> {
-        let mut active = vec![];
-        if !self.is_started() {
-            return active;
-        }
-
-        self.get_processes().iter() .for_each(|(name, process)|{
-            if let Some(component) = process.component.clone() {
-
-                if let Ok(component) = &component.clone().try_lock() {
-                    let inner_thread_alive  =  component
-                    .get_handler_thread()
-                    .try_lock()
-                    .unwrap()
-                    .is_alive();
-
-                    if component.get_load() > 0
-                        || inner_thread_alive
-                    {
-                        active.push(name.to_string());
-                    }
-                }
-            }
-        });
-    
-       active
-    }
-    fn get_startup_time(&self) -> Option<SystemTime>;
+    /// Get all active processes
+    fn get_active_processes(&self) -> Vec<String>;
+    fn get_startup_time(&self) -> Option<Instant>;
     /// The uptime of the network is the current time minus the start-up
     /// time, in seconds.
     fn uptime(&self) -> u128 {
         if let Some(earlier) = self.get_startup_time() {
-            return SystemTime::now()
-                .duration_since(earlier)
-                .unwrap()
-                .as_millis();
+            return Instant::now().duration_since(earlier).as_millis();
         }
         0
     }
 
     /// ## Loading components
-    fn load(&mut self, component: &str, metadata: Value) -> Result<Arc<Mutex<Component>>, String>;
+    fn load(
+        &mut self,
+        component: &str,
+        metadata: Value,
+    ) -> Result<Arc<Mutex<Component>>, anyhow::Error>;
 
     // fn add_defaults(&mut self, node: GraphNode) -> Result<(), String>;
 
+    /// ## Add a process to the network
+    ///
+    /// Processes can be added to a network at either start-up time
+    /// or later. The processes are added with a node definition object
+    /// that includes the following properties:
+    ///
+    /// * `id`: Identifier of the process in the network. Typically a string
+    /// * `component`: A ZFlow component instance object
+    fn add_node(
+        &mut self,
+        node: GraphNode,
+        _: Option<HashMap<String, Value>>,
+    ) -> Result<NetworkProcess, anyhow::Error>;
     /// Remove node from network
     fn remove_node(&mut self, node: GraphNode) -> Result<(), String>;
     /// Rename a node in the  network
@@ -167,13 +172,10 @@ pub trait BaseNetwork {
     fn get_debug(&self) -> bool;
     fn set_debug(&mut self, active: bool);
     fn get_graph(&self) -> Arc<Mutex<Graph>>;
-    fn cancel_debounce(&mut self, abort: bool);
-    fn is_abort_debounce(&self) -> bool;
-    fn set_debounce_ended(&mut self, end: bool);
-    fn get_debounce_ended(&self) -> bool;
+   
     fn buffered_emit(&mut self, event: NetworkEvent);
 
-    fn get_base_dir(&self) -> String;
+    fn get_workspace_dir(&self) -> String;
     fn on(&mut self, callback: Box<dyn FnMut(Arc<NetworkEvent>) -> () + Send + Sync + 'static>);
 }
 
@@ -186,7 +188,7 @@ pub trait BaseNetwork {
 /// instantiate all the necessary processes from the designated
 /// components, attach sockets between them, and handle the sending
 /// of Initial Information Packets.
-#[derive(Clone)]
+// #[derive(Clone)]
 pub struct Network {
     pub options: NetworkOptions,
     /// Processes contains all the instantiated components for this network
@@ -200,19 +202,18 @@ pub struct Network {
     pub defaults: Vec<Arc<Mutex<InternalSocket>>>,
     /// The Graph this network is instantiated with
     pub graph: Arc<Mutex<Graph>>,
-    pub started: Arc<RwLock<bool>>,
-    pub stopped: Arc<RwLock<bool>>,
-    pub(crate) weight: Arc<RwLock<usize>>,
     pub debug: bool,
     pub event_buffer: Vec<NetworkEvent>,
-    pub loader: ComponentLoader,
+    // pub loader: ComponentLoader,
+    pub(crate) providers: Vec<Box<dyn Provider>>,
+    pub(crate) manager: Arc<Mutex<NetworkManager>>,
+    _manager: NetworkManager,
     pub publisher: Arc<Mutex<Publisher<NetworkEvent>>>,
-    pub base_dir: String,
-    debounce_end: Arc<RwLock<bool>>,
-    abort_debounce: Arc<RwLock<bool>>,
-    startup_time: Option<SystemTime>,
-    component_events: Arc<Mutex<VecDeque<ComponentEvent>>>,
+    startup_time: Option<Instant>,
+    component_events: Arc<Mutex<VecDeque<(String, ComponentEvent)>>>,
     socket_events: Arc<Mutex<VecDeque<(String, Value)>>>,
+    workspace_dir: String,
+    pub(crate) native_components: HashMap<String, Arc<Mutex<Component>>>,
 }
 
 unsafe impl Send for Network {}
@@ -220,13 +221,14 @@ unsafe impl Sync for Network {}
 
 impl Network {
     fn new(graph: Graph, options: NetworkOptions) -> Self {
-        let _op = options.clone();
-        let base_dir = _op.base_dir;
-        let loader = _op.loader.unwrap_or(ComponentLoader::new(
-            base_dir.clone().as_str(),
-            ComponentLoaderOptions::default(),
-            Some(Arc::new(Mutex::new(DefaultRegistry::default()))),
-        ));
+// let loader = options.loader.clone();
+        // let loader = loader.unwrap_or(ComponentLoader::new(
+        //     base_dir,
+        //     ComponentLoaderOptions::default(),
+        // ));
+
+        let workspace_dir = options.clone().workspace_dir;
+
         Self {
             options,
             processes: HashMap::new(),
@@ -235,115 +237,83 @@ impl Network {
             connections: Vec::new(),
             defaults: Vec::new(),
             graph: Arc::new(Mutex::new(graph)),
-            started: Arc::new(RwLock::new(false)),
-            stopped: Arc::new(RwLock::new(true)),
-            weight: Arc::new(RwLock::new(0)),
             debug: true,
             event_buffer: Vec::new(),
-            loader,
             publisher: Arc::new(Mutex::new(Publisher::new())),
             startup_time: None,
-            debounce_end: Arc::new(RwLock::new(false)),
-            base_dir,
-            abort_debounce: Arc::new(RwLock::new(false)),
             component_events: Arc::new(Mutex::new(VecDeque::new())),
             socket_events: Arc::new(Mutex::new(VecDeque::new())),
-        }
-    }
-
-    fn check_if_finished(network: Arc<Mutex<Self>>) {
-        if let Ok(this) = network.clone().try_lock().as_mut() {
-            if this.is_running() {
-                return;
-            }
-            this.cancel_debounce(false);
-
-            let get_debounce_ended = this.debounce_end.clone();
-            let abort_debounce = this.abort_debounce.clone();
-            let started = this.started.clone();
-
-            thread::sleep(Duration::from_millis(10));
-            while !*get_debounce_ended.clone().read().unwrap() {
-                if *abort_debounce.clone().read().unwrap() {
-                    break;
-                }
-                println!("here!");
-                // if this.is_running() {
-                //     break;
-                // }
-                let started = started.clone();
-                let mut w_started = started.write().unwrap();
-                *w_started = false;
-                let get_debounce_ended = get_debounce_ended.clone();
-                let mut w_get_debounce_ended = get_debounce_ended.write().unwrap();
-                *w_get_debounce_ended = true;
-            }
+            providers: vec![Box::new(BuiltInProvider::new().unwrap())],
+            manager: Arc::new(Mutex::new(NetworkManager::new())),
+            _manager: NetworkManager::new(),
+            workspace_dir,
+            native_components: HashMap::new(),
         }
     }
 
     fn subscribe_subgraph(
-        network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
-        node: NetworkProcess,
+    network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
+    node: NetworkProcess,
     ) -> Result<(), String> {
-        if node.component.is_none() {
-            return Ok(());
-        }
+    if node.component.is_none() {
+    return Ok(());
+    }
         if let Ok(component) = node.clone().component.unwrap().clone().try_lock().as_mut() {
-            if !component.is_subgraph() {
-                return Ok(());
-            }
+    if !component.is_subgraph() {
+    return Ok(());
+    }
             if !component.is_ready() {
-                // component.on(move |event| match event.as_ref() {
-                //     ComponentEvent::Ready => {
-                //         Network::subscribe_subgraph(network, node.clone())
-                //             .expect("expected to subscribe to subgraph");
-                //     }
-                //     _ => {}
-                // });
-                // return Ok(());
-                return Network::subscribe_subgraph(network.clone(), node.clone());
-            }
+    // component.on(move |event| match event.as_ref() {
+    //     ComponentEvent::Ready => {
+    //         Network::subscribe_subgraph(network, node.clone())
+    //             .expect("expected to subscribe to subgraph");
+    //     }
+    //     _ => {}
+    // });
+    // return Ok(());
+    return Network::subscribe_subgraph(network.clone(), node.clone());
+    }
 
-            if component.get_network().is_none() {
-                return Ok(());
-            }
+    // if component.get_network().is_none() {
+    //     return Ok(());
+    // }
 
+    if let Ok(_this) = network.clone().try_lock().as_mut() {
+    // if let Ok(_network) = component.get_network().unwrap().clone().try_lock().as_mut() {
+    //     _network.set_debug(this.get_debug());
+    //     // Todo: async_delivery?
+    //     // Todo: enable flow_trace?
+    // }
+    }
             if let Ok(this) = network.clone().try_lock().as_mut() {
-                if let Ok(_network) = component.get_network().unwrap().clone().try_lock().as_mut() {
-                    _network.set_debug(this.get_debug());
-                    // Todo: async_delivery?
-                    // Todo: enable flow_trace?
-                }
-            }
-            if let Ok(this) = network.clone().try_lock().as_mut() {
-                if let Ok(bus) = this.get_publisher().try_lock().as_mut() {
-                    bus.subscribe_fn(move |event| match event.as_ref() {
-                        NetworkEvent::IP(data) => {
-                            if let Some(data) = data.as_object() {
-                                let mut _data = data.clone();
-                                if _data.contains_key("subgraph") {
-                                    if let Some(__data) = _data.get_mut("subgraph") {
-                                        if let Some(_data) = __data.as_array_mut() {
-                                            if _data.is_empty() {
-                                                _data.unshift(json!(node.clone().id));
-                                            }
+    if let Ok(bus) = this.get_publisher().try_lock().as_mut() {
+    bus.subscribe_fn(move |event| match event.as_ref() {
+    NetworkEvent::IP(data) => {
+    if let Some(data) = data.as_object() {
+    let mut _data = data.clone();
+    if _data.contains_key("subgraph") {
+    if let Some(__data) = _data.get_mut("subgraph") {
+    if let Some(_data) = __data.as_array_mut() {
+    if _data.is_empty() {
+    _data.unshift(json!(node.clone().id));
+    }
                                         } else {
-                                            _data.insert(
-                                                "subgraph".to_owned(),
-                                                json!([json!(node.clone().id)]),
-                                            );
+    _data.insert(
+    "subgraph".to_owned(),
+    json!([json!(node.clone().id)]),
+    );
                                         }
                                     }
                                 }
                                 if let Ok(this) = network.clone().try_lock().as_mut() {
-                                    this.buffered_emit(NetworkEvent::IP(json!(_data)));
-                                }
+    this.buffered_emit(NetworkEvent::IP(json!(_data)));
+    }
                             }
                         }
                         NetworkEvent::Error(err) => {
-                            if let Ok(this) = network.clone().try_lock().as_mut() {
-                                this.buffered_emit(NetworkEvent::Error(err.clone()));
-                            }
+    if let Ok(this) = network.clone().try_lock().as_mut() {
+    this.buffered_emit(NetworkEvent::Error(err.clone()));
+    }
                         }
                         _ => {}
                     });
@@ -353,7 +323,7 @@ impl Network {
         Ok(())
     }
 
-    fn subscribe_node(&mut self, node: NetworkProcess) -> Result<(), String> {
+    fn subscribe_node(&mut self, node: NetworkProcess) -> Result<(), anyhow::Error> {
         if node.component.is_none() {
             return Ok(());
         }
@@ -362,30 +332,13 @@ impl Network {
         let mut binding = binding.try_lock();
         let component = binding.as_mut().unwrap();
 
+        let component_id = node.id;
+
         let component_events = self.component_events.clone();
-        component.on(move |event| match event.as_ref() {
-            ComponentEvent::Activate(x) => {
-                component_events
-                    .clone()
-                    .lock()
-                    .unwrap()
-                    .push_back(ComponentEvent::Activate(*x));
+        component.on(move |event| {
+            if let Ok(component_events) = component_events.clone().lock().as_mut() {
+                component_events.push_back((component_id.clone(), event.as_ref().clone()));
             }
-            ComponentEvent::Deactivate(load) => {
-                component_events
-                    .clone()
-                    .lock()
-                    .unwrap()
-                    .push_back(ComponentEvent::Deactivate(*load));
-            }
-            ComponentEvent::Icon(new_icon) => {
-                component_events
-                    .clone()
-                    .lock()
-                    .unwrap()
-                    .push_back(ComponentEvent::Icon(new_icon.clone()));
-            }
-            _ => {}
         });
 
         Ok(())
@@ -401,30 +354,28 @@ impl Network {
             let id = _socket.get_id();
             let metadata = _socket.metadata.clone();
             let socket_events = self.socket_events.clone();
-            _socket.on(move |event| {
-                match event.as_ref() {
-                    crate::sockets::SocketEvent::IP(ip, _) => {
-                        socket_events.clone().lock().unwrap().push_back((
-                            "ip".to_string(),
-                            json!({
-                            "id": id,
-                            "data": ip.datatype,
-                            "metadata": metadata
-                            }),
-                        ));
-                    }
-                    crate::sockets::SocketEvent::Error(err, _) => {
-                        socket_events.clone().lock().unwrap().push_back((
-                            "error".to_string(),
-                            json!({
-                            "id": id,
-                            "error": err.to_owned(),
-                            "metadata": metadata
-                            }),
-                        ));
-                    }
-                    _ => {}
+            _socket.on(move |event| match event.as_ref() {
+                crate::sockets::SocketEvent::IP(ip, _) => {
+                    socket_events.clone().lock().unwrap().push_back((
+                        "ip".to_string(),
+                        json!({
+                        "id": id,
+                        "data": ip.datatype,
+                        "metadata": metadata
+                        }),
+                    ));
                 }
+                crate::sockets::SocketEvent::Error(err, _) => {
+                    socket_events.clone().lock().unwrap().push_back((
+                        "error".to_string(),
+                        json!({
+                        "id": id,
+                        "error": err.to_owned(),
+                        "metadata": metadata
+                        }),
+                    ));
+                }
+                _ => {}
             });
         }
         Ok(())
@@ -440,7 +391,12 @@ impl Network {
             .par_iter_mut()
             .for_each(|(_, process)| {
                 if let Some(component) = process.component.clone() {
-                    Component::start(component.clone()).expect("expected component to start");
+                    component
+                        .try_lock()
+                        .unwrap()
+                        .start()
+                        .expect("expected component to start");
+                    // Component::start(component.clone()).expect("expected component to start");
                 }
             });
 
@@ -452,10 +408,10 @@ impl Network {
     }
 
     /// Connect to ZFlow Network
-    pub fn connect(&mut self) -> Result<Arc<Mutex<Self>>, String> {
+    pub fn connect(&mut self) -> Result<&mut Self, String> {
         let binding = self.get_graph();
         let graph = binding.try_lock().unwrap().clone();
-       
+
         for node in graph.nodes.clone() {
             let res = self.add_node(
                 node.clone(),
@@ -518,14 +474,11 @@ impl Network {
 
         // Let network sync with the components' events
         let (cmp_tx, cmp_rx) = mpsc::sync_channel(2);
-        let network = Arc::new(Mutex::new(self.clone()));
+        // let network = Arc::new(Mutex::new(self.clone()));
         let component_events = self.component_events.clone();
-        let _network = network.clone();
+        // let _network = network.clone();
         let publisher = self.publisher.clone();
-        let get_debounce_ended = self.debounce_end.clone();
-        let abort_debounce = self.abort_debounce.clone();
-
-        let loads = self.weight.clone();
+        let manager = self.manager.clone();
 
         pool.spawn(move || {
             'outter: loop {
@@ -548,41 +501,54 @@ impl Network {
                     .clone()
                     .iter()
                     .enumerate()
-                    .for_each(|(i, event)| match event {
+                    .for_each(|(i, (id, event))| match event {
                         ComponentEvent::Activate(c) => {
-                            if *get_debounce_ended.clone().read().unwrap() {
-                                let abort_debounce = abort_debounce.clone();
-                                let mut abort_debounce = abort_debounce.write().unwrap();
-                                *abort_debounce = true;
+                            if let Ok(pu) = publisher.clone().try_lock().as_mut() {
+                                pu.publish(NetworkEvent::ComponentActivated { id: id.clone() });
+                            }
+                            let manager = manager.clone();
+                            if let Ok(manager) = manager.clone().try_lock().as_mut() {
+                                if (manager).debounce_end {
+                                    (manager).abort_debounce = true;
+                                }
+
+                                (manager).weight = *c;
                             }
 
-                            let load = loads.clone();
-                            let mut load = load.write().unwrap();
-                            *load = *c;
                             events.remove(i);
                         }
                         ComponentEvent::Deactivate(c) => {
-                            publisher
-                                .clone()
-                                .try_lock()
-                                .unwrap()
-                                .publish(NetworkEvent::ComponentDeactivated);
+                            if let Ok(pu) = publisher.clone().try_lock().as_mut() {
+                                pu.publish(NetworkEvent::ComponentDeactivated { id: id.clone() });
+                            }
 
-                            let load = loads.clone();
-                            let mut load = load.write().unwrap();
-                            *load = *c;
-                            // Network::check_if_finished(_network.clone());
+                            let manager = manager.clone();
+                            if let Ok(manager) = manager.clone().try_lock().as_mut() {
+                                (manager).weight = *c;
+                                (manager).check_if_finished();
+                            }
+                            drop(manager);
+
                             events.remove(i);
                         }
                         ComponentEvent::Icon(new_icon) => {
-                            publisher
-                                .clone()
-                                .try_lock()
-                                .unwrap()
-                                .publish(NetworkEvent::Custom("icon".to_owned(), new_icon.clone()));
+                            if let Ok(pu) = publisher.clone().try_lock().as_mut() {
+                                pu.publish(NetworkEvent::Custom(
+                                    "icon".to_owned(),
+                                    new_icon.clone(),
+                                ));
+                            }
                             events.remove(i);
                         }
-                        _ => {}
+                        _ => {
+                            if let Ok(pu) = publisher.clone().try_lock().as_mut() {
+                                pu.publish(NetworkEvent::ComponentEvent {
+                                    id: id.clone(),
+                                    event: event.clone(),
+                                });
+                            }
+                            events.remove(i);
+                        }
                     });
                 // }
             }
@@ -591,8 +557,8 @@ impl Network {
         // Let network sync with the sockets' events
         let (sck_tx, sck_rx) = mpsc::sync_channel(2);
         let socket_events = self.socket_events.clone();
-        let _network = network.clone();
-        let publisher = self.publisher.clone();
+        // let _network = network.clone();
+        let _publisher = self.publisher.clone();
         pool.spawn(move || 'outter: loop {
             let binding = socket_events.clone();
             let mut binding = binding.lock();
@@ -609,32 +575,34 @@ impl Network {
                 }
             }
 
-            events
-                .clone()
-                .iter()
-                .enumerate()
-                .for_each(|(i, event)| match event {
-                    (evtype, data) => {
-                        match evtype.as_str() {
-                            "ip" => {
-                                publisher
-                                    .clone()
-                                    .try_lock()
-                                    .unwrap()
-                                    .publish(NetworkEvent::IP(data.clone()));
-                            }
-                            "error" => {
-                                publisher
-                                    .clone()
-                                    .try_lock()
-                                    .unwrap()
-                                    .publish(NetworkEvent::Error(data.clone()));
-                            }
-                            _ => {}
-                        }
-                        events.remove(i);
-                    }
-                });
+            // events
+            //     .clone()
+            //     .iter()
+            //     .enumerate()
+            //     .for_each(|(i, event)| match event {
+            //         (evtype, data) => {
+            //             match evtype.as_str() {
+            //                 "ip" => {
+            //                     let notifier = publisher.clone();
+
+            //                     notifier
+            //                         .try_lock()
+            //                         .unwrap()
+            //                         .publish(NetworkEvent::IP(data.clone()));
+            //                     drop(notifier);
+            //                 }
+            //                 "error" => {
+            //                     publisher
+            //                         .clone()
+            //                         .try_lock()
+            //                         .unwrap()
+            //                         .publish(NetworkEvent::Error(data.clone()));
+            //                 }
+            //                 _ => {}
+            //             }
+            //             events.remove(i);
+            //         }
+            //     });
         });
 
         let pubsub = self.publisher.clone();
@@ -643,119 +611,32 @@ impl Network {
         let pool = Arc::new(Mutex::new(pool));
         publisher.subscribe_fn(move |event| match event.as_ref() {
             NetworkEvent::Terminate => {
-                println!("before terminate");
                 cmp_tx.send("end_network").unwrap();
                 sck_tx.send("end_network").unwrap();
                 if let Ok(pool) = pool.clone().try_lock() {
                     drop(pool);
-                    println!("after terminate");
                 }
             }
             _ => {}
         });
 
-        Ok(network.clone())
-    }
-
-    /// ## Add a process to the network
-    ///
-    /// Processes can be added to a network at either start-up time
-    /// or later. The processes are added with a node definition object
-    /// that includes the following properties:
-    ///
-    /// * `id`: Identifier of the process in the network. Typically a string
-    /// * `component`: A ZFlow component instance object
-    pub fn add_node(
-        &mut self,
-        // network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
-        node: GraphNode,
-        _: Option<HashMap<String, Value>>,
-    ) -> Result<NetworkProcess, String> {
-        // Processes are treated as singletons by their identifier. If
-        // we already have a process with the given ID, return that.
-        if self.get_processes().contains_key(&node.id) {
-            return Ok(self.get_processes().get(&node.id.clone()).unwrap().clone());
-        }
-        // }
-        let mut process = NetworkProcess {
-            id: node.id.clone(),
-            ..NetworkProcess::default()
-        };
-        if node.component.is_empty() {
-            // No component defined, just register the process but don't start.
-            self.get_processes_mut().insert(node.id.clone(), process);
-            return Ok(self.get_processes().get(&node.id.clone()).unwrap().clone());
-        }
-
-        // Load the component for the process.
-        let _instance = self.load(
-            &node.id,
-            json!(node.metadata),
-        )?;
-        let binding = _instance.clone();
-        let mut binding = binding.try_lock();
-        let instance = binding.as_mut().unwrap();
-
-        instance.set_node_id(node.id.clone());
-        process.component = Some(_instance.clone());
-        process.component_name = node.clone().component;
-
-        // Inform the ports of the node name
-        instance
-            .get_inports_mut()
-            .ports
-            .iter_mut()
-            .for_each(|(name, port)| {
-                port.node = node.id.clone();
-                port.node_instance = Some(_instance.clone());
-                port.name = name.clone();
-            });
-
-        instance
-            .get_outports_mut()
-            .ports
-            .iter_mut()
-            .for_each(|(name, port)| {
-                port.node = node.id.clone();
-                port.node_instance = Some(_instance.clone());
-                port.name = name.clone();
-            });
-
-
-        // let _ = Network::subscribe_subgraph(network.clone(), process.clone())?;
-
-        // Store and return the process instance
-        self.get_processes_mut()
-            .insert(node.id.clone(), process.clone());
-        if let Ok(graph) = self.get_graph().clone().try_lock().as_mut() {
-            graph.add_node(&node.id, &node.component, node.metadata);
-        }
-
-        drop(binding);
-        let _ = self.subscribe_node(process.clone())?;
-        Ok(process)
+        Ok(self)
     }
 
     // Add edge to network
     pub fn add_edge(
-        // network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
         &mut self,
         edge: GraphEdge,
         options: Option<HashMap<String, Value>>,
     ) -> Result<Arc<Mutex<InternalSocket>>, String> {
-        // let mut from: Option<NetworkProcess> = None;
         let socket = InternalSocket::create(edge.clone().metadata);
-        // let mut to: Option<NetworkProcess> = None;
-        // if let Ok(this) = network.clone().try_lock().as_mut() {
+
         let from = self.ensure_node(&edge.from.node_id, "outbound")?;
 
         // Todo: configure socket to support async and debug
         let to = self.ensure_node(&edge.to.node_id, "inbound")?;
-        // }
 
-        // if to.is_none() || from.is_none() {
-        //     return Err(format!("Could not add edge {:?} to network", edge.clone()));
-        // }
+    
         // Subscribe to events from the socket
         self.subscribe_socket(socket.clone(), Some(from.clone()))?;
         connect_port(socket.clone(), to, &edge.to.port, edge.to.index, true)?;
@@ -807,18 +688,24 @@ impl Network {
                 socket: socket.clone(),
                 data: initializer.from.clone().unwrap().data,
             };
+
             self.get_initials_mut().push(init.clone());
             self.get_next_initials_mut().push(init.clone());
 
-            if self.is_running() {
+            let manager = self.manager.clone();
+            let manager = manager.lock().unwrap();
+
+            if manager.is_running() {
                 // Network is running now, send initials immediately
                 self.send_initials()?;
-            } else if !self.is_stopped() {
+            } else if !manager.is_stopped() {
+                drop(manager);
                 // Network has finished but hasn't been stopped, set
                 // started and set
                 self.set_started(true);
                 self.send_initials()?;
             }
+
             if let Ok(graph) = self.get_graph().clone().try_lock().as_mut() {
                 let op = if let Some(op) = options {
                     json!(op).as_object().cloned()
@@ -839,11 +726,10 @@ impl Network {
             }
             return Ok(socket.clone());
         }
-        Err("".to_string())
+        Err("Could not add initial packet".to_string())
     }
 
     pub fn add_defaults(
-        // network: Arc<Mutex<impl BaseNetwork + Send + Sync + 'static + ?Sized>>,
         &mut self,
         node: GraphNode,
     ) -> Result<(), String> {
@@ -877,6 +763,52 @@ impl Network {
 
         Ok(())
     }
+
+    /// Register a ZFlow Provider.
+    pub fn register_provider<T: Provider + Sized + 'static>(&mut self, provider: T) {
+        self.providers.push(Box::new(provider));
+    }
+
+    pub(crate) fn get_subgraph_runner(
+        graph: Graph,
+    ) -> (
+        Box<RunFunc>,
+        Arc<Mutex<NetworkManager>>,
+        Arc<Mutex<Publisher<NetworkEvent>>>,
+    ) {
+        let mut graph_network = Network::new(
+            graph,
+            NetworkOptions {
+                subscribe_graph: true,
+                ..Default::default()
+            },
+        );
+
+        let graph_network_manager = graph_network.manager.clone();
+        let graph_network_pub = graph_network.publisher.clone();
+
+        let ret_manager = graph_network_manager.clone();
+
+        return (
+            Box::new(move |handle| {
+                if let Ok(this) = handle.clone().try_lock().as_mut() {
+                    let network = graph_network.connect().map_err(|err| ProcessError(err))?;
+                    network.start().map_err(|err| ProcessError(err))?;
+                    loop {
+                        if let Ok(manager) = graph_network_manager.clone().try_lock() {
+                            if manager.weight == 0 || (*manager).is_stopped() {
+                                this.output.send_done(&json!({}))?;
+                                break;
+                            }
+                        }
+                    }
+                }
+                Ok(ProcessResult::default())
+            }),
+            ret_manager.clone(),
+            graph_network_pub,
+        );
+    }
 }
 
 impl BaseNetwork for Network {
@@ -888,82 +820,232 @@ impl BaseNetwork for Network {
             .subscribe_fn(callback);
     }
 
-    fn get_loader(&mut self) -> &mut ComponentLoader {
-        &mut self.loader
+    fn load(
+        &mut self,
+        component: &str,
+        metadata: Value,
+    ) -> Result<Arc<Mutex<Component>>, anyhow::Error> {
+        if let Some(component) = self.native_components.get(component) {
+            return Ok(component.clone());
+        }
+        let base_dir = self.workspace_dir.clone();
+        let par_iter = self.providers.par_iter_mut();
+        if let Some((_component, runner)) = par_iter.find_map_any(|provider| {
+            provider.set_workspace(base_dir.clone());
+            return provider
+                .load_component(component.to_owned())
+                .map_err(|err| {
+                    log::log!(Level::Error, "{:?}", err);
+                    err
+                })
+                .ok();
+        }) {
+            let comp = _component;
+            let in_ports: HashMap<String, InPort> = comp
+                .get_inports()
+                .par_iter()
+                .map(|(name, options)| (name.to_owned(), InPort::new(options.clone())))
+                .collect();
+            let out_ports: HashMap<String, OutPort> = comp
+                .get_outports()
+                .par_iter()
+                .map(|(name, options)| (name.to_owned(), OutPort::new(options.clone())))
+                .collect();
+
+            let description = comp.get_description();
+            let icon = comp.get_icon()?;
+            let ordered = comp.is_ordered();
+            let activate_on_input = comp.should_activate_on_input();
+            let forward_brackets = comp.get_forward_brackets();
+            let mut _meta = comp.get_metadata();
+
+            if let Some(metadata) = metadata.as_object() {
+                _meta.extend(metadata.clone());
+            }
+
+            let is_graph = comp.is_subgraph();
+
+            let process_func = if !is_graph {
+                runner.runner_func
+            } else {
+                if let Some(graph) = _component.as_any().downcast_ref::<Graph>() {
+                    let (graph_runner, _graph_network_manager, _graph_network_publisher) =
+                        Self::get_subgraph_runner(graph.clone());
+                    //Todo: sync graph network with main network
+                    graph_runner
+                } else {
+                    Box::new(|_| Ok(ProcessResult::default()))
+                }
+            };
+
+            let process = Component::init(ComponentOptions {
+                in_ports,
+                out_ports,
+                description,
+                ordered,
+                activate_on_input,
+                forward_brackets,
+                icon,
+                metadata: Some(_meta),
+                process: Some(process_func),
+                ..Default::default()
+            });
+            return Ok(process);
+        }
+
+        Err(anyhow::Error::msg("Component not found"))
     }
 
-    fn is_running(&self) -> bool {
-        *self.weight.clone().read().unwrap() > 0
-    }
+    fn get_active_processes(&self) -> Vec<String> {
+        let mut active = vec![];
+        let manager = self.manager.clone();
+        let manager = manager.try_lock().unwrap();
+        if !(manager).started {
+            return active;
+        }
 
-    fn load(&mut self, component: &str, metadata: Value) -> Result<Arc<Mutex<Component>>, String> {
-        return self.loader.load(component, metadata);
-    }
+        self.get_processes().iter().for_each(|(name, process)| {
+            if let Some(component) = process.component.clone() {
+                if let Ok(component) = &component.clone().try_lock() {
+                    let inner_thread_alive = component
+                        .get_handler_thread()
+                        .try_lock()
+                        .unwrap()
+                        .is_alive();
 
-    fn is_started(&self) -> bool {
-        *self.started.read().unwrap()
-    }
+                    if component.get_load() > 0 || inner_thread_alive {
+                        active.push(name.to_string());
+                    }
+                }
+            }
+        });
 
-    fn is_stopped(&self) -> bool {
-        *self.stopped.read().unwrap()
+        active
     }
 
     fn set_started(&mut self, started: bool) {
-        if *self.started.clone().read().unwrap() == started {
+        let manager = self.manager.clone();
+        let mut manager = manager.lock().unwrap();
+        if manager.started == started {
             return;
         }
 
         if !started {
             // Ending the execution
-            let w = self.started.clone();
-            let mut w = w.write().unwrap();
-            *w = false;
+            manager.started = false;
+            drop(manager);
 
             // buffered emit
-            let now: u128 = SystemTime::now().elapsed().unwrap().as_millis();
+            let now: u128 = Instant::now().elapsed().as_millis();
             if let Some(started) = self.startup_time {
-                let started = started.elapsed().unwrap().as_millis();
+                let started = started.elapsed().as_millis();
                 self.buffered_emit(NetworkEvent::End(json!({
-                    "start": started,
-                    "end": now,
-                    "uptime": self.uptime()
+                    "start": started/1000,
+                    "end": now/1000,
+                    "uptime": self.uptime()/1000
                 })));
             } else {
                 self.buffered_emit(NetworkEvent::End(json!({
                     "start": 0,
-                    "end": now,
-                    "uptime": self.uptime()
+                    "end": now/1000,
+                    "uptime": self.uptime()/1000
                 })));
             }
 
             return;
         }
+
         // Starting the execution
         if self.startup_time.is_none() {
-            self.startup_time = Some(SystemTime::now());
+            self.startup_time = Some(Instant::now());
         }
 
+        manager.started = true;
+
+        manager.stopped = false;
+
+        drop(manager);
+
         // buffered emit
-        let started = self.startup_time.unwrap().elapsed().unwrap().as_millis();
+        let started = self.startup_time.unwrap().elapsed().as_millis();
         self.buffered_emit(NetworkEvent::Start(
             json!({ "start": started, "end": null, "uptime": null }),
         ));
-
-        let started = self.started.clone();
-        let mut _started = started.write().unwrap();
-        *_started = true;
-
-        let stopped = self.stopped.clone();
-        let mut _stopped = stopped.write().unwrap();
-        *_stopped = false;
     }
 
     fn get_processes(&self) -> HashMap<String, NetworkProcess> {
         self.processes.clone()
     }
 
-    fn get_startup_time(&self) -> Option<SystemTime> {
+    fn get_startup_time(&self) -> Option<Instant> {
         self.startup_time
+    }
+
+    fn add_node(
+        &mut self,
+        // network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
+        node: GraphNode,
+        _: Option<HashMap<String, Value>>,
+    ) -> Result<NetworkProcess, anyhow::Error> {
+        // Processes are treated as singletons by their identifier. If
+        // we already have a process with the given ID, return that.
+        if self.get_processes().contains_key(&node.id) {
+            return Ok(self.get_processes().get(&node.id.clone()).unwrap().clone());
+        }
+        // }
+        let mut process = NetworkProcess {
+            id: node.id.clone(),
+            ..NetworkProcess::default()
+        };
+        if node.component.is_empty() {
+            // No component defined, just register the process but don't start.
+            self.get_processes_mut().insert(node.id.clone(), process);
+            return Ok(self.get_processes().get(&node.id.clone()).unwrap().clone());
+        }
+
+        // Load the component for the process.
+        let _instance = self.load(&node.id, json!(node.metadata))?;
+        let binding = _instance.clone();
+        let mut binding = binding.try_lock();
+        let instance = binding.as_mut().unwrap();
+
+        instance.set_node_id(node.id.clone());
+        process.component = Some(_instance.clone());
+        process.component_name = node.clone().component;
+
+        // Inform the ports of the node name
+        instance
+            .get_inports_mut()
+            .ports
+            .iter_mut()
+            .for_each(|(name, port)| {
+                port.node = node.id.clone();
+                port.node_instance = Some(_instance.clone());
+                port.name = name.clone();
+            });
+
+        instance
+            .get_outports_mut()
+            .ports
+            .iter_mut()
+            .for_each(|(name, port)| {
+                port.node = node.id.clone();
+                port.node_instance = Some(_instance.clone());
+                port.name = name.clone();
+            });
+
+        // let _ = Network::subscribe_subgraph(network.clone(), process.clone())?;
+
+        // Store and return the process instance
+        self.get_processes_mut()
+            .insert(node.id.clone(), process.clone());
+        if let Ok(graph) = self.get_graph().clone().try_lock().as_mut() {
+            graph.add_node(&node.id, &node.component, node.metadata);
+        }
+
+        drop(binding);
+        let _ = self.subscribe_node(process.clone())?;
+        Ok(process)
     }
 
     fn remove_node(&mut self, node: GraphNode) -> Result<(), String> {
@@ -972,7 +1054,13 @@ impl BaseNetwork for Network {
                 self.processes.remove(&node.id);
                 return Ok(());
             }
-            Component::shutdown(process.component.unwrap().clone())?;
+            let _ = process
+                .component
+                .unwrap()
+                .clone()
+                .try_lock()
+                .unwrap()
+                .shutdown();
             self.processes.remove(&node.id);
             if let Ok(graph) = self.get_graph().try_lock().as_mut() {
                 graph.remove_node(&node.id);
@@ -1261,18 +1349,20 @@ impl BaseNetwork for Network {
             .par_iter()
             .filter(|initial| {
                 if let Ok(socket) = initial.socket.clone().try_lock().as_mut() {
-                    socket
-                        .post(
-                            Some(IP::new(
-                                IPType::Data(initial.data.clone()),
-                                IPOptions {
-                                    initial: true,
-                                    ..IPOptions::default()
-                                },
-                            )),
-                            true,
-                        )
-                        .expect("expected to post initials");
+                    let post = socket.post(
+                        Some(IP::new(
+                            IPType::Data(initial.data.clone()),
+                            IPOptions {
+                                initial: true,
+                                ..IPOptions::default()
+                            },
+                        )),
+                        true,
+                    );
+
+                    if post.is_err() {
+                        return true;
+                    }
 
                     return false;
                 }
@@ -1323,41 +1413,40 @@ impl BaseNetwork for Network {
     }
 
     fn start(&mut self) -> Result<(), String> {
-        if *self.debounce_end.read().unwrap() {
-            let mut abort = self.abort_debounce.write().unwrap();
-            *abort = true;
+        let _manager = self.manager.clone();
+        let m = _manager.lock();
+        let mut manager = m.unwrap();
+        if manager.debounce_end {
+            manager.abort_debounce = true;
         }
-        if *self.started.read().unwrap() {
+
+        let is_started = manager.started;
+
+        if is_started {
+            drop(manager);
             self.stop()?;
             self.start()?;
             return Ok(());
         }
+        drop(manager);
+
         self.initials = self.next_initials.clone();
         self.event_buffer.clear();
         self.start_components()?;
         self.send_initials()?;
         self.send_defaults()?;
         self.set_started(true);
-        if self.options.delay {
-            loop {
-                let p = *self.weight.clone().read().unwrap();
-                if p == 0 {
-                    break;
-                }
-            }
-        }
+
         Ok(())
     }
 
     fn stop(&mut self) -> Result<(), String> {
-        if *self.debounce_end.read().unwrap() {
-            let mut abort = self.abort_debounce.write().unwrap();
-            *abort = true;
+        if (self._manager).debounce_end {
+            self._manager.abort_debounce = true;
         }
+        if !self._manager.started {
+            self._manager.stopped = true;
 
-        if !*self.started.read().unwrap() {
-            let mut stopped = self.stopped.write().unwrap();
-            *stopped = true;
             self.publisher
                 .clone()
                 .try_lock()
@@ -1382,8 +1471,9 @@ impl BaseNetwork for Network {
         if self.processes.is_empty() {
             // No processes to stop
             self.set_started(false);
-            let mut stopped = self.stopped.write().unwrap();
-            *stopped = true;
+
+            self._manager.stopped = true;
+
             self.publisher
                 .clone()
                 .try_lock()
@@ -1401,19 +1491,30 @@ impl BaseNetwork for Network {
                 if process.component.is_none() {
                     return Ok(());
                 }
-                return Component::shutdown(process.component.clone().unwrap());
+                return process
+                    .component
+                    .clone()
+                    .unwrap()
+                    .try_lock()
+                    .unwrap()
+                    .shutdown();
             })
             .collect();
 
         self.set_started(false);
-        let mut stopped = self.stopped.write().unwrap();
-        *stopped = true;
+
+        self._manager.stopped = true;
 
         self.publisher
             .clone()
             .try_lock()
             .unwrap()
             .publish(NetworkEvent::Terminate);
+
+        if let Ok(manager) = self.manager.clone().try_lock().as_mut() {
+            self._manager = manager.update(self._manager);
+        }
+
         Ok(())
     }
 
@@ -1428,27 +1529,29 @@ impl BaseNetwork for Network {
 
         self.debug = active;
 
-        self.connections.iter().for_each(|socket| {
+        self.connections.par_iter().for_each(|socket| {
             if let Ok(socket) = socket.clone().try_lock().as_mut() {
                 socket.set_debug(active);
             }
         });
-        self.processes.iter_mut().for_each(|(_, process)| {
+        for (_, process) in self.processes.clone() {
             if process.component.is_none() {
                 return;
             }
             if let Some(instance) = process.component.clone() {
                 if let Ok(instance) = instance.clone().try_lock().as_mut() {
                     if instance.is_subgraph() {
-                        if let Some(network) = instance.get_network() {
-                            if let Ok(network) = network.clone().try_lock().as_mut() {
-                                network.set_debug(active);
-                            }
-                        }
+                        // if let Some(network) = instance.get_network() {
+                        //     if let Ok(network) = network.clone().try_lock().as_mut() {
+
+                        //     }
+                        // }
+                        self.set_debug(active);
                     }
                 }
             }
-        });
+        }
+        self.processes.iter_mut().for_each(move |(_, _)| {});
     }
 
     fn get_publisher(&self) -> Arc<Mutex<Publisher<NetworkEvent>>> {
@@ -1473,24 +1576,6 @@ impl BaseNetwork for Network {
 
     fn get_defaults_mut(&mut self) -> &mut Vec<Arc<Mutex<InternalSocket>>> {
         &mut self.defaults
-    }
-
-    fn cancel_debounce(&mut self, abort: bool) {
-        let mut w_abort = self.abort_debounce.write().unwrap();
-        *w_abort = abort;
-    }
-
-    fn is_abort_debounce(&self) -> bool {
-        *self.abort_debounce.read().unwrap()
-    }
-
-    fn set_debounce_ended(&mut self, end: bool) {
-        let mut w_end = self.debounce_end.write().unwrap();
-        *w_end = end;
-    }
-
-    fn get_debounce_ended(&self) -> bool {
-        *self.debounce_end.read().unwrap()
     }
 
     fn get_processes_mut(&mut self) -> &mut HashMap<String, NetworkProcess> {
@@ -1523,7 +1608,9 @@ impl BaseNetwork for Network {
             }
             _ => {}
         }
-        if !self.is_started() {
+        let manager = self.manager.clone();
+        let manager = manager.try_lock().unwrap();
+        if !(manager).started {
             match event {
                 NetworkEvent::End(_) => {}
                 _ => {
@@ -1532,6 +1619,7 @@ impl BaseNetwork for Network {
                 }
             }
         }
+
         self.publisher
             .clone()
             .try_lock()
@@ -1586,8 +1674,42 @@ impl BaseNetwork for Network {
         }
     }
 
-    fn get_base_dir(&self) -> String {
-        self.base_dir.clone()
+    fn get_workspace_dir(&self) -> String {
+        self.workspace_dir.clone()
+    }
+
+    fn list_components(&mut self) -> Vec<String> {
+        let base_dir = self.workspace_dir.clone();
+        let par_iter = self.providers.par_iter_mut();
+        let mut components: Vec<String> = self
+            .native_components
+            .par_iter()
+            .map(|(k, _)| k.clone())
+            .collect();
+        components.extend(
+            par_iter
+                .map(|provider| {
+                    provider.set_workspace(base_dir.clone());
+                    provider.list_components().unwrap()
+                })
+                .flatten()
+                .collect::<Vec<String>>(),
+        );
+
+        components
+    }
+
+    fn register_component(
+        &mut self,
+        namespace: &str,
+        name: &str,
+        component: Component,
+    ) -> Result<(), anyhow::Error> {
+        let id = build_node_id(namespace, name);
+        self.native_components
+            .insert(id, Component::from_instance(component));
+
+        Ok(())
     }
 }
 

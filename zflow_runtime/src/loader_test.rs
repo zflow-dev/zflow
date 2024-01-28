@@ -63,10 +63,33 @@ mod tests {
         fn dynamic_load(
             &mut self,
             component_name: &str,
-            path: &str,
+            source: ComponentSource,
             options: Value,
         ) -> Result<Arc<Mutex<Component>>, String> {
             todo!()
+        }
+
+        fn set_base_dir(&mut self, dir: &str) {}
+
+        fn get_base_dir(&self) -> &str {
+            "/"
+        }
+
+        fn create_component(
+            &mut self,
+            name: &str,
+            component: &dyn GraphDefinition,
+            metadata: Value,
+        ) -> Result<Arc<Mutex<Component>>, String> {
+            // check if it's a component instance
+            if let Some(instance) = component.to_any().downcast_ref::<Component>() {
+                let mut instance = instance.clone();
+                if let Some(meta) = metadata.as_object() {
+                    instance.metadata = Some(meta.clone());
+                }
+                return Ok(Component::from_instance(instance));
+            }
+            Err("".to_owned())
         }
     }
 
@@ -76,10 +99,9 @@ mod tests {
         'given_a_loader: {
             let binding = current_dir().expect("expected current directory");
             let dir = binding.to_str().unwrap();
-            let mut l = ComponentLoader::new(
-                dir,
+            let mut l = ComponentLoader::from_registry(
                 ComponentLoaderOptions::default(),
-                Some(Arc::new(Mutex::new(TestLoaderRegistry {}))),
+                TestLoaderRegistry {},
             );
             'then_it_should_initially_know_of_no_components: {
                 assert_eq!(l.components.clone().try_lock().unwrap().len(), 0);

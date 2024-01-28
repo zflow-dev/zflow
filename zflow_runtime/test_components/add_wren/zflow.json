@@ -1,5 +1,5 @@
 {
-    "package_name": "test",
+    "package_id": "test",
     "components": [
         {
             "name": "add_wren",
@@ -9,11 +9,16 @@
             "outports": {
                 "sum":{}
             },
-            "base_dir": "/",
+            "source_dir": "/",
             "source": "main.wren",
             "description": "sum of two numbers",
             "language": "wren",
-            "ordered": true
+            "ordered": true,
+            "runtime": {
+                "provider_id": "@zflow/builtin",
+                "runner_id": "@zflow/wren",
+                "platform": "System"
+            }
         }
     ]
 }
