@@ -15,9 +15,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions-rs/toolchain@v1.0.6
-      with:
-          toolchain: nightly
+    - uses: actions/checkout@v3
     - name: Build
-      uses: actions-rs/cargo@v1
       run: cargo build --verbose

@@ -15,12 +15,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions-rs/toolchain@v1.0.6
-      with:
-          toolchain: nightly
+    - uses: actions/checkout@v3
     - name: Run runtime tests
-      uses: actions-rs/cargo@v1
       run: ZFLOW_QUICKJS_RUNNER_LIB=../zflow_js_runner/bin/libzflow_js_runner.dylib cargo test --package zflow_runtime --verbose -- --skip network_test
     - name: Run network tests 
-      uses: actions-rs/cargo@v1
       run: ZFLOW_QUICKJS_RUNNER_LIB=../zflow_js_runner/bin/libzflow_js_runner.dylib cargo test --package zflow_runtime --verbose  --lib -- 'network_test::tests::test_network'
