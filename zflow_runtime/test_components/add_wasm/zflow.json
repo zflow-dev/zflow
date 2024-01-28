@@ -1,5 +1,5 @@
 {
-    "package_name": "test",
+    "package_id": "test",
     "components": [
         {
             "name": "add_wasm",
