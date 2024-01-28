@@ -103,6 +103,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "add_wasm"
+version = "0.1.0"
+dependencies = [
+ "extism-pdk",
+ "serde",
+ "serde_json",
+ "zflow_plugin",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

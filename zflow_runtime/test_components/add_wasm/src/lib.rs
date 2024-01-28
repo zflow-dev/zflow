@@ -1,28 +1,13 @@
 #![no_main]
 
-use extism_pdk::{json::Value, *};
+use json::Value;
+use zflow_plugin::{*, extension::*};
 use serde::{Deserialize, Serialize};
-
-
-#[host_fn]
-extern "ExtismHost" {
-    fn send(output: Json<Output>)-> Json<Output>;
-    fn send_done(output: Json<Output>)-> Json<Output>;
-}
-
 
 #[repr(C)]
 #[derive(Serialize, Deserialize)]
 pub struct Output {
     pub sum: i64,
-}
-
-impl Output {
-    #[inline(always)]
-    pub fn as_ptr(&self) -> u64 {
-        let mem = extism_pdk::Memory::from_bytes(json::to_string(self.clone()).unwrap().as_bytes());
-        mem.keep().offset
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

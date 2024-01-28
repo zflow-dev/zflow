@@ -25,6 +25,7 @@ members = [
     "zflow_editor",
     "zflow_runtime",
     "zflow_plugin",
+    "zflow_runtime/test_components/add_wasm",
     "zflow_runtime/test_providers/maths_provider",
     "zflow_js_runner"
 ]

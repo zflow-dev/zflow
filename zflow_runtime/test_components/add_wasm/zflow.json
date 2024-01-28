@@ -12,8 +12,12 @@
             "base_dir": "/",
             "source": "add_wasm.wasm",
             "description": "sum of two numbers",
-            "language": "wasm",
-            "ordered": true
+            "ordered": true,
+            "runtime": {
+                "provider_id": "@zflow/builtin",
+                "runner_id": "@zflow/wasm",
+                "platform": "System"
+            }
         }
     ]
 }
