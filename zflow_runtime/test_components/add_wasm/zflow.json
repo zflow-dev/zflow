@@ -1,0 +1,19 @@
+{
+    "package_name": "test",
+    "components": [
+        {
+            "name": "add_wasm",
+            "inports": {
+                "input":{"trigerring": true, "control":true}
+            },
+            "outports": {
+                "sum":{}
+            },
+            "base_dir": "/",
+            "source": "add_wasm.wasm",
+            "description": "sum of two numbers",
+            "language": "wasm",
+            "ordered": true
+        }
+    ]
+}
