@@ -19,6 +19,8 @@ jobs:
       with:
           toolchain: nightly
     - name: Run runtime tests
+      uses: actions-rs/cargo@v1
       run: ZFLOW_QUICKJS_RUNNER_LIB=../zflow_js_runner/bin/libzflow_js_runner.dylib cargo test --package zflow_runtime --verbose -- --skip network_test
-    - name: Run network tests
+    - name: Run network tests 
+      uses: actions-rs/cargo@v1
       run: ZFLOW_QUICKJS_RUNNER_LIB=../zflow_js_runner/bin/libzflow_js_runner.dylib cargo test --package zflow_runtime --verbose  --lib -- 'network_test::tests::test_network'

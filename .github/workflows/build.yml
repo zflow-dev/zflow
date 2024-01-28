@@ -19,4 +19,5 @@ jobs:
       with:
           toolchain: nightly
     - name: Build
+      uses: actions-rs/cargo@v1
       run: cargo build --verbose
