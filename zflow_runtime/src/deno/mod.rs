@@ -9,6 +9,7 @@ use deno_core::*;
 use futures::TryFutureExt;
 use v8::Handle;
 use v8::HandleScope;
+use v8::MapFnTo;
 use zflow_plugin::ComponentSource;
 use zflow_plugin::Platform;
 
@@ -93,6 +94,48 @@ impl deno_core::ModuleLoader for DenoModuleLoader {
     }
 }
 
+struct Callback {
+    pub callback:
+        Box<dyn FnMut(&mut HandleScope<'_>, Vec<v8::Local<v8::Value>>) -> Result<(), ProcessError>>,
+}
+
+extern "C" fn v8_callback(info: *const v8::FunctionCallbackInfo) {
+    let info = unsafe { &*info };
+    let args = v8::FunctionCallbackArguments::from_function_callback_info(info);
+    let rv = v8::ReturnValue::from_function_callback_info(info);
+    let scope = unsafe { &mut v8::CallbackScope::new(info) };
+
+    v8_func(scope, args, rv);
+}
+
+fn v8_func(
+    scope: &mut v8::HandleScope,
+    fca: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let undef_value: v8::Local<v8::Value> = v8::undefined(scope).into();
+
+    let data = fca.data();
+    let ext = v8::Local::<v8::External>::try_from(data).unwrap();
+    let callback_ptr = ext.value() as *mut Callback;
+    let callback_wrapper = unsafe { &mut *callback_ptr };
+    let mut vals = vec![];
+    for i in 0..fca.length() {
+        let val = fca.get(i);
+        vals.push(val);
+    }
+    let res = (callback_wrapper.callback)(scope, vals);
+    if let Ok(_) = res {
+        rv.set(undef_value.clone());
+        return;
+    }
+    rv.set(
+        v8::String::new(scope, &res.err().unwrap().0)
+            .unwrap()
+            .into(),
+    );
+}
+
 pub fn get_sys_deno_runner(
     component: ComponentSource,
     process_name: &str,
@@ -158,39 +201,6 @@ pub fn get_sys_deno_runner(
 
             let zflow_obj = v8::Object::new(scope);
 
-            struct Callback {
-                pub callback: Box<
-                    dyn FnMut(
-                        &mut HandleScope<'_>,
-                        Vec<v8::Local<v8::Value>>,
-                    ) -> Result<(), ProcessError>,
-                >,
-            }
-
-            let v8_func = move |scope: &mut v8::HandleScope,
-                                fca: v8::FunctionCallbackArguments,
-                                mut rv: v8::ReturnValue| {
-                let data = fca.data();
-                let ext = v8::Local::<v8::External>::try_from(data).unwrap();
-                let callback_ptr = ext.value() as *mut Callback;
-                let callback_wrapper = unsafe { &mut *callback_ptr };
-                let mut vals = vec![];
-                for i in 0..fca.length() {
-                    let val = fca.get(i);
-                    vals.push(val);
-                }
-                let res = (callback_wrapper.callback)(scope, vals);
-                if let Ok(_) = res {
-                    rv.set(undef_value.clone());
-                    return;
-                }
-                rv.set(
-                    v8::String::new(scope, &res.err().unwrap().0)
-                        .unwrap()
-                        .into(),
-                );
-            };
-
             let _output = this.output();
             let send_cb = Box::into_raw(Box::new(Callback {
                 callback: Box::new(move |scope, data| {
@@ -253,7 +263,7 @@ pub fn get_sys_deno_runner(
             }));
             let send_buf_ext = v8::External::new(scope, send_buf_cb as _);
 
-            let send_fn = v8::Function::builder(v8_func)
+            let send_fn = v8::Function::builder_raw(v8_callback)
                 .data(send_ext.into())
                 .build(scope)
                 .unwrap();
@@ -262,7 +272,7 @@ pub fn get_sys_deno_runner(
                 v8::Local::<v8::Value>::from(v8::Local::<v8::Function>::new(scope, send_fn));
             zflow_obj.set(scope, send_fn_key, send_fn).unwrap();
 
-            let send_done_fn = v8::Function::builder(v8_func)
+            let send_done_fn = v8::Function::builder_raw(v8_callback)
                 .data(send_done_ext.into())
                 .build(scope)
                 .unwrap();
@@ -274,7 +284,7 @@ pub fn get_sys_deno_runner(
                 .set(scope, send_done_fn_key, send_done_fn)
                 .unwrap();
 
-            let send_buf_fn = v8::Function::builder(v8_func)
+            let send_buf_fn = v8::Function::builder_raw(v8_callback)
                 .data(send_buf_ext.into())
                 .build(scope)
                 .unwrap();

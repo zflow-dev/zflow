@@ -1940,7 +1940,7 @@ impl Component {
 
         if !self.is_ready() {
             if let Ok(publisher) = self.bus.clone().try_lock().as_mut() {
-                publisher.subscribe_fn(move |event| {
+                publisher.subscribe_fn(move |_event| {
 
                     // match event.as_ref() {
                     //     ComponentEvent::Ready => {

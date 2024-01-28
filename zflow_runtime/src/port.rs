@@ -1,7 +1,6 @@
 use std::{
     any::Any,
     collections::HashMap,
-    pin::Pin,
     sync::{Arc, Mutex},
 };
 
@@ -9,9 +8,7 @@ use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
 
 use foreach::ForEach;
 use fp_rust::{common::SubscriptionFunc, publisher::Publisher};
-use futures::{executor::block_on, future::join_all, Future, FutureExt, TryFutureExt};
-use log::log;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use futures::{executor::block_on, future::join_all, FutureExt};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -19,7 +16,6 @@ use std::fmt::Debug;
 
 use crate::{
     component::Component,
-    errors::async_transform,
     ip::{IPOptions, IPType, IP},
     process::ValidatorFn,
     sockets::{InternalSocket, SocketEvent},
@@ -1522,7 +1518,7 @@ impl OutPorts {
     pub async fn connect(&mut self, name: &str, socket_id: Option<usize>) -> Result<(), String> {
         let port = self
             .ports
-            .get_mut(name.clone())
+            .get_mut(name)
             .expect(format!("Port {} not available", name).as_str());
         port.connect(socket_id).await
     }
