@@ -17,7 +17,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Build quickjs runner
-      run:  cd zflow_js_runner && cargo build  --release && mkdir ./bin && cp ./target/release/libzflow_js_runner.dylib ./bin/libzflow_js_runner.dylib 
+      run:  cd zflow_js_runner && cargo build  --release && cp ./target/release/libzflow_js_runner.dylib ./bin/libzflow_js_runner.dylib 
     - name: Run runtime tests
       run: ZFLOW_QUICKJS_RUNNER_LIB=../zflow_js_runner/bin/libzflow_js_runner.dylib cargo test --package zflow_runtime --verbose -- --skip network_test
     - name: Run network tests 
