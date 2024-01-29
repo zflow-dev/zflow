@@ -6092,7 +6092,6 @@ dependencies = [
  "base64 0.21.7",
  "beady",
  "bincode",
- "cast_trait_object",
  "deno_ast",
  "deno_core",
  "dyn-clone",
