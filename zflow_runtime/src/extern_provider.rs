@@ -243,9 +243,9 @@ impl ExternProvider {
         let result = runtime.mod_evaluate(mod_id);
         runtime
             .run_event_loop(PollEventLoopOptions {
-            wait_for_inspector: false,
-            pump_v8_message_loop: false,
-        })
+                wait_for_inspector: false,
+                pump_v8_message_loop: false,
+            })
             .await?;
 
         let global = runtime.get_module_namespace(mod_id)?;
@@ -367,7 +367,6 @@ impl ExternProvider {
 mod test {
     use std::{collections::HashMap, env::current_dir};
 
-    use log::{log, Level};
     use serde_json::json;
     use simple_logger::SimpleLogger;
 
@@ -378,6 +377,7 @@ mod test {
         port::InPort,
         process::ProcessResult,
     };
+    use log::{log, Level};
 
     #[test]
     fn test_wasm_provider() {
@@ -433,12 +433,15 @@ mod test {
 
         n.register_component("debug", "logger", logger).unwrap();
 
-        let wasm_provider_source = ExternProviderSource::Local {
-            path: "maths_provider/bin/maths_provider.wasm".to_owned(),
-        };
-        let wasm_provider =
-            ExternProvider::from_wasm("test_providers", wasm_provider_source).unwrap();
-        n.register_provider(wasm_provider);
+        n.register_provider(
+            ExternProvider::from_wasm(
+                "test_providers",
+                ExternProviderSource::Local {
+                    path: "maths_provider/bin/maths_provider.wasm".to_owned(),
+                },
+            )
+            .unwrap(),
+        );
 
         let n = n.connect();
         assert!(n.is_ok());
