@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use _ops::RustToV8;
@@ -7,10 +8,13 @@ use deno_ast::SourceTextInfo;
 use deno_core::futures::FutureExt;
 use deno_core::*;
 use futures::TryFutureExt;
+use serde::Deserialize;
+use serde::Serialize;
 use v8::Handle;
 use v8::HandleScope;
 use v8::MapFnTo;
 use zflow_plugin::ComponentSource;
+use zflow_plugin::ComponentWithInput;
 use zflow_plugin::Platform;
 
 use crate::deno;
@@ -42,7 +46,13 @@ impl deno_core::ModuleLoader for DenoModuleLoader {
     ) -> std::pin::Pin<Box<deno_core::ModuleSourceFuture>> {
         let module_specifier = module_specifier.clone();
         async move {
-            let path = module_specifier.to_file_path().unwrap();
+            let scheme = module_specifier.scheme();
+            let is_remote = scheme == "http" || scheme == "https";
+            let path = if is_remote {
+                PathBuf::from(module_specifier.as_str())
+            } else {
+                module_specifier.to_file_path().unwrap()
+            };
             // Determine what the MediaType is (this is done based on the file
             // extension) and whether transpiling is required.
             let media_type = MediaType::from_path(&path);
@@ -64,7 +74,16 @@ impl deno_core::ModuleLoader for DenoModuleLoader {
             };
 
             // Transpile if Typescript
-            let code = std::fs::read_to_string(&path)?;
+            let code = if !is_remote {
+                std::fs::read_to_string(&path)?
+            } else {
+                reqwest::get(module_specifier.as_str())
+                    .await
+                    .unwrap()
+                    .text()
+                    .await
+                    .unwrap()
+            };
             let code = if should_transpile {
                 let parsed = deno_ast::parse_module(ParseParams {
                     specifier: module_specifier.to_string(),
@@ -104,7 +123,6 @@ extern "C" fn v8_callback(info: *const v8::FunctionCallbackInfo) {
     let args = v8::FunctionCallbackArguments::from_function_callback_info(info);
     let rv = v8::ReturnValue::from_function_callback_info(info);
     let scope = unsafe { &mut v8::CallbackScope::new(info) };
-
     v8_func(scope, args, rv);
 }
 
@@ -140,11 +158,11 @@ pub fn get_sys_deno_runner(
     component: ComponentSource,
     process_name: &str,
     module: ModuleSpecifier,
-    _is_provider: bool,
+    is_provider: bool,
 ) -> Result<ProviderRunner, anyhow::Error> {
     let id = component.name.to_owned();
     let process_name = process_name.to_owned();
-
+    let component = component.clone();
     let runner_func: Box<RunFunc> = Box::new(move |handle| {
         let handle_binding = handle.clone();
         let mut handle_binding = handle_binding.try_lock();
@@ -177,7 +195,9 @@ pub fn get_sys_deno_runner(
             ..Default::default()
         });
 
-        futures_lite::future::block_on(async move {
+        let component = component.clone();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
             let mod_id = runtime
                 .load_main_module(&module, None)
                 .map_err(|e| ProcessError(e.to_string()))
@@ -222,12 +242,13 @@ pub fn get_sys_deno_runner(
                 callback: Box::new(move |scope, data| {
                     let data = data[0];
                     if data.is_undefined() {
-                        return _output.clone().send(&serde_json::json!(null));
+                        return _output.clone().send_done(&serde_json::json!(null));
                     }
                     let val = v8::json::stringify(scope, data.into())
                         .unwrap()
                         .to_rust_string_lossy(scope);
                     let val: serde_json::Value = serde_json::from_str(&val).unwrap();
+
                     _output.clone().send_done(&val)
                 }),
             }));
@@ -262,7 +283,7 @@ pub fn get_sys_deno_runner(
                 }),
             }));
             let send_buf_ext = v8::External::new(scope, send_buf_cb as _);
-            
+
             let send_fn = v8::Function::builder_raw(v8_callback)
                 .data(send_ext.into())
                 .build(scope)
@@ -277,7 +298,7 @@ pub fn get_sys_deno_runner(
                 .build(scope)
                 .unwrap();
             let send_done_fn_key =
-                v8::Local::<v8::Value>::from(v8::String::new(scope, "send_done").unwrap());
+                v8::Local::<v8::Value>::from(v8::String::new(scope, "sendDone").unwrap());
             let send_done_fn =
                 v8::Local::<v8::Value>::from(v8::Local::<v8::Function>::new(scope, send_done_fn));
             zflow_obj
@@ -289,16 +310,14 @@ pub fn get_sys_deno_runner(
                 .build(scope)
                 .unwrap();
             let send_buf_fn_key =
-                v8::Local::<v8::Value>::from(v8::String::new(scope, "send_buffer").unwrap());
+                v8::Local::<v8::Value>::from(v8::String::new(scope, "sendBuffer").unwrap());
             let send_buf_fn =
                 v8::Local::<v8::Value>::from(v8::Local::<v8::Function>::new(scope, send_buf_fn));
             zflow_obj.set(scope, send_buf_fn_key, send_buf_fn).unwrap();
 
-            let zflow_obj_key =
-                v8::Local::<v8::Value>::from(v8::String::new(scope, "zflow").unwrap());
-            module_obj.set(scope, zflow_obj_key, zflow_obj.into());
 
-            let mut mapped_inputs = v8::Map::new(scope);
+            let component_with_input = v8::Object::new(scope);
+            let mut mapped_inputs = v8::Object::new(scope);
 
             inport_keys.for_each(|port| {
                 let value = this.input().get(port);
@@ -312,40 +331,60 @@ pub fn get_sys_deno_runner(
                         }
                         _ => undef_value,
                     };
-                    mapped_inputs = mapped_inputs.set(scope, port, val).unwrap();
+                    mapped_inputs.set(scope, port, val).unwrap();
                     return;
                 }
-                mapped_inputs = mapped_inputs.set(scope, port, undef_value).unwrap();
+                mapped_inputs.set(scope, port, undef_value).unwrap();
             });
 
             let _id = id.clone();
+
+            let components_key =
+                v8::Local::<v8::Value>::from(v8::String::new(scope, "component").unwrap());
+            let inputs_key = v8::Local::<v8::Value>::from(v8::String::new(scope, "input").unwrap());
+
+            let component = serde_v8::to_v8(scope, component.clone())
+                .map_err(|e| ProcessError(e.to_string()))?;
+            component_with_input.set(scope, components_key, component);
+            component_with_input.set(scope, inputs_key, mapped_inputs.into());
+            let call_input = v8::Local::<v8::Value>::from(if is_provider {
+                component_with_input
+            } else {
+                mapped_inputs
+            });
 
             fn call_func<'a>(
                 module: &v8::Object,
                 scope: &mut HandleScope<'a>,
                 name: &str,
+                args: &[v8::Local<v8::Value>],
             ) -> Result<v8::Local<'a, v8::Value>, anyhow::Error> {
                 let func_key = v8::String::new(scope, name).unwrap();
                 let func = module.get(scope, func_key.into()).unwrap();
                 let func = v8::Local::<v8::Function>::try_from(func)?;
-                let rec = v8::null(scope).into();
-                Ok(func.call(scope, rec, &[]).unwrap())
+                let rec = v8::undefined(scope).into();
+                Ok(func.call(scope, rec, args).unwrap())
             }
 
-            let res = call_func(module_obj, scope, &process_name)
+           
+            let res = call_func(module_obj, scope, &process_name, &[zflow_obj.into(), call_input])
                 .map_err(|e| ProcessError(e.to_string()))?;
 
-            if let Some(v) = v8::json::stringify(scope, res) {
-                let value: serde_json::Value = serde_json::from_str(&v.to_rust_string_lossy(scope))
-                    .map_err(|e| ProcessError(e.to_string()))?;
-                this.output().send_done(&value)?;
-                runner.await.map_err(|e| ProcessError(e.to_string()))?;
-                return Ok(ProcessResult {
-                    resolved: true,
-                    ..Default::default()
-                });
-            };
+            if !res.is_null_or_undefined() {
+                if let Some(v) = v8::json::stringify(scope, res) {
+                    let value: serde_json::Value = serde_json::from_str(&v.to_rust_string_lossy(scope))
+                        .map_err(|e| ProcessError(e.to_string()))?;
+                    runner.await.map_err(|e| ProcessError(e.to_string()))?;
+                    return Ok(ProcessResult {
+                        resolved: true,
+                        data: value,
+                        ..Default::default()
+                    });
+                }
+            }
+          
             runner.await.map_err(|e| ProcessError(e.to_string()))?;
+           
             Ok(ProcessResult::default())
         })
     });
@@ -355,41 +394,3 @@ pub fn get_sys_deno_runner(
         platforms: vec![Platform::System],
     });
 }
-
-// mod test {
-
-//     use serde_json::json;
-
-//     use crate::{
-//         extern_provider::{ExternProvider, ExternProviderSource},
-//         network::{BaseNetwork, Network, NetworkOptions},
-//     };
-
-//     fn test_deno() {
-//         let mut graph = zflow_graph::Graph::new("my_graph", false);
-//         graph
-//             .add_node("test/add", "add", None)
-//             .add_initial(json!(48), "test/add", "a", None)
-//             .add_initial(json!(2), "test/add", "b", None);
-
-//         let mut n = Network::create(
-//             graph.clone(),
-//             NetworkOptions {
-//                 subscribe_graph: false,
-//                 delay: true,
-//                 workspace_dir: "/".to_string(),
-//                 ..NetworkOptions::default()
-//             },
-//         );
-//         let deno_provider_source = ExternProviderSource::Url {
-//             url: "https://zflow.dev/deno/examples/my_provider.ts".to_owned(),
-//         };
-//         let deno_provider =
-//             futures_lite::future::block_on(ExternProvider::from_deno("/", deno_provider_source))
-//                 .unwrap();
-//         n.register_provider(deno_provider);
-
-//         let n = n.connect().unwrap();
-//         n.start().unwrap();
-//     }
-// }

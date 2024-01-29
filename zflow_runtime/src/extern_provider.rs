@@ -1,9 +1,7 @@
-use std::borrow::Borrow;
 use std::path::PathBuf;
 use std::{collections::HashMap, rc::Rc};
 
 use deno_core::PollEventLoopOptions;
-use futures::executor::block_on;
 use v8::HandleScope;
 use zflow_plugin::{ComponentSource, Package, Platform, Runtime};
 
@@ -16,6 +14,7 @@ use extism_pdk::{HttpRequest, Json};
 use log::log;
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -55,6 +54,23 @@ pub(crate) struct ExternProvider {
     _wasm_manifest: Option<Manifest>,
     #[serde(skip_serializing, skip_deserializing)]
     _deno_module_specifier: Option<deno_core::ModuleSpecifier>,
+}
+
+impl Debug for ExternProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternProvider")
+            .field("worspace", &self.worspace)
+            .field("source", &self.source)
+            .field("extern_type", &self.extern_type)
+            .field("logo", &self.logo)
+            .field("provider_id", &self.provider_id)
+            .field("platform", &self.platform)
+            .field("packages", &self.packages)
+            // .field("_components", &self._components)
+            .field("_wasm_manifest", &self._wasm_manifest)
+            .field("_deno_module_specifier", &self._deno_module_specifier)
+            .finish()
+    }
 }
 
 impl provider::Provider for ExternProvider {
@@ -105,7 +121,10 @@ impl provider::Provider for ExternProvider {
         self.load_components()?;
 
         if let Some(component) = self._components.get(&id) {
-            let runner = self.get_wasm_process(component)?;
+            let runner = match self.extern_type {
+                ExternProviderType::Wasi => self.get_wasm_process(component)?,
+                ExternProviderType::Deno => self.get_deno_process(component)?,
+            };
             return Ok((component, runner));
         }
 
@@ -148,31 +167,23 @@ impl ExternProvider {
         };
         let manifest = Manifest::new([wasm.clone()]);
 
-        let send_done_fn = Function::new(
-            "send_done",
-            [ValType::I64],
-            [],
-            UserData::new(()),
-            move |_plugin, _params, _, _userdata| Ok(()),
-        );
-        let send_fn = Function::new(
-            "send",
-            [ValType::I64],
-            [],
-            UserData::new(()),
-            move |_plugin, _params, _, _userdata| Ok(()),
-        );
+        let stub_func = |name: &str| -> Function {
+            Function::new(
+                name,
+                [ValType::I64],
+                [],
+                UserData::new(()),
+                move |_plugin, _params, _, _userdata| Ok(()),
+            )
+        };
 
-        let send_buffer_fn = Function::new(
-            "send_buffer",
-            [ValType::I64],
-            [],
-            UserData::new(()),
-            move |_plugin, _params, _, _userdata| Ok(()),
-        );
         let mut plugin = Plugin::new(
             WasmInput::Manifest(manifest.clone()),
-            [send_buffer_fn, send_done_fn, send_fn],
+            [
+                stub_func("send_done"),
+                stub_func("send"),
+                stub_func("send_buffer"),
+            ],
             true,
         )?;
 
@@ -369,6 +380,7 @@ mod test {
 
     use serde_json::json;
     use simple_logger::SimpleLogger;
+    use zflow_graph::Graph;
 
     use crate::{
         component::{Component, ComponentOptions},
@@ -379,8 +391,7 @@ mod test {
     };
     use log::{log, Level};
 
-    #[test]
-    fn test_wasm_provider() {
+    fn init() {
         SimpleLogger::default()
             .with_colors(true)
             .without_timestamps()
@@ -388,22 +399,28 @@ mod test {
             .with_module_level("zflow_runtime::extern_provider", log::LevelFilter::Debug)
             .init()
             .unwrap();
+    }
+
+    fn get_graph() -> Graph {
         let mut graph = zflow_graph::Graph::new("my_graph", false);
         graph
             .add_node("math/add", "add", None)
             .add_node("debug/logger", "logger", None)
             .add_initial(json!(48), "math/add", "a", None)
             .add_initial(json!(2), "math/add", "b", None)
-            .add_edge("math/add", "result", "debug/logger", "message", None);
+            .add_edge("math/add", "result", "debug/logger", "message", None)
+            .clone()
+    }
 
-        let logger = Component::new(ComponentOptions {
+    fn get_logger() -> Component {
+        Component::new(ComponentOptions {
             in_ports: HashMap::from_iter([("message".to_owned(), InPort::default())]),
             process: Some(Box::new(|handle| {
                 if let Ok(this) = handle.try_lock().as_mut() {
                     let input = this.input().get("message").unwrap();
                     match input.datatype {
                         crate::ip::IPType::Data(data) => {
-                            log!(Level::Debug, "[Output] -> {:?}", data.as_i64().unwrap());
+                            log!(Level::Debug, "[Output] -> {:?}", data);
                         }
                         _ => {}
                     }
@@ -415,23 +432,33 @@ mod test {
                 })
             })),
             ..Default::default()
-        });
+        })
+    }
 
+    fn get_network() -> Network {
         let mut dir = current_dir().unwrap();
         dir.push("test_components");
         let dir = dir.to_str().unwrap();
 
-        let mut n = Network::create(
-            graph.clone(),
+        Network::create(
+            get_graph(),
             NetworkOptions {
                 subscribe_graph: false,
                 delay: false,
                 workspace_dir: dir.to_owned(),
                 ..NetworkOptions::default()
             },
-        );
+        )
+    }
 
-        n.register_component("debug", "logger", logger).unwrap();
+    #[test]
+    fn test_wasm_provider() {
+        init();
+
+        let mut n = get_network();
+
+        n.register_component("debug", "logger", get_logger())
+            .unwrap();
 
         n.register_provider(
             ExternProvider::from_wasm(
@@ -442,6 +469,38 @@ mod test {
             )
             .unwrap(),
         );
+
+        let n = n.connect();
+        assert!(n.is_ok());
+        if let Ok(n) = n {
+            assert!(n.start().is_ok());
+            assert!(n.stop().is_ok());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_deno_provider() {
+        init();
+
+        let mut n = get_network();
+
+        n.register_component("debug", "logger", get_logger())
+            .unwrap();
+
+        let mut dir = current_dir().unwrap();
+        dir.push("test_providers");
+        let dir = dir.to_str().unwrap();
+
+        let provider = ExternProvider::from_deno(
+            dir,
+            ExternProviderSource::Local {
+                path: "maths_provider/math.ts".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+
+        n.register_provider(provider);
 
         let n = n.connect();
         assert!(n.is_ok());

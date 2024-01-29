@@ -39,6 +39,12 @@ deno_ast = {version="1.0.1", features = ["transpiling"], optional = true }
 v8 = { version = "0.83.1", default-features = false, optional = true }
 serde_v8 = {version = "0.164.0", optional = true}
 base64 = "0.21.7"
+reqwest = "0.11.23"
+is-url = "1.0.4"
+tokio = {version="1", features=["full"]}
+
+[patch.crates-io]
+hyper= {version="1.1.0", features=["full"]}
 
 [dev-dependencies]
 beady = "0.6.0"

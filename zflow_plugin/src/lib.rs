@@ -1,11 +1,11 @@
 pub extern crate extism_pdk as extension;
 
 
-use std::{collections::HashMap, fmt};
+use std::collections::HashMap;
 
 use extism_pdk::*;
-use json::{Map, json};
-use serde::{Deserialize, Serialize, de::{Visitor, self, MapAccess}};
+use json::Map;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]

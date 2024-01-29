@@ -217,12 +217,6 @@ unsafe impl Sync for Network {}
 
 impl Network {
     fn new(graph: Graph, options: NetworkOptions) -> Self {
-        // let loader = options.loader.clone();
-        // let loader = loader.unwrap_or(ComponentLoader::new(
-        //     base_dir,
-        //     ComponentLoaderOptions::default(),
-        // ));
-
         let workspace_dir = options.clone().workspace_dir;
 
         Self {

@@ -1,6 +1,7 @@
 use crate::process::{ProcessError, ProcessHandle, ProcessResult};
-use crate::runner::{DynRunFunc, UnsafeRunFunc, QUICKJS_RUNNER_ID};
+use crate::runner::{DynRunFunc, UnsafeRunFunc, QUICKJS_RUNNER_ID, WASM_RUNNER_ID};
 use crate::{port::PortOptions, runner::RunFunc};
+use extism::{Manifest, Wasm};
 use zflow_plugin::{ComponentSource, Package, Runtime, Platform};
 
 
@@ -295,10 +296,10 @@ impl Provider for BuiltInProvider {
             return Err(anyhow::Error::msg("Source is invalid"));
         }
 
-        #[cfg(feature = "plugin_host")]
+        #[cfg(feature = "host_only")]
         {
             if runtime.runner_id == WASM_RUNNER_ID.to_owned() {
-                let manifest = Manifest::new([if is_url(&source) {
+                let manifest = Manifest::new([if ::is_url::is_url(&source) {
                     Wasm::url(source)
                 } else {
                     Wasm::file(source)
