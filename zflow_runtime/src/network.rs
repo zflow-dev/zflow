@@ -1,14 +1,10 @@
 use std::{
-any,
-    borrow::{Borrow, BorrowMut},
     collections::{HashMap, VecDeque},
-    io::Read,
-    sync::{mpsc, Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{mpsc, Arc, Mutex, RwLock},
     time::Instant,
 };
 
 use array_tool::vec::Shift;
-use cast_trait_object::DynCastExt;
 use fp_rust::{handler::Handler, publisher::Publisher};
 use futures::executor::block_on;
 use log::Level;
@@ -172,7 +168,7 @@ pub trait BaseNetwork {
     fn get_debug(&self) -> bool;
     fn set_debug(&mut self, active: bool);
     fn get_graph(&self) -> Arc<Mutex<Graph>>;
-   
+
     fn buffered_emit(&mut self, event: NetworkEvent);
 
     fn get_workspace_dir(&self) -> String;
@@ -221,7 +217,7 @@ unsafe impl Sync for Network {}
 
 impl Network {
     fn new(graph: Graph, options: NetworkOptions) -> Self {
-// let loader = options.loader.clone();
+        // let loader = options.loader.clone();
         // let loader = loader.unwrap_or(ComponentLoader::new(
         //     base_dir,
         //     ComponentLoaderOptions::default(),
@@ -252,68 +248,68 @@ impl Network {
     }
 
     fn subscribe_subgraph(
-    network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
-    node: NetworkProcess,
+        network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
+        node: NetworkProcess,
     ) -> Result<(), String> {
-    if node.component.is_none() {
-    return Ok(());
-    }
+        if node.component.is_none() {
+            return Ok(());
+        }
         if let Ok(component) = node.clone().component.unwrap().clone().try_lock().as_mut() {
-    if !component.is_subgraph() {
-    return Ok(());
-    }
+            if !component.is_subgraph() {
+                return Ok(());
+            }
             if !component.is_ready() {
-    // component.on(move |event| match event.as_ref() {
-    //     ComponentEvent::Ready => {
-    //         Network::subscribe_subgraph(network, node.clone())
-    //             .expect("expected to subscribe to subgraph");
-    //     }
-    //     _ => {}
-    // });
-    // return Ok(());
-    return Network::subscribe_subgraph(network.clone(), node.clone());
-    }
+                // component.on(move |event| match event.as_ref() {
+                //     ComponentEvent::Ready => {
+                //         Network::subscribe_subgraph(network, node.clone())
+                //             .expect("expected to subscribe to subgraph");
+                //     }
+                //     _ => {}
+                // });
+                // return Ok(());
+                return Network::subscribe_subgraph(network.clone(), node.clone());
+            }
 
-    // if component.get_network().is_none() {
-    //     return Ok(());
-    // }
+            // if component.get_network().is_none() {
+            //     return Ok(());
+            // }
 
-    if let Ok(_this) = network.clone().try_lock().as_mut() {
-    // if let Ok(_network) = component.get_network().unwrap().clone().try_lock().as_mut() {
-    //     _network.set_debug(this.get_debug());
-    //     // Todo: async_delivery?
-    //     // Todo: enable flow_trace?
-    // }
-    }
+            if let Ok(_this) = network.clone().try_lock().as_mut() {
+                // if let Ok(_network) = component.get_network().unwrap().clone().try_lock().as_mut() {
+                //     _network.set_debug(this.get_debug());
+                //     // Todo: async_delivery?
+                //     // Todo: enable flow_trace?
+                // }
+            }
             if let Ok(this) = network.clone().try_lock().as_mut() {
-    if let Ok(bus) = this.get_publisher().try_lock().as_mut() {
-    bus.subscribe_fn(move |event| match event.as_ref() {
-    NetworkEvent::IP(data) => {
-    if let Some(data) = data.as_object() {
-    let mut _data = data.clone();
-    if _data.contains_key("subgraph") {
-    if let Some(__data) = _data.get_mut("subgraph") {
-    if let Some(_data) = __data.as_array_mut() {
-    if _data.is_empty() {
-    _data.unshift(json!(node.clone().id));
-    }
+                if let Ok(bus) = this.get_publisher().try_lock().as_mut() {
+                    bus.subscribe_fn(move |event| match event.as_ref() {
+                        NetworkEvent::IP(data) => {
+                            if let Some(data) = data.as_object() {
+                                let mut _data = data.clone();
+                                if _data.contains_key("subgraph") {
+                                    if let Some(__data) = _data.get_mut("subgraph") {
+                                        if let Some(_data) = __data.as_array_mut() {
+                                            if _data.is_empty() {
+                                                _data.unshift(json!(node.clone().id));
+                                            }
                                         } else {
-    _data.insert(
-    "subgraph".to_owned(),
-    json!([json!(node.clone().id)]),
-    );
+                                            _data.insert(
+                                                "subgraph".to_owned(),
+                                                json!([json!(node.clone().id)]),
+                                            );
                                         }
                                     }
                                 }
                                 if let Ok(this) = network.clone().try_lock().as_mut() {
-    this.buffered_emit(NetworkEvent::IP(json!(_data)));
-    }
+                                    this.buffered_emit(NetworkEvent::IP(json!(_data)));
+                                }
                             }
                         }
                         NetworkEvent::Error(err) => {
-    if let Ok(this) = network.clone().try_lock().as_mut() {
-    this.buffered_emit(NetworkEvent::Error(err.clone()));
-    }
+                            if let Ok(this) = network.clone().try_lock().as_mut() {
+                                this.buffered_emit(NetworkEvent::Error(err.clone()));
+                            }
                         }
                         _ => {}
                     });
@@ -636,7 +632,6 @@ impl Network {
         // Todo: configure socket to support async and debug
         let to = self.ensure_node(&edge.to.node_id, "inbound")?;
 
-    
         // Subscribe to events from the socket
         self.subscribe_socket(socket.clone(), Some(from.clone()))?;
         connect_port(socket.clone(), to, &edge.to.port, edge.to.index, true)?;
@@ -729,10 +724,7 @@ impl Network {
         Err("Could not add initial packet".to_string())
     }
 
-    pub fn add_defaults(
-        &mut self,
-        node: GraphNode,
-    ) -> Result<(), String> {
+    pub fn add_defaults(&mut self, node: GraphNode) -> Result<(), String> {
         let process = self.ensure_node(&node.id, "inbound")?;
 
         if let Some(component) = process.clone().component {

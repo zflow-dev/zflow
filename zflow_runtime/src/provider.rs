@@ -5,7 +5,7 @@ use zflow_plugin::{ComponentSource, Package, Runtime, Platform};
 
 
 use jwalk::WalkDir;
-
+#[cfg(feature = "host_only")]
 use libloading::{Library, Symbol};
 use log::log;
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
@@ -355,6 +355,7 @@ impl BuiltInProvider {
         let mut dynamic_runners: HashMap<String, DynProviderRunner> = HashMap::new();
 
         if let Some(path) = option_env!("ZFLOW_QUICKJS_RUNNER_LIB") {
+            #[cfg(feature = "host_only")]
             unsafe {
                 let lib = Library::new(path).unwrap();
                 dynamic_runners.insert(

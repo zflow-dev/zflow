@@ -18,7 +18,7 @@ pub mod network_manager;
 pub mod provider;
 pub mod runner;
 
-
+#[cfg(feature = "host_only")]
 pub mod extern_provider;
 
 
@@ -27,7 +27,9 @@ pub mod extern_provider;
 // #[cfg(feature = "lua_runtime")]
 // pub mod lua;
 
+#[cfg(feature = "host_only")]
 pub mod wasm;
+#[cfg(feature = "host_only")]
 pub mod deno;
 // #[cfg(feature = "wren_runtime")]
 // pub mod wren;
