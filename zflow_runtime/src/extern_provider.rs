@@ -376,7 +376,7 @@ impl ExternProvider {
 }
 
 mod test {
-    use std::{collections::HashMap, env::current_dir};
+    use std::{collections::HashMap, env::current_dir, sync::Once};
 
     use serde_json::json;
     use simple_logger::SimpleLogger;
@@ -391,14 +391,18 @@ mod test {
     };
     use log::{log, Level};
 
+    static INIT: Once = Once::new();
+
     fn init() {
-        SimpleLogger::default()
+        INIT.call_once(||{
+            SimpleLogger::default()
             .with_colors(true)
             .without_timestamps()
             .with_level(log::LevelFilter::Off)
             .with_module_level("zflow_runtime::extern_provider", log::LevelFilter::Debug)
             .init()
             .unwrap();
+        });
     }
 
     fn get_graph() -> Graph {
