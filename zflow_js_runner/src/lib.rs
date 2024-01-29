@@ -38,7 +38,7 @@ pub fn create_quickjs_runner(
 
     return Ok(Box::new(move |handle| unsafe {
         let src = source.as_bytes();
-        let res = std::ptr::from_mut(&mut Result::Ok(ProcessResult::default()));
+        let res = &mut Result::Ok(ProcessResult::default()) as *mut Result<ProcessResult, ProcessError>;
         let res = run(&src[0], src.len(), &handle.clone(), res);
         res.read()
     }));
