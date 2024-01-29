@@ -1,6 +1,7 @@
 use crate::process::{ProcessError, ProcessHandle, ProcessResult};
 use crate::runner::{DynRunFunc, UnsafeRunFunc, QUICKJS_RUNNER_ID, WASM_RUNNER_ID};
 use crate::{port::PortOptions, runner::RunFunc};
+#[cfg(feature = "host_only")]
 use extism::{Manifest, Wasm};
 use zflow_plugin::{ComponentSource, Package, Runtime, Platform};
 
