@@ -367,8 +367,7 @@ impl BuiltInProvider {
                                 let runner: Symbol<UnsafeRunFunc> = lib.get(b"run").unwrap();
                                 let source = src.as_bytes();
 
-                                let res =
-                                    std::ptr::from_mut(&mut Result::Ok(ProcessResult::default()));
+                                let res = &mut Result::Ok(ProcessResult::default()) as *mut Result<ProcessResult, ProcessError>;                                   
                                 (runner)(
                                     &source[0],
                                     source.len(),
