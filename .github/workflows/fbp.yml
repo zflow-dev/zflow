@@ -17,4 +17,4 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Run .fbp specification tests
-      run: cd fbp && cargo test --verbose
+      run: cd crates/fbp && cargo test --verbose

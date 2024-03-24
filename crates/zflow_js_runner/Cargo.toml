@@ -13,10 +13,10 @@ bench = false
 path = "src/lib.rs"
 
 [dependencies]
-serde_json.workspace = true
-serde.workspace = true
+serde_json={workspace = true}
+serde={workspace = true}
 rquickjs = {version = "0.1.7", features = ["full"]}
 zflow_runtime = {version="0.1.0", path = "../zflow_runtime", default-features = false}
-anyhow.workspace = true
-
+anyhow={workspace = true}
+libloading = {version = "0.8.1"}
 

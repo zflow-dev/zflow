@@ -69,7 +69,6 @@ export const getPackages = () => [
 
 export const runComponent = async (context: Context, payload: any) => {
     const componentName = payload.component.name;
-    await fetch('http://github.com');
     switch (componentName) {
         case "math/add": {
             await add(context, payload.input as Input);

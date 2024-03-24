@@ -17,4 +17,4 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Run graph tests
-      run: cd zflow_graph && cargo test --verbose
+      run: cd crates/zflow_graph && cargo test --verbose

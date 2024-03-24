@@ -1,10 +1,6 @@
 
 pub mod transpiler;
-// pub mod runtime;
 pub mod snapshot;
-
-
-
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -59,7 +55,14 @@ pub fn create_deno_runtime(module:ModuleSpecifier) -> Result<JsRuntime, AnyError
         || SqliteBackedCache::new(TempDir::new("zflow_deno").unwrap().into_path());
     let cache = CreateCache(Arc::new(create_cache_fn));
 
-    let bootstrap: BootstrapOptions = Default::default();
+    let bootstrap: BootstrapOptions = BootstrapOptions{
+        user_agent: "Deno/1.41.3".to_string(),
+        future: true,
+        location: Some(module.clone()),
+        unstable: false,
+        unstable_features: vec![],
+        ..Default::default()
+    };
 
     let stdio = deno_runtime::deno_io::Stdio::default();
 
@@ -130,8 +133,8 @@ pub fn create_deno_runtime(module:ModuleSpecifier) -> Result<JsRuntime, AnyError
         ops::signal::deno_signal::init_ops(),
         ops::tty::deno_tty::init_ops(),
         ops::http::deno_http_runtime::init_ops(),
-        ops::bootstrap::deno_bootstrap::init_ops(Some(Default::default())),
-        deno_permissions_worker::init_ops(PermissionsContainer::allow_all(), true),
+        ops::bootstrap::deno_bootstrap::init_ops(None),
+        deno_permissions_worker::init_ops(PermissionsContainer::allow_all(),false),
         deno_runtime::runtime::init_ops(),
         deno_runtime::ops::runtime::deno_runtime::init_ops(module),
         ops::web_worker::deno_web_worker::init_ops(),
@@ -143,7 +146,7 @@ pub fn create_deno_runtime(module:ModuleSpecifier) -> Result<JsRuntime, AnyError
         extension_transpiler: Some(Rc::new(|specifier, source| {
             maybe_transpile_source(specifier, source)
           })),
-        is_main: false,
+        is_main: true,
         startup_snapshot: Some(deno::snapshot::DENO_SNAPSHOT),
         ..Default::default()
     });

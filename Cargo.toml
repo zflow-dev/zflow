@@ -6,7 +6,7 @@ members = [
     # "zflow_editor",
     "./crates/zflow_runtime",
     "./crates/zflow_plugin",
-    # "./crates/zflow_js_runner",
+    "./crates/zflow_js_runner",
     "./crates/test_components/add_wasm",
     "./crates/test_providers/maths_provider",
 ]
