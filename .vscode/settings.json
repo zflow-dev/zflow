@@ -1,7 +1,8 @@
 {
     "rust-analyzer.linkedProjects": [
-        "./zflow_graph/Cargo.toml",
+        "./crates/zflow_graph/Cargo.toml",
+        "./crates/fbp/Cargo.toml",
         "./Cargo.toml",
-        "./zflow_runtime/Cargo.toml"
+        "./crates/zflow_runtime/Cargo.toml",
     ]
 }

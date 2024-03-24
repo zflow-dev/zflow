@@ -1,0 +1,15 @@
+[package]
+name = "fbp"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+regex-lexer= {workspace = true} 
+regex= {workspace = true} 
+serde_json= {workspace = true} 
+serde= {workspace = true} 
+
+[lib]
+path = "lib.rs"

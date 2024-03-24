@@ -1,0 +1,22 @@
+[package]
+name = "zflow_js_runner"
+version = "0.1.0"
+edition = "2021"
+authors = ["Damilare Akinlaja <dreakinlaja@gmail.com>"]
+license = "MIT"
+description = "ZFlow Runner for Javascript node components"
+keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming", "runner", "javascript"]
+
+[lib]
+crate-type = ["cdylib"]
+bench = false
+path = "src/lib.rs"
+
+[dependencies]
+serde_json.workspace = true
+serde.workspace = true
+rquickjs = {version = "0.1.7", features = ["full"]}
+zflow_runtime = {version="0.1.0", path = "../zflow_runtime", default-features = false}
+anyhow.workspace = true
+
+
