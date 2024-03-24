@@ -16,7 +16,7 @@ jobs:
 
     steps:
     - name: Setup protoc
-    - uses: arduino/setup-protoc@v3
+      uses: arduino/setup-protoc@v3
     - name: Setup actions
       uses: actions/checkout@v3
     - name: Build quickjs runner
