@@ -1,4 +1,4 @@
-![Build](https://github.com/darmie/zflow/actions/workflows/build.yml/badge.svg)
+<!-- ![Build](https://github.com/darmie/zflow/actions/workflows/build.yml/badge.svg) -->
 ![zflow_graph](https://github.com/darmie/zflow/actions/workflows/graph.yml/badge.svg) 
 ![zflow_untime](https://github.com/darmie/zflow/actions/workflows/runtime.yml/badge.svg)
 ![FBP Spec](https://github.com/darmie/zflow/actions/workflows/fbp.yml/badge.svg)
