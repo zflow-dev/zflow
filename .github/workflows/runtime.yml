@@ -17,6 +17,7 @@ jobs:
     steps:
     - name: Install Protoc
     - uses: arduino/setup-protoc@v3
+    - name: Setup actions
     - uses: actions/checkout@v3
     - name: Build quickjs runner
       run:  cd crates/zflow_js_runner && cargo build  --release && cp ./bin/release/libzflow_js_runner.so ./bin/libzflow_js_runner.so
