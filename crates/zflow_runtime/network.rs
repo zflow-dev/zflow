@@ -1,4 +1,3 @@
-
 use std::{
     collections::{HashMap, VecDeque},
     sync::{mpsc, Arc, Mutex, RwLock},
@@ -650,7 +649,7 @@ impl Network {
                 op,
             );
         }
-  
+
         Ok(socket.clone())
     }
     /// Add initial packets
@@ -1416,8 +1415,8 @@ impl BaseNetwork for Network {
         self.event_buffer.clear();
 
         // start providers
-        self.providers.par_iter_mut().for_each(|prov|{
-          prov.start().unwrap();
+        self.providers.par_iter_mut().for_each(|prov| {
+            prov.start().unwrap();
         });
 
         self.start_components()?;
@@ -1503,6 +1502,20 @@ impl BaseNetwork for Network {
             self._manager = manager.update(self._manager);
         }
 
+        // Stop remote providers
+        // Todo: wait for remote processes to finish?
+        let _processes = self.processes.clone();
+        
+        loop {
+            let has_load = _processes.iter().all(|(_, p)| p.component.clone().unwrap().lock().unwrap().get_load() > 0);
+            if !has_load {
+                self.providers.par_iter_mut().for_each(|provider| {
+                    let _ = provider.stop();
+                });
+                break;
+            }
+        }
+        
         Ok(())
     }
 
