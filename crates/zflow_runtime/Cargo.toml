@@ -16,7 +16,12 @@ default = ["host_only"]
 host_only = [
     "dep:libloading", 
     "deno_embed",
-    "wasm_native_runtime"
+    "wasm_native_runtime",
+    "jsonrpc"
+]
+
+jsonrpc = [
+    "dep:rust_socketio"
 ]
 
 wasm_native_runtime = [
@@ -51,7 +56,7 @@ deno_embed = [
     "dep:deno_websocket",
     "dep:deno_webstorage",
     "dep:deno_net",
-     "dep:deno_node"
+    "dep:deno_node"
 ]
 
 [dependencies]
@@ -83,6 +88,8 @@ is-url= {workspace = true}
 tokio= {workspace = true}
 chrono= {workspace = true}
 tempdir= {workspace = true}
+
+rust_socketio = { version = "*", optional=true}
 
 deno_ast = { version = "0.34.1", features = ["transpiling"], optional=true }
 deno_core = { version = "0.270.0", features = ["lazy_eval_snapshot"], optional=true }

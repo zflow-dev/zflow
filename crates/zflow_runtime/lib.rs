@@ -31,6 +31,8 @@ pub mod extern_provider;
 pub mod wasm;
 #[cfg(feature = "host_only")]
 pub mod deno;
+#[cfg(feature = "host_only")]
+pub mod websocket;
 // #[cfg(feature = "wren_runtime")]
 // pub mod wren;
 // #[cfg(feature = "go_runtime")]

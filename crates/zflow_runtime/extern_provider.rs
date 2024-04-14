@@ -139,8 +139,7 @@ impl provider::Provider for ExternProvider {
     ) -> Result<provider::ProviderRunner, anyhow::Error> {
         return match self.extern_type {
             ExternProviderType::Wasi => self.get_wasm_process(component),
-            // ExternProviderType::Deno => self.get_deno_process(component),
-            _ => Err(anyhow::Error::msg("")),
+            ExternProviderType::Deno => self.get_deno_process(component),
         };
     }
 }

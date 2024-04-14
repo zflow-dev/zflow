@@ -264,12 +264,14 @@ extern "C" fn v8_callback(info: *const v8::FunctionCallbackInfo) {
     let info = unsafe { &*info };
     let args = v8::FunctionCallbackArguments::from_function_callback_info(info);
     let rv = v8::ReturnValue::from_function_callback_info(info);
-    let scope = unsafe { &mut v8::CallbackScope::new(info) };
+    
+    let scope= unsafe { &mut v8::CallbackScope::new(info) };
+   
     v8_func(scope, args, rv);
 }
 
 fn v8_func(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::CallbackScope,
     fca: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {

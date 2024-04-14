@@ -63,6 +63,11 @@ pub(crate) struct DynProviderRunner {
     pub platforms: Vec<Platform>,
 }
 
+pub enum ProviderStatus {
+    STARTED,
+    STOPPED
+}
+
 pub trait Provider: Send + Sync {
     /// Base directory of the project workspace
     fn set_workspace(&mut self, dir: String);
@@ -86,6 +91,21 @@ pub trait Provider: Send + Sync {
         &self,
         component: &Box<dyn ProviderComponent>,
     ) -> Result<ProviderRunner, anyhow::Error>;
+
+    // Start a provider worker
+    fn start(&mut self)-> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    // Stop a provider worker
+    fn stop(&mut self)-> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    fn status(&self) -> ProviderStatus {
+        ProviderStatus::STARTED
+    }
+
 }
 
 impl ProviderComponent for ComponentSource {

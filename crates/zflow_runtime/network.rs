@@ -1,3 +1,4 @@
+
 use std::{
     collections::{HashMap, VecDeque},
     sync::{mpsc, Arc, Mutex, RwLock},
@@ -464,9 +465,7 @@ impl Network {
 
         // Let network sync with the components' events
         let (cmp_tx, cmp_rx) = mpsc::sync_channel(2);
-        // let network = Arc::new(Mutex::new(self.clone()));
         let component_events = self.component_events.clone();
-        // let _network = network.clone();
         let publisher = self.publisher.clone();
         let manager = self.manager.clone();
 
@@ -547,7 +546,6 @@ impl Network {
         // Let network sync with the sockets' events
         let (sck_tx, sck_rx) = mpsc::sync_channel(2);
         let socket_events = self.socket_events.clone();
-        // let _network = network.clone();
         let _publisher = self.publisher.clone();
         pool.spawn(move || 'outter: loop {
             let binding = socket_events.clone();
@@ -637,7 +635,6 @@ impl Network {
             false,
         )?;
 
-        // if let Ok(this) = network.clone().try_lock().as_mut() {
         self.get_connections_mut().push(socket.clone());
         if let Ok(graph) = self.get_graph().clone().try_lock().as_mut() {
             let op = if let Some(op) = options {
@@ -653,12 +650,11 @@ impl Network {
                 op,
             );
         }
-        // }
+  
         Ok(socket.clone())
     }
     /// Add initial packets
     pub fn add_initial(
-        // network: Arc<Mutex<impl BaseNetwork + Send + Sync + 'static + ?Sized>>,
         &mut self,
         initializer: GraphIIP,
         options: Option<HashMap<String, Value>>,
@@ -1418,6 +1414,12 @@ impl BaseNetwork for Network {
 
         self.initials = self.next_initials.clone();
         self.event_buffer.clear();
+
+        // start providers
+        self.providers.par_iter_mut().for_each(|prov|{
+          prov.start().unwrap();
+        });
+
         self.start_components()?;
         self.send_initials()?;
         self.send_defaults()?;
