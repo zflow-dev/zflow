@@ -130,7 +130,7 @@ pub trait BaseNetwork {
         metadata: Value,
     ) -> Result<Arc<Mutex<Component>>, anyhow::Error>;
 
-    // fn add_defaults(&mut self, node: GraphNode) -> Result<(), String>;
+    // fn add_defaults(&mut self, node: GraphNode) -> Result<(), anyhow::Error>;
 
     /// ## Add a process to the network
     ///
@@ -146,29 +146,29 @@ pub trait BaseNetwork {
         _: Option<HashMap<String, Value>>,
     ) -> Result<NetworkProcess, anyhow::Error>;
     /// Remove node from network
-    fn remove_node(&mut self, node: GraphNode) -> Result<(), String>;
+    fn remove_node(&mut self, node: GraphNode) -> Result<(), anyhow::Error>;
     /// Rename a node in the  network
-    fn rename_node(&mut self, old_id: &str, new_id: &str) -> Result<(), String>;
+    fn rename_node(&mut self, old_id: &str, new_id: &str) -> Result<(), anyhow::Error>;
 
     /// Get process by its ID.
     fn get_node(&self, id: &str) -> Option<NetworkProcess>;
 
-    fn ensure_node(&self, node: &str, direction: &str) -> Result<NetworkProcess, String>;
+    fn ensure_node(&self, node: &str, direction: &str) -> Result<NetworkProcess, anyhow::Error>;
 
-    // fn connect(&mut self) -> Result<(), String>;
+    // fn connect(&mut self) -> Result<(), anyhow::Error>;
 
     /// Remove edge
-    fn remove_edge(&mut self, node: GraphEdge) -> Result<(), String>;
+    fn remove_edge(&mut self, node: GraphEdge) -> Result<(), anyhow::Error>;
     /// Remove initial packets
-    fn remove_initial(&mut self, initializer: GraphIIP) -> Result<(), String>;
-    fn send_initials(&mut self) -> Result<(), String>;
+    fn remove_initial(&mut self, initializer: GraphIIP) -> Result<(), anyhow::Error>;
+    fn send_initials(&mut self) -> Result<(), anyhow::Error>;
 
-    fn send_defaults(&mut self) -> Result<(), String>;
+    fn send_defaults(&mut self) -> Result<(), anyhow::Error>;
 
     /// Start the network
-    fn start(&mut self) -> Result<(), String>;
+    fn start(&mut self) -> Result<(), anyhow::Error>;
     /// Stop the network
-    fn stop(&mut self) -> Result<(), String>;
+    fn stop(&mut self) -> Result<(), anyhow::Error>;
 
     fn get_debug(&self) -> bool;
     fn set_debug(&mut self, active: bool);
@@ -253,7 +253,7 @@ impl Network {
     fn subscribe_subgraph(
         network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
         node: NetworkProcess,
-    ) -> Result<(), String> {
+    ) -> Result<(), anyhow::Error> {
         if node.component.is_none() {
             return Ok(());
         }
@@ -348,7 +348,7 @@ impl Network {
         // network: Arc<Mutex<impl BaseNetwork + Send + Sync + 'static + ?Sized>>,
         socket: Arc<Mutex<InternalSocket>>,
         _: Option<NetworkProcess>,
-    ) -> Result<(), String> {
+    ) -> Result<(), anyhow::Error> {
         if let Ok(_socket) = socket.clone().try_lock().as_mut() {
             let id = _socket.get_id();
             let metadata = _socket.metadata.clone();
@@ -380,7 +380,7 @@ impl Network {
         Ok(())
     }
 
-    pub fn start_components(&mut self) -> Result<(), String> {
+    pub fn start_components(&mut self) -> Result<(), anyhow::Error> {
         if self.processes.is_empty() {
             return Ok(());
         }
@@ -628,7 +628,7 @@ impl Network {
         &mut self,
         edge: GraphEdge,
         options: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<InternalSocket>>, String> {
+    ) -> Result<Arc<Mutex<InternalSocket>>, anyhow::Error> {
         let socket = InternalSocket::create(edge.clone().metadata);
 
         let from = self.ensure_node(&edge.from.node_id, "outbound")?;
@@ -670,7 +670,7 @@ impl Network {
         &mut self,
         initializer: GraphIIP,
         options: Option<HashMap<String, Value>>,
-    ) -> Result<Arc<Mutex<InternalSocket>>, String> {
+    ) -> Result<Arc<Mutex<InternalSocket>>, anyhow::Error> {
         if let Some(leaf) = initializer.clone().to {
             let to = self.ensure_node(&leaf.node_id, "inbound")?;
 
@@ -723,10 +723,10 @@ impl Network {
             }
             return Ok(socket.clone());
         }
-        Err("Could not add initial packet".to_string())
+        Err(anyhow::Error::msg("Could not add initial packet".to_string()))
     }
 
-    pub fn add_defaults(&mut self, node: GraphNode) -> Result<(), String> {
+    pub fn add_defaults(&mut self, node: GraphNode) -> Result<(), anyhow::Error> {
         let process = self.ensure_node(&node.id, "inbound")?;
 
         if let Some(component) = process.clone().component {
@@ -878,7 +878,7 @@ impl Network {
             Box::new(move |handle| {
                 if let Ok(this) = handle.clone().try_lock().as_mut() {
                     let network = graph_network.connect().map_err(|err| ProcessError(err))?;
-                    network.start().map_err(|err| ProcessError(err))?;
+                    network.start().map_err(|err| ProcessError(err.to_string()))?;
                     loop {
                         if let Ok(manager) = graph_network_manager.clone().try_lock() {
                             if manager.weight == 0 || (*manager).is_stopped() {
@@ -1131,7 +1131,7 @@ impl BaseNetwork for Network {
         Ok(process)
     }
 
-    fn remove_node(&mut self, node: GraphNode) -> Result<(), String> {
+    fn remove_node(&mut self, node: GraphNode) -> Result<(), anyhow::Error> {
         if let Some(process) = self.get_node(&node.id) {
             if process.component.is_none() {
                 self.processes.remove(&node.id);
@@ -1151,10 +1151,10 @@ impl BaseNetwork for Network {
             return Ok(());
         }
 
-        Err(format!("Process {} not found", node.id))
+        Err(anyhow::Error::msg(format!("Process {} not found", node.id)))
     }
 
-    fn rename_node(&mut self, old_id: &str, new_id: &str) -> Result<(), String> {
+    fn rename_node(&mut self, old_id: &str, new_id: &str) -> Result<(), anyhow::Error> {
         if let Some(mut process) = self.get_node(old_id) {
             // Inform the process of its ID
             process.id = new_id.to_owned();
@@ -1191,20 +1191,20 @@ impl BaseNetwork for Network {
                 return Ok(());
             }
         }
-        Err(format!("Process {} not found", old_id))
+        Err(anyhow::Error::msg(format!("Process {} not found", old_id)))
     }
 
     fn get_node(&self, id: &str) -> Option<NetworkProcess> {
         self.processes.get(id).cloned()
     }
 
-    fn ensure_node(&self, node: &str, direction: &str) -> Result<NetworkProcess, String> {
+    fn ensure_node(&self, node: &str, direction: &str) -> Result<NetworkProcess, anyhow::Error> {
         if let Some(process) = self.get_node(node) {
             if process.component.is_none() {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "No component defined for {} node {}",
                     direction, node
-                ));
+                )));
             }
             if let Ok(component) = process
                 .component
@@ -1231,13 +1231,13 @@ impl BaseNetwork for Network {
             return Ok(process);
         }
 
-        Err(format!(
+        Err(anyhow::Error::msg(format!(
             "No process defined for {} node {}",
             direction, node
-        ))
+        )))
     }
 
-    fn remove_edge(&mut self, edge: GraphEdge) -> Result<(), String> {
+    fn remove_edge(&mut self, edge: GraphEdge) -> Result<(), anyhow::Error> {
         self.connections
             .clone()
             .iter()
@@ -1343,7 +1343,7 @@ impl BaseNetwork for Network {
         Ok(())
     }
 
-    fn remove_initial(&mut self, initializer: GraphIIP) -> Result<(), String> {
+    fn remove_initial(&mut self, initializer: GraphIIP) -> Result<(), anyhow::Error> {
         self.connections.clone().iter_mut().for_each(|_connection| {
             if let Ok(connection) = _connection.clone().try_lock().as_mut() {
                 if initializer
@@ -1425,7 +1425,7 @@ impl BaseNetwork for Network {
         Ok(())
     }
 
-    fn send_initials(&mut self) -> Result<(), String> {
+    fn send_initials(&mut self) -> Result<(), anyhow::Error> {
         self.initials = self
             .initials
             .clone()
@@ -1457,7 +1457,7 @@ impl BaseNetwork for Network {
         Ok(())
     }
 
-    fn send_defaults(&mut self) -> Result<(), String> {
+    fn send_defaults(&mut self) -> Result<(), anyhow::Error> {
         let _: Vec<()> = self
             .defaults
             .par_iter()
@@ -1495,7 +1495,7 @@ impl BaseNetwork for Network {
         Ok(())
     }
 
-    fn start(&mut self) -> Result<(), String> {
+    fn start(&mut self) -> Result<(), anyhow::Error> {
         let _manager = self.manager.clone();
         let m = _manager.lock();
         let mut manager = m.unwrap();
@@ -1529,7 +1529,7 @@ impl BaseNetwork for Network {
         Ok(())
     }
 
-    fn stop(&mut self) -> Result<(), String> {
+    fn stop(&mut self) -> Result<(), anyhow::Error> {
         if (self._manager).debounce_end {
             self._manager.abort_debounce = true;
         }
@@ -1824,7 +1824,7 @@ fn connect_port(
     port: &str,
     index: Option<usize>,
     inbound: bool,
-) -> Result<Arc<Mutex<InternalSocket>>, String> {
+) -> Result<Arc<Mutex<InternalSocket>>, anyhow::Error> {
     if inbound {
         let socket_id = if let Ok(socket) = _socket.clone().try_lock().as_mut() {
             socket.to = Some(SocketConnection {
@@ -1834,12 +1834,12 @@ fn connect_port(
             });
 
             if process.component.is_none() {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "No inport '{}' defined in process {} ({})",
                     port,
                     process.id,
                     socket.get_id()
-                ));
+                )));
             }
             Some(socket.get_id())
         } else {
@@ -1850,19 +1850,19 @@ fn connect_port(
             if component.get_inports().ports.is_empty()
                 || !component.get_inports().ports.contains_key(port)
             {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "No inport '{}' defined in process {} ({:?})",
                     port,
                     process.id,
                     socket_id.clone()
-                ));
+                )));
             }
 
             if (&component.get_inports().ports[port]).is_addressable() && index.is_none() {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "No inport '{}' defined in process {} ({:?})",
                     port, process.id, socket_id
-                ));
+                )));
             }
 
             component
@@ -1884,32 +1884,32 @@ fn connect_port(
         });
 
         if process.component.is_none() {
-            return Err(format!(
+            return Err(anyhow::Error::msg(format!(
                 "No outport '{}' defined in process {} ({})",
                 port,
                 process.id,
                 socket.get_id()
-            ));
+            )));
         }
         if let Ok(component) = process.component.clone().unwrap().try_lock().as_mut() {
             if component.get_outports().ports.is_empty()
                 || !component.get_outports().ports.contains_key(port)
             {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "No ioutport '{}' defined in process {} ({})",
                     port,
                     process.id,
                     socket.get_id()
-                ));
+                )));
             }
 
             if (&component.get_outports().ports[port]).is_addressable() && index.is_none() {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "No outport '{}' defined in process {} ({})",
                     port,
                     process.id,
                     socket.get_id()
-                ));
+                )));
             }
             component
                 .get_outports_mut()

@@ -121,9 +121,9 @@ pub struct Component {
     pub(crate) internal_thread: Arc<Mutex<HandlerThread>>,
     pub auto_ordering: Option<bool>,
     setup_fn:
-        Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static>>>,
+        Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), anyhow::Error> + Send + Sync + 'static>>>,
     teardown_fn:
-        Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static>>>,
+        Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), anyhow::Error> + Send + Sync + 'static>>>,
     tracked_signals: Vec<Arc<SubscriptionFunc<ComponentEvent>>>,
     pub(crate) graph: Option<Box<dyn GraphDefinition>>,
     pub(crate) ready: bool,
@@ -360,7 +360,7 @@ impl Component {
     ///
     /// Called when network starts. This calls the setUp
     /// method and sets the component to a started state.
-    pub fn start(&mut self) -> Result<(), String> {
+    pub fn start(&mut self) -> Result<(), anyhow::Error> {
         if self.is_started() {
             return Ok(());
         }
@@ -384,7 +384,7 @@ impl Component {
     /// Called when network is shut down. This calls the
     /// teardown function and sets the component back to a
     /// non-started state.
-    pub fn shutdown(&mut self) -> Result<(), String> {
+    pub fn shutdown(&mut self) -> Result<(), anyhow::Error> {
         // Tell the component that it is time to shut down
         if let Some(teardown_fn) = self.get_teardown_function() {
             if let Ok(teardown_fn) = teardown_fn.try_lock().as_mut() {
@@ -705,7 +705,7 @@ impl Component {
     /// Called at network start-up.
     pub fn setup(
         &mut self,
-        setup_fn: impl FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static,
+        setup_fn: impl FnMut(*mut Self) -> Result<(), anyhow::Error> + Send + Sync + 'static,
     ) {
         self.setup_fn = Some(Arc::new(Mutex::new(setup_fn)));
     }
@@ -715,7 +715,7 @@ impl Component {
     /// Called at network shutdown.
     pub fn teardown(
         &mut self,
-        teardown_fn: impl FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static,
+        teardown_fn: impl FnMut(*mut Self) -> Result<(), anyhow::Error> + Send + Sync + 'static,
     ) {
         self.teardown_fn = Some(Arc::new(Mutex::new(teardown_fn)));
     }
@@ -1624,14 +1624,14 @@ impl Component {
 
     pub fn get_teardown_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static>>>
+    ) -> Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), anyhow::Error> + Send + Sync + 'static>>>
     {
         self.teardown_fn.clone()
     }
 
     pub fn get_setup_function(
         &self,
-    ) -> Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), String> + Send + Sync + 'static>>>
+    ) -> Option<Arc<Mutex<dyn FnMut(*mut Self) -> Result<(), anyhow::Error> + Send + Sync + 'static>>>
     {
         self.setup_fn.clone()
     }
@@ -1935,7 +1935,7 @@ impl Component {
         return true;
     }
 
-    pub(crate) fn graph_set_up(&mut self) -> Result<(), String> {
+    pub(crate) fn graph_set_up(&mut self) -> Result<(), anyhow::Error> {
         self.starting = true;
 
         if !self.is_ready() {
@@ -1966,7 +1966,7 @@ impl Component {
         Ok(())
     }
 
-    pub fn graph_tear_down(&mut self) -> Result<(), String> {
+    pub fn graph_tear_down(&mut self) -> Result<(), anyhow::Error> {
         if self.network.is_none() {
             return Ok(());
         }
