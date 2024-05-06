@@ -973,7 +973,6 @@ impl BaseNetwork for Network {
         if self.get_processes().contains_key(&node.id) {
             return Ok(self.get_processes().get(&node.id.clone()).unwrap().clone());
         }
-        // }
         let mut process = NetworkProcess {
             id: node.id.clone(),
             ..NetworkProcess::default()
@@ -1713,6 +1712,8 @@ impl BaseNetwork for Network {
         Ok(())
     }
 }
+
+
 
 fn connect_port(
     _socket: Arc<Mutex<InternalSocket>>,
