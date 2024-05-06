@@ -1,29 +1,34 @@
 use std::{
+    any::Any,
     collections::{HashMap, VecDeque},
     sync::{mpsc, Arc, Mutex, RwLock},
     time::Instant,
 };
 
-use array_tool::vec::Shift;
-use fp_rust::{handler::Handler, publisher::Publisher};
-use futures::executor::block_on;
-use log::Level;
-use rayon::prelude::*;
-use serde::Deserialize;
-use serde_json::{json, Value};
-use zflow_graph::types::{GraphEdge, GraphIIP, GraphNode};
-use zflow_graph::Graph;
-
 use crate::{
     component::{Component, ComponentEvent, ComponentOptions},
     ip::{IPOptions, IPType, IP},
     network_manager::NetworkManager,
-    port::{BasePort, InPort, OutPort},
-    process::{ProcessError, ProcessResult},
-    provider::{build_node_id, BuiltInProvider, Provider},
-    runner::RunFunc,
+    port::{BasePort, InPort, OutPort, PortOptions},
+    process::{ProcessError, ProcessHandle, ProcessResult},
+    provider::{build_node_id, BuiltInProvider, DynProviderRunner, Provider},
+    runner::{DynRunFunc, RunFunc},
     sockets::{InternalSocket, SocketConnection, SocketEvent},
 };
+use array_tool::vec::Shift;
+use fp_rust::{handler::Handler, publisher::Publisher};
+use futures::executor::block_on;
+use log::log;
+use log::Level;
+use rayon::prelude::*;
+use serde::Deserialize;
+use serde_json::{json, Map, Value};
+use zflow_graph::Graph;
+use zflow_graph::{
+    internal::utils::guid,
+    types::{GraphEdge, GraphIIP, GraphNode},
+};
+use zflow_plugin::Platform;
 
 #[derive(Default, Clone, Debug)]
 pub struct NetworkProcess {
@@ -202,6 +207,8 @@ pub struct Network {
     pub event_buffer: Vec<NetworkEvent>,
     // pub loader: ComponentLoader,
     pub(crate) providers: Vec<Box<dyn Provider>>,
+    pub(crate) script_runners: HashMap<String, DynProviderRunner>,
+    pub(crate) scripts: HashMap<String, Box<[u8]>>,
     pub(crate) manager: Arc<Mutex<NetworkManager>>,
     _manager: NetworkManager,
     pub publisher: Arc<Mutex<Publisher<NetworkEvent>>>,
@@ -233,7 +240,9 @@ impl Network {
             startup_time: None,
             component_events: Arc::new(Mutex::new(VecDeque::new())),
             socket_events: Arc::new(Mutex::new(VecDeque::new())),
-            providers: vec![Box::new(BuiltInProvider::new().unwrap())],
+            providers: vec![],
+            script_runners: HashMap::new(),
+            scripts: HashMap::new(),
             manager: Arc::new(Mutex::new(NetworkManager::new())),
             _manager: NetworkManager::new(),
             workspace_dir,
@@ -381,12 +390,12 @@ impl Network {
             .par_iter_mut()
             .for_each(|(_, process)| {
                 if let Some(component) = process.component.clone() {
-                    component
-                        .try_lock()
-                        .unwrap()
-                        .start()
-                        .expect("expected component to start");
-                    // Component::start(component.clone()).expect("expected component to start");
+                    if let Ok(comp) = component
+                        .try_lock().as_mut() {
+                            comp.start().map_err(|err|{
+                                log!(target:format!("Component {}", comp.get_name().unwrap()).as_str(),log::Level::Error, "Could not start: {}", err);
+                            }).expect("expected component to start");
+                        }
                 }
             });
 
@@ -399,6 +408,10 @@ impl Network {
 
     /// Connect to ZFlow Network
     pub fn connect(&mut self) -> Result<&mut Self, String> {
+        let builtin_provider = BuiltInProvider::new().map_err(|err| err.to_string())?;
+        self.script_runners.extend(builtin_provider.dynamic_runners.clone());
+        self.providers.push(Box::new(builtin_provider));
+
         let binding = self.get_graph();
         let graph = binding.try_lock().unwrap().clone();
 
@@ -750,6 +763,97 @@ impl Network {
         self.providers.push(Box::new(provider));
     }
 
+    /// Register a ZFlow script runner. A script runner is a callback function that can run a code script from it's source string, it also provides a handle to access network node inputs
+    pub fn register_script_runner(&mut self, id: &str, runner: Box<DynRunFunc>) {
+        let runner = Box::leak(runner);
+        self.script_runners.insert(
+            id.to_owned(),
+            DynProviderRunner {
+                runner_id: id.to_owned(),
+                runner_func: Arc::new(Mutex::new(move |src, handle: Arc<Mutex<ProcessHandle>>| {
+                    (runner)(src, handle)
+                })),
+                platforms: vec![Platform::System],
+            },
+        );
+    }
+
+    pub fn load_code(
+        &mut self,
+        name: &str,
+        source: Box<[u8]>,
+        runner_id: &str,
+        metadata: Option<Map<String, Value>>,
+    ) -> Result<NetworkProcess, anyhow::Error> {
+        if !self.script_runners.contains_key(runner_id) {
+            return Err(anyhow::Error::msg(
+                "No runner available to execute this stript",
+            ));
+        }
+
+
+        let mut in_ports = HashMap::from_iter([("in".to_owned(), InPort::new(PortOptions{
+            triggering: true,
+            required: true,
+            ..Default::default()
+        }))]);
+        let mut out_ports = HashMap::from_iter([("out".to_owned(), OutPort::new(PortOptions{
+            required: true,
+            ..Default::default()
+        }))]);
+
+        if let Some(meta) = metadata.clone() {
+            if let Some(inports) = meta.get("inports") {
+                if let Ok(_in) = HashMap::<String, PortOptions>::deserialize(inports) {
+                    in_ports = _in.iter().map(|(k, v)| (k.clone(), InPort::new(v.clone()))).collect();
+                }
+            }
+            if let Some(outports) = meta.get("outports") {
+                if let Ok(_out) = HashMap::<String, PortOptions>::deserialize(outports) {
+                    out_ports = _out.iter().map(|(k, v)| (k.clone(), OutPort::new(v.clone()))).collect();
+                }
+            }
+        }
+        
+       
+        let runner = &self.script_runners.clone()[runner_id];
+        let func = runner.runner_func.clone();
+        let code = source.clone();
+        let component = ComponentOptions {
+            in_ports,
+            out_ports,
+            activate_on_input: true,
+            process: Some(Box::new(move |handle| {
+                let binding = func.clone();
+                let mut func = binding.try_lock()
+                    .map_err(|err| ProcessError(err.to_string()))?;
+                (func)(code.clone(), handle.clone())
+            })),
+            ..Default::default()
+        };
+
+        
+        self.register_component("script", name, Component::new(component))?;
+        self.add_node(
+            GraphNode {
+                id: build_node_id("script", name),
+                component: String::from_utf8(source.into()).unwrap(),
+                metadata,
+            },
+            None,
+        )
+    }
+
+    pub fn load_script(
+        &mut self,
+        name: &str,
+        source: &str,
+        runner_id: &str,
+        metadata: Option<Map<String, Value>>,
+    ) -> Result<NetworkProcess, anyhow::Error> {
+        self.load_code(name, source.as_bytes().into(), runner_id, metadata)
+    }
+
     pub(crate) fn get_subgraph_runner(
         graph: Graph,
     ) -> (
@@ -964,7 +1068,6 @@ impl BaseNetwork for Network {
 
     fn add_node(
         &mut self,
-        // network: Arc<Mutex<(impl BaseNetwork + Send + Sync + 'static + ?Sized)>>,
         node: GraphNode,
         _: Option<HashMap<String, Value>>,
     ) -> Result<NetworkProcess, anyhow::Error> {
@@ -1504,9 +1607,11 @@ impl BaseNetwork for Network {
         // Stop remote providers
         // Todo: wait for remote processes to finish?
         let _processes = self.processes.clone();
-        
+
         loop {
-            let has_load = _processes.iter().all(|(_, p)| p.component.clone().unwrap().lock().unwrap().get_load() > 0);
+            let has_load = _processes
+                .iter()
+                .all(|(_, p)| p.component.clone().unwrap().lock().unwrap().get_load() > 0);
             if !has_load {
                 self.providers.par_iter_mut().for_each(|provider| {
                     let _ = provider.stop();
@@ -1514,7 +1619,7 @@ impl BaseNetwork for Network {
                 break;
             }
         }
-        
+
         Ok(())
     }
 
@@ -1712,8 +1817,6 @@ impl BaseNetwork for Network {
         Ok(())
     }
 }
-
-
 
 fn connect_port(
     _socket: Arc<Mutex<InternalSocket>>,

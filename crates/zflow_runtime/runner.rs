@@ -8,7 +8,7 @@ pub type RunFunc = dyn FnMut(Arc<Mutex<ProcessHandle>>) -> Result<ProcessResult,
     + Sync
     + 'static;
 
-pub type DynRunFunc = dyn FnMut(String, Arc<Mutex<ProcessHandle>>) -> Result<ProcessResult, ProcessError>
+pub type DynRunFunc = dyn FnMut(Box<[u8]>, Arc<Mutex<ProcessHandle>>) -> Result<ProcessResult, ProcessError>
     + Send
     + Sync
     + 'static;

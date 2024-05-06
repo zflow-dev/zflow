@@ -44,6 +44,7 @@ pub trait ProviderComponent: Sync + Send {
     fn get_forward_brackets(&self) -> HashMap<String, Vec<String>>;
     fn get_metadata(&self) -> Map<String, Value>;
     fn get_runtime(&self) -> Runtime;
+    fn get_source(&self) -> String;
     fn get_source_directory(&self) -> String;
     fn is_subgraph(&self) -> bool;
 
@@ -57,6 +58,7 @@ pub struct ProviderRunner {
     pub platforms: Vec<Platform>,
 }
 
+#[derive(Clone)]
 pub(crate) struct DynProviderRunner {
     pub runner_id: String,
     pub runner_func: Arc<Mutex<DynRunFunc>>,
@@ -172,6 +174,10 @@ impl ProviderComponent for ComponentSource {
         self.source_dir.clone()
     }
 
+    fn get_source(&self) -> String {
+        self.source.clone()
+    }
+
     fn is_subgraph(&self) -> bool {
         false
     }
@@ -251,6 +257,10 @@ impl ProviderComponent for Graph {
 
     fn get_source_directory(&self) -> String {
         "/".to_owned()
+    }
+
+    fn get_source(&self) -> String {
+        "".to_owned()
     }
 
     fn is_subgraph(&self) -> bool {
@@ -352,11 +362,12 @@ impl Provider for BuiltInProvider {
             let process = runner.runner_func.clone();
 
             let is_graph = component.is_subgraph();
+            let source = component.get_source();
 
             let runner_func = Box::new(move |handle| {
                 if !is_graph {
                     if let Ok(process) = process.clone().try_lock().as_mut() {
-                        return (process)(source.clone(), handle);
+                        return (process)(source.as_bytes().into(), handle);
                     }
                 }
                 Err(ProcessError(format!("Runner: Unknown state")))
@@ -386,9 +397,9 @@ impl BuiltInProvider {
                         runner_id: QUICKJS_RUNNER_ID.to_owned(),
                         platforms: vec![Platform::System],
                         runner_func: Arc::new(Mutex::new(
-                            move |src: String, handle: Arc<Mutex<ProcessHandle>>| {
+                            move |src: Box<[u8]>, handle: Arc<Mutex<ProcessHandle>>| {
                                 let runner: Symbol<UnsafeRunFunc> = lib.get(b"run").unwrap();
-                                let source = src.as_bytes();
+                                let source = src.as_ref();
 
                                 let res = &mut Result::Ok(ProcessResult::default()) as *mut Result<ProcessResult, ProcessError>;                                   
                                 (runner)(
