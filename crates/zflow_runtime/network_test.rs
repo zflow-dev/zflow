@@ -24,7 +24,7 @@ mod tests {
     fn test_network() {
         'given_a_zflo_network: {
             let mut base_dir = std::env::current_dir().unwrap();
-            base_dir.push("test_components");
+            base_dir.push("../test_components");
             let base_dir = base_dir.to_str().unwrap();
 
             let split = Component::new(ComponentOptions {

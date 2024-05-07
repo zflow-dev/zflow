@@ -1809,6 +1809,7 @@ impl BaseNetwork for Network {
 
     fn list_components(&mut self) -> Vec<String> {
         let base_dir = self.workspace_dir.clone();
+        println!("dir {}", base_dir);
         let par_iter = self.providers.par_iter_mut();
         let mut components: Vec<String> = self
             .native_components
