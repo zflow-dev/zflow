@@ -406,7 +406,7 @@ impl Network {
         Network::new(graph, options)
     }
 
-    pub fn reset_graph(&mut self) -> Result<(), anyhow::Error> {
+    pub fn reset_graph(&mut self, restart_network:bool) -> Result<(), anyhow::Error> {
         let binding = self.get_graph();
         let graph = binding.try_lock().unwrap().clone();
 
@@ -465,7 +465,8 @@ impl Network {
             }
         }
 
-        Ok(())
+
+       if restart_network {self.start()}else{Ok(())}
     }
 
     /// Connect to ZFlow Network
@@ -475,7 +476,7 @@ impl Network {
             .extend(builtin_provider.dynamic_runners.clone());
         self.providers.push(Box::new(builtin_provider));
 
-        self.reset_graph()?;
+        self.reset_graph(false)?;
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(0)
