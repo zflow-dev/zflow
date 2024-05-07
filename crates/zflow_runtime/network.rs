@@ -465,6 +465,18 @@ impl Network {
             }
         }
 
+        Ok(())
+    }
+
+    /// Connect to ZFlow Network
+    pub fn connect(&mut self) -> Result<&mut Self, anyhow::Error> {
+        let builtin_provider = BuiltInProvider::new()?;
+        self.script_runners
+            .extend(builtin_provider.dynamic_runners.clone());
+        self.providers.push(Box::new(builtin_provider));
+
+        self.reset_graph()?;
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(0)
             .build()
@@ -615,17 +627,6 @@ impl Network {
             _ => {}
         });
 
-        Ok(())
-    }
-
-    /// Connect to ZFlow Network
-    pub fn connect(&mut self) -> Result<&mut Self, anyhow::Error> {
-        let builtin_provider = BuiltInProvider::new()?;
-        self.script_runners.extend(builtin_provider.dynamic_runners.clone());
-        self.providers.push(Box::new(builtin_provider));
-
-        self.reset_graph()?;
-
         Ok(self)
     }
 
@@ -729,7 +730,9 @@ impl Network {
             }
             return Ok(socket.clone());
         }
-        Err(anyhow::Error::msg("Could not add initial packet".to_string()))
+        Err(anyhow::Error::msg(
+            "Could not add initial packet".to_string(),
+        ))
     }
 
     pub fn add_defaults(&mut self, node: GraphNode) -> Result<(), anyhow::Error> {
@@ -797,31 +800,41 @@ impl Network {
             ));
         }
 
-
-        let mut in_ports = HashMap::from_iter([("in".to_owned(), InPort::new(PortOptions{
-            triggering: true,
-            required: true,
-            ..Default::default()
-        }))]);
-        let mut out_ports = HashMap::from_iter([("out".to_owned(), OutPort::new(PortOptions{
-            required: true,
-            ..Default::default()
-        }))]);
+        let mut in_ports = HashMap::from_iter([(
+            "in".to_owned(),
+            InPort::new(PortOptions {
+                triggering: true,
+                required: true,
+                ..Default::default()
+            }),
+        )]);
+        let mut out_ports = HashMap::from_iter([(
+            "out".to_owned(),
+            OutPort::new(PortOptions {
+                required: true,
+                ..Default::default()
+            }),
+        )]);
 
         if let Some(meta) = metadata.clone() {
             if let Some(inports) = meta.get("inports") {
                 if let Ok(_in) = HashMap::<String, PortOptions>::deserialize(inports) {
-                    in_ports = _in.iter().map(|(k, v)| (k.clone(), InPort::new(v.clone()))).collect();
+                    in_ports = _in
+                        .iter()
+                        .map(|(k, v)| (k.clone(), InPort::new(v.clone())))
+                        .collect();
                 }
             }
             if let Some(outports) = meta.get("outports") {
                 if let Ok(_out) = HashMap::<String, PortOptions>::deserialize(outports) {
-                    out_ports = _out.iter().map(|(k, v)| (k.clone(), OutPort::new(v.clone()))).collect();
+                    out_ports = _out
+                        .iter()
+                        .map(|(k, v)| (k.clone(), OutPort::new(v.clone())))
+                        .collect();
                 }
             }
         }
-        
-       
+
         let runner = &self.script_runners.clone()[runner_id];
         let func = runner.runner_func.clone();
         let code = source.clone();
@@ -831,14 +844,14 @@ impl Network {
             activate_on_input: true,
             process: Some(Box::new(move |handle| {
                 let binding = func.clone();
-                let mut func = binding.try_lock()
+                let mut func = binding
+                    .try_lock()
                     .map_err(|err| ProcessError(err.to_string()))?;
                 (func)(code.clone(), handle.clone())
             })),
             ..Default::default()
         };
 
-        
         self.register_component("script", name, Component::new(component))?;
         self.add_node(
             GraphNode {
@@ -883,8 +896,12 @@ impl Network {
         return (
             Box::new(move |handle| {
                 if let Ok(this) = handle.clone().try_lock().as_mut() {
-                    let network = graph_network.connect().map_err(|err| ProcessError(err.to_string()))?;
-                    network.start().map_err(|err| ProcessError(err.to_string()))?;
+                    let network = graph_network
+                        .connect()
+                        .map_err(|err| ProcessError(err.to_string()))?;
+                    network
+                        .start()
+                        .map_err(|err| ProcessError(err.to_string()))?;
                     loop {
                         if let Ok(manager) = graph_network_manager.clone().try_lock() {
                             if manager.weight == 0 || (*manager).is_stopped() {
