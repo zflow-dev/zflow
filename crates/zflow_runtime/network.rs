@@ -406,12 +406,7 @@ impl Network {
         Network::new(graph, options)
     }
 
-    /// Connect to ZFlow Network
-    pub fn connect(&mut self) -> Result<&mut Self, String> {
-        let builtin_provider = BuiltInProvider::new().map_err(|err| err.to_string())?;
-        self.script_runners.extend(builtin_provider.dynamic_runners.clone());
-        self.providers.push(Box::new(builtin_provider));
-
+    pub fn reset_graph(&mut self) -> Result<(), anyhow::Error> {
         let binding = self.get_graph();
         let graph = binding.try_lock().unwrap().clone();
 
@@ -422,11 +417,11 @@ impl Network {
             );
 
             if res.is_err() {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "Could not add node {} to network: {}",
                     node.id,
                     res.err().unwrap()
-                ));
+                )));
             }
         }
 
@@ -436,11 +431,11 @@ impl Network {
                 Some(HashMap::from_iter([(String::from("initial"), json!(true))])),
             );
             if res.is_err() {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "Could not add edge {:?} to network: {}",
                     edge,
                     res.err().unwrap()
-                ));
+                )));
             }
         }
 
@@ -451,22 +446,22 @@ impl Network {
             );
 
             if res.is_err() {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "Could not add IIP {:?} to network: {:?}",
                     iip,
                     res.err().unwrap()
-                ));
+                )));
             }
         }
 
         for node in graph.nodes.clone() {
             let res = self.add_defaults(node.clone());
             if res.is_err() {
-                return Err(format!(
+                return Err(anyhow::Error::msg(format!(
                     "Could not add defaults {} to network: {:?}",
                     node.id,
                     res.err().unwrap()
-                ));
+                )));
             }
         }
 
@@ -619,6 +614,17 @@ impl Network {
             }
             _ => {}
         });
+
+        Ok(())
+    }
+
+    /// Connect to ZFlow Network
+    pub fn connect(&mut self) -> Result<&mut Self, anyhow::Error> {
+        let builtin_provider = BuiltInProvider::new()?;
+        self.script_runners.extend(builtin_provider.dynamic_runners.clone());
+        self.providers.push(Box::new(builtin_provider));
+
+        self.reset_graph()?;
 
         Ok(self)
     }
@@ -877,7 +883,7 @@ impl Network {
         return (
             Box::new(move |handle| {
                 if let Ok(this) = handle.clone().try_lock().as_mut() {
-                    let network = graph_network.connect().map_err(|err| ProcessError(err))?;
+                    let network = graph_network.connect().map_err(|err| ProcessError(err.to_string()))?;
                     network.start().map_err(|err| ProcessError(err.to_string()))?;
                     loop {
                         if let Ok(manager) = graph_network_manager.clone().try_lock() {
