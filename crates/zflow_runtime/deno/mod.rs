@@ -1,10 +1,11 @@
 
 pub mod transpiler;
 pub mod snapshot;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-
+use log::log;
 
 use deno_ast::MediaType;
 use deno_ast::ParseParams;
@@ -23,21 +24,210 @@ use deno_runtime::ops;
 use deno_runtime::permissions::PermissionsContainer;
 use deno_runtime::BootstrapOptions;
 use futures::TryFutureExt;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::IntoParallelRefMutIterator;
+use rayon::iter::ParallelIterator;
 use tempdir::TempDir;
 use v8::Handle;
 use v8::HandleScope;
 use zflow_plugin::ComponentSource;
+use zflow_plugin::Package;
 use zflow_plugin::Platform;
+use zflow_plugin::Runtime;
 
 use crate::deno;
 use crate::deno::transpiler::maybe_transpile_source;
+use crate::extern_provider::ExternProviderSource;
 use crate::ip::IPType;
 use crate::process::ProcessError;
 use crate::process::ProcessResult;
+use crate::provider::Provider;
+use crate::provider::ProviderComponent;
 use crate::provider::ProviderRunner;
 use crate::runner::RunFunc;
 use crate::runner::DENO_RUNNER_ID;
 use deno_runtime::deno_core::_ops::RustToV8;
+
+
+pub struct DenoExternProvider {
+    pub workspace:String,
+    pub logo: String,
+    pub provider_id: String,
+    pub platform: Platform,
+    pub packages: Vec<Package>,
+    components: HashMap<String, Box<dyn ProviderComponent>>,
+    module_specifier: deno_core::ModuleSpecifier,
+}
+
+impl DenoExternProvider {
+    pub async fn new(workspace: &str, source:ExternProviderSource) -> Result<Self, anyhow::Error> {
+        let module_error = |err| match err {
+            deno_core::ModuleResolutionError::InvalidUrl(e) => anyhow::Error::msg(e),
+            deno_core::ModuleResolutionError::InvalidBaseUrl(e) => anyhow::Error::msg(e),
+            deno_core::ModuleResolutionError::InvalidPath(e) => {
+                anyhow::Error::msg(format!("Invalid path: {:?}", e.as_os_str()))
+            }
+            _ => anyhow::Error::msg("Failed to load deno module from path"),
+        };
+        let module: deno_core::ModuleSpecifier = match source.clone() {
+            ExternProviderSource::Local { path } => {
+                let workspace = PathBuf::from(workspace);
+                deno_core::resolve_path(&path, workspace.as_path()).map_err(module_error)?
+            }
+            ExternProviderSource::Url { url } => {
+                deno_core::resolve_url(&url).map_err(module_error)?
+            }
+            ExternProviderSource::Data { data: _ } => Err(anyhow::Error::msg(
+                "Bytes source not supported for Deno runtime",
+            ))?,
+            ExternProviderSource::Undefined => return Err(anyhow::Error::msg("Undefined extern provider source"))
+        };
+
+        let mut zflow_deno_runtime = create_deno_runtime(module.clone())?;
+        let mod_id = zflow_deno_runtime.load_main_es_module(&module).await?;
+        let result = zflow_deno_runtime.mod_evaluate(mod_id);
+        zflow_deno_runtime
+            .run_event_loop(deno_runtime::deno_core::PollEventLoopOptions {
+                wait_for_inspector: false,
+                pump_v8_message_loop: false,
+            })
+            .await?;
+
+        let global = zflow_deno_runtime.get_module_namespace(mod_id)?;
+        let mut scope = zflow_deno_runtime.handle_scope();
+        let scope: &mut v8::HandleScope = scope.as_mut();
+        let module_obj = global.open(scope);
+
+        fn call_func<'a>(
+            module: &v8::Object,
+            scope: &mut HandleScope<'a>,
+            name: &str,
+        ) -> Result<v8::Local<'a, v8::Value>, anyhow::Error> {
+            let func_key = v8::String::new(scope, name).unwrap();
+            let func = module.get(scope, func_key.into()).unwrap();
+            let func = v8::Local::<v8::Function>::try_from(func)?;
+            let rec = v8::null(scope).into();
+            Ok(func.call(scope, rec, &[]).unwrap())
+        }
+
+        let provider_id = call_func(module_obj, scope, "providerId")?;
+        let provider_id = provider_id.to_rust_string_lossy(scope);
+
+        let logo = call_func(module_obj, scope, "getLogo")?;
+        let logo = logo.to_rust_string_lossy(scope);
+
+        let mut packages = vec![];
+        let _packages = call_func(module_obj, scope, "getPackages")?;
+        let _packages = v8::Local::<v8::Array>::try_from(_packages)?;
+
+        for i in 0.._packages.length() {
+            let index = v8::Integer::new(scope, i as i32);
+            let item = _packages
+                .get(scope, v8::Local::<v8::Value>::try_from(index)?)
+                .unwrap();
+            let package = serde_v8::from_v8::<Package>(scope, item)?;
+            packages.push(package);
+        }
+
+        let _ = result.await?;
+
+        Ok(Self {
+            workspace: workspace.to_owned(),
+            logo,
+            provider_id,
+            platform: Platform::System,
+            packages,
+            components: HashMap::new(),
+            module_specifier: module,
+        })
+
+    }
+    fn load_components(&mut self) -> Result<(), anyhow::Error> {
+        self.components = self
+            .packages
+            .par_iter()
+            .map(|package| {
+                package.components.par_iter().map(|component| {
+                    let _component: Box<(dyn ProviderComponent + 'static)> =
+                        Box::new(component.clone());
+                    (component.name.clone(), _component)
+                })
+            })
+            .flatten()
+            .collect::<HashMap<String, Box<dyn ProviderComponent>>>();
+
+        Ok(())
+    }
+}
+
+impl Provider for DenoExternProvider {
+    fn set_workspace(&mut self, dir: String) {
+        let mut buf = PathBuf::from(dir);
+        buf.push(self.workspace.clone());
+        self.workspace = buf.to_str().unwrap().to_owned();
+    }
+
+    fn get_logo(&self) -> Result<String, anyhow::Error> {
+        Ok(self.logo.clone())
+    }
+
+    fn get_id(&self) -> String {
+        self.provider_id.clone()
+    }
+
+    fn list_components(&mut self) -> Result<Vec<String>, anyhow::Error> {
+        Ok(self
+            .packages
+            .par_iter_mut()
+            .map(|package| {
+                package.components.par_iter_mut().map(|component| {
+                    component.runtime = Runtime {
+                        provider_id: self.provider_id.clone(),
+                        runner_id: DENO_RUNNER_ID.to_owned(),
+                        platform: self.platform.clone(),
+                    };
+
+                    component.name.clone()
+                })
+            })
+            .flatten()
+            .collect::<Vec<String>>())
+    }
+
+    fn load_component(
+        &mut self,
+        id: String,
+    ) -> Result<(&Box<dyn crate::provider::ProviderComponent>, ProviderRunner), anyhow::Error> {
+        self.list_components()?;
+        self.load_components()?;
+
+        if let Some(component) = self.components.get(&id) {
+            return Ok((component, self.get_process(component)?));
+        }
+
+        let err = format!("Could not find component for provider {}", self.get_id());
+        log!(target:format!("Provider {}", self.get_id()).as_str(),log::Level::Debug, "Could not find component with ID {}", id);
+        return Err(anyhow::Error::msg(err));
+    }
+
+    fn get_process(
+        &self,
+        component: &Box<dyn crate::provider::ProviderComponent>,
+    ) -> Result<ProviderRunner, anyhow::Error> {
+        let component: &ComponentSource = component
+            .as_any()
+            .downcast_ref::<ComponentSource>()
+            .unwrap();
+
+        let process = "runComponent";
+        let provider_id = self.provider_id.clone();
+
+        let mut runner =
+            get_sys_deno_runner(component.clone(), process, self.module_specifier.clone(), true)?;
+        runner.runner_id = DENO_RUNNER_ID.to_owned();
+        return Ok(runner);
+    }
+}
 
 pub fn create_deno_runtime(module:ModuleSpecifier) -> Result<JsRuntime, AnyError>{
     deno_runtime::deno_core::extension!(deno_permissions_worker,

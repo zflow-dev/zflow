@@ -1,18 +1,179 @@
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
+    collections::HashMap, path::PathBuf, sync::{Arc, Mutex}
 };
 
-use extism::{Function, Manifest, Plugin, UserData, ValType, WasmInput};
+use extism::{Function, Manifest, Plugin, UserData, ValType, Wasm, WasmInput, WasmMetadata};
+use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use serde_json::{json, Value};
-use zflow_plugin::{ComponentSource, OutputBuffer, ComponentWithInput, Platform};
-
+use zflow_plugin::{ComponentSource, ComponentWithInput, OutputBuffer, Package, Platform, Runtime};
+use extism_pdk::{HttpRequest, Json};
+use log::log;
 use crate::{
-    ip::IPType,
-    process::{ProcessError, ProcessResult},
-    provider::ProviderRunner,
-    runner::{RunFunc, WASM_RUNNER_ID},
+    extern_provider::ExternProviderSource, ip::IPType, process::{ProcessError, ProcessResult}, provider::{Provider, ProviderComponent, ProviderRunner}, runner::{RunFunc, WASM_RUNNER_ID}
 };
+
+pub struct WasmExternProvider {
+    pub workspace:String,
+    pub logo: String,
+    pub provider_id: String,
+    pub platform: Platform,
+    pub packages: Vec<Package>,
+    manifest: Manifest,
+    components: HashMap<String, Box<dyn ProviderComponent>>,
+}
+
+impl WasmExternProvider {
+    pub fn new(workspace: &str, source:ExternProviderSource) -> Result<Self, anyhow::Error> {
+        let wasm = match source.clone() {
+            ExternProviderSource::Url { url } => Wasm::Url {
+                req: HttpRequest::new(url),
+                meta: WasmMetadata::default(),
+            },
+            ExternProviderSource::Local { path } => {
+                let mut workspace = PathBuf::from(workspace);
+                workspace.push(path);
+                Wasm::File {
+                    path: PathBuf::from(workspace.to_str().unwrap().to_owned()),
+                    meta: WasmMetadata::default(),
+                }
+            }
+            ExternProviderSource::Data { data } => Wasm::Data {
+                data,
+                meta: WasmMetadata::default(),
+            },
+            ExternProviderSource::Undefined => return Err(anyhow::Error::msg("Undefined extern provider source"))
+        };
+        let manifest = Manifest::new([wasm.clone()]);
+
+        let stub_func = |name: &str| -> Function {
+            Function::new(
+                name,
+                [ValType::I64],
+                [],
+                UserData::new(()),
+                move |_plugin, _params, _, _userdata| Ok(()),
+            )
+        };
+
+        let mut plugin = Plugin::new(
+            WasmInput::Manifest(manifest.clone()),
+            [
+                stub_func("send_done"),
+                stub_func("send"),
+                stub_func("send_buffer"),
+            ],
+            true,
+        )?;
+
+        let provider_id = plugin.call::<(), String>("provider_id", ())?;
+        let logo = plugin.call::<(), String>("get_logo", ())?;
+        let packages = plugin
+            .call::<(), Json<Vec<Package>>>("get_packages", ())?
+            .into_inner();
+        let platform = plugin
+            .call::<(), Json<Platform>>("get_platform", ())?
+            .into_inner();
+
+        Ok(WasmExternProvider{
+            provider_id,
+            manifest,
+            logo,
+            packages,
+            platform,
+            workspace: workspace.to_owned(),
+            components: HashMap::new()
+        })
+    }
+    fn load_components(&mut self) -> Result<(), anyhow::Error> {
+        self.components = self
+            .packages
+            .par_iter()
+            .map(|package| {
+                package.components.par_iter().map(|component| {
+                    let _component: Box<(dyn ProviderComponent + 'static)> =
+                        Box::new(component.clone());
+                    (component.name.clone(), _component)
+                })
+            })
+            .flatten()
+            .collect::<HashMap<String, Box<dyn ProviderComponent>>>();
+
+        Ok(())
+    }
+}
+
+
+
+impl Provider for WasmExternProvider {
+    fn set_workspace(&mut self, dir: String) {
+        let mut buf = PathBuf::from(dir);
+        buf.push(self.workspace.clone());
+        self.workspace = buf.to_str().unwrap().to_owned();
+    }
+
+    fn get_logo(&self) -> Result<String, anyhow::Error> {
+        Ok(self.logo.clone())
+    }
+
+    fn get_id(&self) -> String {
+        self.provider_id.clone()
+    }
+
+    fn list_components(&mut self) -> Result<Vec<String>, anyhow::Error> {
+        Ok(self
+            .packages
+            .par_iter_mut()
+            .map(|package| {
+                package.components.par_iter_mut().map(|component| {
+                    component.runtime = Runtime {
+                        provider_id: self.provider_id.clone(),
+                        runner_id: WASM_RUNNER_ID.to_owned(),
+                        platform: self.platform.clone(),
+                    };
+
+                    component.name.clone()
+                })
+            })
+            .flatten()
+            .collect::<Vec<String>>())
+    }
+
+    fn load_component(
+        &mut self,
+        id: String,
+    ) -> Result<(&Box<dyn crate::provider::ProviderComponent>, ProviderRunner), anyhow::Error> {
+        self.list_components()?;
+        self.load_components()?;
+
+        if let Some(component) = self.components.get(&id) {
+            return Ok((component, self.get_process(component)?));
+        }
+
+        let err = format!("Could not find component for provider {}", self.get_id());
+        log!(target:format!("Provider {}", self.get_id()).as_str(),log::Level::Debug, "Could not find component with ID {}", id);
+        return Err(anyhow::Error::msg(err));
+    }
+
+    fn get_process(
+        &self,
+        component: &Box<dyn crate::provider::ProviderComponent>,
+    ) -> Result<ProviderRunner, anyhow::Error> {
+        let component: &ComponentSource = component
+            .as_any()
+            .downcast_ref::<ComponentSource>()
+            .unwrap();
+
+        let manifest = self.manifest.clone();
+
+        let process = "run_component";
+        let provider_id = self.provider_id.clone();
+
+        let mut runner =
+            crate::wasm::get_sys_wasm_runner(component.clone(), process, manifest, true)?;
+        runner.runner_id = WASM_RUNNER_ID.to_owned();
+        return Ok(runner);
+    }
+}
 
 pub fn get_sys_wasm_runner<'a>(
     component: ComponentSource,
@@ -188,3 +349,5 @@ pub fn get_sys_wasm_runner<'a>(
         platforms: vec![Platform::System],
     });
 }
+
+
