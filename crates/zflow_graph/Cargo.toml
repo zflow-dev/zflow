@@ -12,7 +12,7 @@ keywords = ["fbp", "DAG", "flowbased", "low-code", "no-code", "visual-programmin
 [dependencies]
 log= {workspace = true}
 foreach= {workspace = true}
-nuid= {workspace = true}
+# nuid= {workspace = true}
 serde_json= {workspace = true}
 serde= {workspace = true}
 beady= {workspace = true}
@@ -21,7 +21,26 @@ cast_trait_object= {workspace = true}
 async-trait= {workspace = true}
 fbp = {path = '../fbp'}
 anyhow={workspace=true}
+tsify = {version="0.4.5",features = ["js"],  optional = true}
+wasm-bindgen = { version = "0.2.86", optional = true}
+gloo-utils = { version = "0.1", features = ["serde"], optional = true }
+gloo-events = { version = "0.2.0", optional = true }
+web-sys = {version="0.3.69", optional = true}
 
+ 
 [lib]
+crate-type = ["cdylib", "rlib"]
 path = "lib.rs"
 doctest = false
+
+[features]
+build_wasm = [
+    "dep:tsify","dep:wasm-bindgen", "dep:gloo-utils", "dep:web-sys", "dep:gloo-events"
+]
+
+
+
+
+
+
+

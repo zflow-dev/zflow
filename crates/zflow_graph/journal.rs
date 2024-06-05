@@ -14,18 +14,13 @@ use serde_json::{json, Map, Value};
 
 use super::{
     graph::Graph,
-    types::{GraphEdge, GraphEvents, GraphExportedPort, GraphGroup, GraphIIP},
+    types::{GraphEdge,  GraphExportedPort, GraphGroup, GraphIIP, GraphNode, GraphEvents, TransactionEntry},
 };
-use crate::types::GraphNode;
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TransactionEntry {
-    pub cmd: Option<GraphEvents>,
-    pub rev: Option<i32>,
-    pub old: Option<Map<String, Value>>,
-    pub new: Option<Map<String, Value>>,
-}
 
+
+
+#[cfg(not(feature = "build_wasm"))]
 pub trait JournalStore {
     fn count_transactions(&self) -> usize;
     fn put_transaction(&mut self, rev_id: i32, entry: Vec<TransactionEntry>);
@@ -40,6 +35,7 @@ pub trait JournalStore {
     fn end_journal_transaction(&mut self, id: &str, meta: Option<Map<String, Value>>);
 }
 
+#[cfg(not(feature = "build_wasm"))]
 impl JournalStore for Graph {
     fn count_transactions(&self) -> usize {
         self.transactions.len()
@@ -141,6 +137,7 @@ impl JournalStore for Graph {
 /// It is not possible to operate on smaller changes than individual transactions.
 /// Use start_transaction and end_transaction on Graph to structure the revisions logical changesets.
 ///
+#[cfg(not(feature = "build_wasm"))]
 pub trait Journal {
     fn execute_entry(&mut self, entry: TransactionEntry);
     fn execute_entry_inversed(&mut self, entry: TransactionEntry);
@@ -156,6 +153,7 @@ pub trait Journal {
     fn start_journal(&mut self, metadata: Option<Map<String, Value>>);
 }
 
+#[cfg(not(feature = "build_wasm"))]
 impl Journal for Graph {
     fn execute_entry(&mut self, entry: TransactionEntry) {
         if let Some(event) = entry.cmd {
@@ -709,6 +707,7 @@ impl Journal for Graph {
         self.set_subscribed(true);
     }
 
+    // #[cfg_attr(feature = "build_wasm", wasm_bindgen(method))]
     fn undo(&mut self) {
         if !self.can_undo() {
             return;
@@ -719,6 +718,7 @@ impl Journal for Graph {
         self.move_to_revision(cur - 1);
     }
 
+    // #[cfg_attr(feature = "build_wasm", wasm_bindgen(method))]
     fn redo(&mut self) {
         if !self.can_redo() {
             return;
@@ -729,6 +729,7 @@ impl Journal for Graph {
         self.move_to_revision(cur + 1);
     }
 
+    // #[cfg_attr(feature = "build_wasm", wasm_bindgen(method))]
     fn can_redo(&self) -> bool {
         let cur = self.current_revision;
         let last = self.last_revision;
@@ -736,11 +737,13 @@ impl Journal for Graph {
         return cur < last;
     }
 
+    // #[cfg_attr(feature = "build_wasm", wasm_bindgen(method))]
     fn can_undo(&self) -> bool {
         let cur = self.current_revision;
         cur > 0
     }
 
+    // #[cfg_attr(feature = "build_wasm", wasm_bindgen(method))]
     fn start_journal(&mut self, metadata: Option<Map<String, Value>>) {
         self.set_subscribed(true);
         self.entries.clear();

@@ -1,22 +1,40 @@
 use serde::{Deserialize, Serialize};
+
 use serde_json::{Map, Value};
+
 use std::{collections::HashMap, path::Path};
 
+#[cfg(feature = "build_wasm")]
+use tsify::Tsify;
+#[cfg(feature = "build_wasm")]
+use wasm_bindgen::prelude::*;
+
+
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphNode {
     pub id: String,
-    // pub uid: String,
     pub component: String,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
     pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphNodeJson {
     pub component: String,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
     pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphLeaf {
     pub port: String,
     pub node_id: String,
@@ -24,6 +42,9 @@ pub struct GraphLeaf {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphLeafJson {
     pub port: String,
     pub process: String,
@@ -39,56 +60,88 @@ pub enum StubData {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphStub {
+    #[cfg_attr(feature = "build_wasm", tsify(type = "any"))]
     pub data: Value,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphEdge {
     pub from: GraphLeaf,
     pub to: GraphLeaf,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
     pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphEdgeJson {
     pub src: Option<GraphLeafJson>,
     pub tgt: Option<GraphLeafJson>,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "any| undefined"))]
     pub data: Option<Value>,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
     pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphIIP {
     pub to: Option<GraphLeaf>,
     pub from: Option<GraphStub>,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
     pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphGroup {
     pub name: String,
     pub nodes: Vec<String>,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
     pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphExportedPort {
     pub process: String,
     pub port: String,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
     pub metadata: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 pub struct GraphTransaction {
     pub id: String,
     pub depth: i32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
 #[serde(rename_all = "camelCase")]
 pub struct GraphJson {
     pub case_sensitive: bool,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
     pub properties: Map<String, Value>,
     pub inports: HashMap<String, GraphExportedPort>,
     pub outports: HashMap<String, GraphExportedPort>,
@@ -97,35 +150,45 @@ pub struct GraphJson {
     pub connections: Vec<GraphEdgeJson>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+type EventValue = Value;
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(namespace))]
+#[serde(tag = "_type")]
 pub enum GraphEvents {
-    AddNode(Value),
-    RemoveNode(Value),
-    RenameNode(Value),
-    ChangeNode(Value),
-    AddEdge(Value),
-    RemoveEdge(Value),
-    // RenameEdge(Value),
-    ChangeEdge(Value),
-    AddInitial(Value),
-    RemoveInitial(Value),
-    ChangeProperties(Value),
-    AddGroup(Value),
-    RemoveGroup(Value),
-    RenameGroup(Value),
-    ChangeGroup(Value),
-    AddInport(Value),
-    RemoveInport(Value),
-    RenameInport(Value),
-    ChangeInport(Value),
-    AddOutport(Value),
-    RemoveOutport(Value),
-    RenameOutport(Value),
-    ChangeOutport(Value),
-    StartTransaction(Value),
-    EndTransaction(Value),
-    Transaction(Value),
+    AddNode(EventValue),
+    RemoveNode(EventValue),
+    RenameNode(EventValue),
+    ChangeNode(EventValue),
+    AddEdge(EventValue),
+    RemoveEdge(EventValue),
+    // RenameEdge(EventValue),
+    ChangeEdge(EventValue),
+    AddInitial(EventValue),
+    RemoveInitial(EventValue),
+    ChangeProperties(EventValue),
+    AddGroup(EventValue),
+    RemoveGroup(EventValue),
+    RenameGroup(EventValue),
+    ChangeGroup(EventValue),
+    AddInport(EventValue),
+    RemoveInport(EventValue),
+    RenameInport(EventValue),
+    ChangeInport(EventValue),
+    AddOutport(EventValue),
+    RemoveOutport(EventValue),
+    RenameOutport(EventValue),
+    ChangeOutport(EventValue),
+    StartTransaction(EventValue),
+    EndTransaction(EventValue),
+    Transaction(EventValue),
+    #[default]
+    None,
 }
+
 
 impl GraphEvents {
     pub fn to_string(&self) -> &str {
@@ -155,10 +218,11 @@ impl GraphEvents {
             GraphEvents::StartTransaction(_) => "start_transaction",
             GraphEvents::EndTransaction(_) => "end_transaction",
             GraphEvents::Transaction(_) => "transaction",
+            GraphEvents::None => "none"
         }
     }
 
-    pub fn new(name: &str, value: Value) -> GraphEvents {
+    fn make_new(name: &str, value: Value) -> GraphEvents {
         match name {
             "add_node" => GraphEvents::AddNode(value),
             "remove_node" => GraphEvents::RemoveNode(value),
@@ -188,4 +252,23 @@ impl GraphEvents {
             _ => panic!("Unknown Graph event {}", name),
         }
     }
+
+    pub fn new(name: &str, value: Value) -> GraphEvents {
+        GraphEvents::make_new(name, value)
+    }
 }
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "build_wasm", derive(Tsify))]
+#[cfg_attr(feature = "build_wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "build_wasm", tsify(from_wasm_abi))]
+pub struct TransactionEntry {
+    pub cmd: Option<GraphEvents>,
+    pub rev: Option<i32>,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
+    pub old: Option<Map<String, Value>>,
+    #[cfg_attr(feature = "build_wasm", tsify(type = "Map<string, any> | undefined"))]
+    pub new: Option<Map<String, Value>>,
+}
+
+

@@ -1,28 +1,12 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-
-use deno_core::serde_v8;
-use deno_core::v8::{self, HandleScope};
-use zflow_plugin::{ComponentSource, Package, Platform, Runtime};
-
-use crate::deno::create_deno_runtime;
-use crate::provider::{self, Provider, ProviderComponent};
-
-use ::extism::*;
-
-use extism_pdk::{HttpRequest, Json};
-use log::log;
-use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub(crate) enum ExternProviderType {
-    #[default]
-    Wasi,
-    Deno,
-}
+// #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+// #[serde(untagged)]
+// pub(crate) enum ExternProviderType {
+//     #[default]
+//     Wasi,
+//     Deno,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(untagged)]
@@ -124,15 +108,14 @@ mod test {
     #[test]
     fn test_wasm_provider() -> Result<(), anyhow::Error> {
         init();
-        let mut dir = current_dir().unwrap();
+        let mut dir = current_dir()?;
 
-        dir.push("../test_providers");
+        dir.push("../../test_providers");
         let dir = dir.to_str().unwrap();
 
         let mut n = get_network();
 
-        n.register_component("debug", "logger", get_logger())
-            .unwrap();
+        n.register_component("debug", "logger", get_logger())?;
 
         let provider = WasmExternProvider::new(
             dir,
@@ -159,11 +142,10 @@ mod test {
 
         let mut n = get_network();
 
-        n.register_component("debug", "logger", get_logger())
-            .unwrap();
+        n.register_component("debug", "logger", get_logger())?;
 
-        let mut dir = current_dir().unwrap();
-        dir.push("../test_providers");
+        let mut dir = current_dir()?;
+        dir.push("../../test_providers");
         let dir = dir.to_str().unwrap();
 
         let provider = DenoExternProvider::new(

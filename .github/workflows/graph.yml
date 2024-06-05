@@ -18,3 +18,7 @@ jobs:
     - uses: actions/checkout@v3
     - name: Run graph tests
       run: cd crates/zflow_graph && cargo test --verbose
+    - name: Install wasm-pack
+      run: cargo install wasm-pack
+    - name: Build the Zflow Graph Javascript Library
+      run: cd crates/zflow_graph && wasm-pack build --debug --target web  --features build_wasm

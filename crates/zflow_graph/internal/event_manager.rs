@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-pub(crate) type TypeFn<T> = Arc<Mutex<(dyn FnMut(&mut T, Value) -> () + Send + Sync + 'static)>>;
 
+pub(crate) type TypeFn<T> = Arc<Mutex<(dyn FnMut(&mut T, Value) -> () + Send + Sync + 'static)>>;
 #[derive(Clone)]
 pub struct EventActor<T> {
     pub once: bool,
