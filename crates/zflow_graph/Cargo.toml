@@ -6,6 +6,7 @@ authors = ["Damilare Akinlaja <dreakinlaja@gmail.com>"]
 license = "MIT"
 description = "Flow-based Programming Graph Specification"
 keywords = ["fbp", "DAG", "flowbased", "low-code", "no-code", "visual-programming"]
+repository = "https://github.com/zflow-dev/zflow"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
