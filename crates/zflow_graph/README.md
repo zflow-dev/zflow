@@ -2,7 +2,7 @@
 
 # The FBP Graph Specification
 An implementation of the  [Flow-Based Programming](https://flow-based.org/) graph specification.
-## Graph Usage 
+## Graph Usage (Rust)
 ```rust
 let mut g = Graph::new("Foo bar", true);
 // listen to the graph add_node event
@@ -30,9 +30,33 @@ g.add_node("Bar", "bar", None);
 // add a connection between `Foo` and `Bar` by their output port and input ports respectively.
 g.add_edge("Foo", "Out", "Bar", "In", None);
 ```
+## Graph Usage (Javascript/Typescript)
+```ts
+const g = new Graph("Foo bar", true);
+// listen to the graph add_node event
+g.connect("add_node", (ctx, node)=>{
+    console.log(node.id); // Foo
+    console.log(node.component); // Bar
+}, true);
+// add a node
+g.addNode("Foo", "Bar");
+
+// listen to the add_edge event
+g.connect("add_edge", (ctx, edge)=>{
+   console.log(edge.from.node_id); // Foo
+   console.log(edge.to.port); // "In"
+});
+
+// add node with ID `Foo` and Component named `foo`
+g.addNode("Foo", "foo");
+// add node with ID `Bar` and Component named `bar`
+g.addNode("Bar", "bar");
+// add a connection between `Foo` and `Bar` by their output port and input ports respectively.
+g.addEdge("Foo", "Out", "Bar", "In");
+```
 See [graph_test.rs](https://github.com/darmie/zflow/blob/main/zflow_graph/src/graph_test.rs) for more usage examples
 
-## Journal Usage
+## Journal Usage (Rust)
 ```rs
 let mut graph = Graph::new("", false);
 // start recording events in the graph to the memory journal

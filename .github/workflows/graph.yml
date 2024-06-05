@@ -21,4 +21,4 @@ jobs:
     - name: Install wasm-pack
       run: cargo install wasm-pack
     - name: Build the Zflow Graph Javascript Library
-      run: cd crates/zflow_graph && wasm-pack build --debug --target web  --features build_wasm
+      run: cd crates/zflow_graph && wasm-pack build --release--target web  --features build_wasm
