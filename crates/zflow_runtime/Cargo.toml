@@ -6,6 +6,7 @@ authors = ["Damilare Akinlaja <dreakinlaja@gmail.com>"]
 license = "MIT"
 description = "ZFlow FBP Graph Runtime"
 keywords = ["fbp", "flowbased", "low-code", "no-code", "visual-programming"]
+repository = "https://github.com/zflow-dev/zflow"
 
 [lib]
 doctest = false
