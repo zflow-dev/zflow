@@ -1,3 +1,14 @@
+## ⚠️📦 Repository Status Notice  
+
+🚫 This repository is **no longer maintained**.  
+🛑 No new features, bug fixes, or security updates will be provided.  
+
+👉 You are free to **fork** and continue development on your own.  
+✨ I recommend my other project [Reflow](https://github.com/offbit-ai/reflow) as an alternative, for a more advance, stable and high-performance workflow engine.
+
+---
+
+
 <!-- ![Build](https://github.com/darmie/zflow/actions/workflows/build.yml/badge.svg) -->
 ![zflow_graph](https://github.com/darmie/zflow/actions/workflows/graph.yml/badge.svg) 
 ![zflow_untime](https://github.com/darmie/zflow/actions/workflows/runtime.yml/badge.svg)
